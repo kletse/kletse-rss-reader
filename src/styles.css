@@ -126,7 +126,8 @@ article h1 {
 #picker-list li.depth-1 { padding-left: 32px; color: var(--fg); }
 #picker-list li .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #picker-list li .count { color: var(--fg-dim); }
-#picker-list li.active, #picker-list li:hover { background: var(--selection); color: var(--fg-bright); }
+#picker-list li:hover { background: var(--bg-light); }
+#picker-list li.active { background: var(--selection); color: var(--fg-bright); }
 #picker-list li.empty { color: var(--fg-dim); cursor: default; }
 #picker-list li.error { color: var(--red); white-space: pre-wrap; }
 

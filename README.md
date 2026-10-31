@@ -70,7 +70,13 @@ The picker lists **All unread**, then each category with its feeds underneath, w
 
 ## Install
 
-Requirements: Arch / Omarchy with `rust` (or `rustup`), `npm`, and `webkit2gtk-4.1`.
+**From a release** (quickest): download `kletse-rss-<version>-x86_64.pkg.tar.zst` from [Releases](https://github.com/kletse/kletse-rss-reader/releases) and run
+
+```bash
+sudo pacman -U kletse-rss-*-x86_64.pkg.tar.zst
+```
+
+**From source**, on Arch / Omarchy with `rust` (or `rustup`), `npm`, and `webkit2gtk-4.1`:
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git

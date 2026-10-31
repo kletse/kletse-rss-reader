@@ -225,7 +225,7 @@ const KEYS: [string, string][] = [
   ["b", "save to Readeck, then next"],
   ["f", "fetch full article"],
   ["Shift+A", "mark whole queue read"],
-  ["g / p / Tab", "feeds picker"],
+  ["g / p / Tab / Esc", "feeds picker"],
   ["r", "refresh feeds (in picker)"],
   ["Space / Shift+Space", "scroll; Space at the end = next"],
   [`${MOD} + / ${MOD} −`, "font size"],
@@ -289,7 +289,7 @@ window.addEventListener("keydown", (e) => {
     case "b": void saveToReadeck(); break;
     case "f": void fetchFull(); break;
     case "A": void markAllRead(); break;
-    case "g": case "p": case "Tab": openPicker(); break;
+    case "g": case "p": case "Tab": case "Escape": openPicker(); break;
     case "[": setWidth(widthFactor - 4); break;
     case "]": setWidth(widthFactor + 4); break;
     case "?": toggleHelp(); break;

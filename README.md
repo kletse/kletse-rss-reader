@@ -58,7 +58,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>b</kbd> | Save to Readeck, mark read, go to the next article |
 | <kbd>f</kbd> | Fetch the full article (Miniflux's readability scraper) |
 | <kbd>Shift</kbd>+<kbd>A</kbd> | Mark everything in the current list read (asks first) |
-| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> | Feeds & categories picker (also closes it) |
+| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> | Feeds & categories picker (also closes it) |
 | <kbd>r</kbd> | Refresh all feeds (in the picker) |
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |

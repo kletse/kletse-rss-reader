@@ -115,8 +115,13 @@ token = "…"
 npm install
 npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
+npm test           # UI unit tests (vitest + jsdom)
+npm run lint       # rustfmt --check and clippy on the backend
 npm run build      # release binary → src-tauri/target/release/kletse-rss
+(cd src-tauri && cargo test)   # backend tests, with a mock Miniflux/Readeck
 ```
+
+CI runs the same checks plus `npm audit` and `cargo audit` on every push.
 
 **Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
 
@@ -132,6 +137,7 @@ src/                 TypeScript UI (no framework)
   content.ts         sanitising article HTML, embeds → links, code highlighting
   theme.ts           Omarchy palette → CSS variables, live
   api.ts             typed wrappers for the Rust commands
+  *.test.ts          vitest unit tests
 src-tauri/src/
   lib.rs             Tauri commands
   miniflux.rs        Miniflux API client

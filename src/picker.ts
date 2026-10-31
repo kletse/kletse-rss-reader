@@ -62,7 +62,8 @@ async function refresh() {
   for (const delay of [2000, 6000, 15000]) setTimeout(() => picker.open && load(), delay);
 }
 
-function build(counts: FeedCount[]): PickerItem[] {
+/** Turns feed counts into the picker rows: "All unread", then each category (sorted) with its feeds. */
+export function build(counts: FeedCount[]): PickerItem[] {
   const byCategory = new Map<number, { title: string; feeds: FeedCount[] }>();
   for (const fc of counts) {
     if (fc.unread === 0) continue;
@@ -78,7 +79,7 @@ function build(counts: FeedCount[]): PickerItem[] {
   for (const [id, cat] of [...byCategory].sort((a, b) => byTitle(a[1], b[1]))) {
     const unread = cat.feeds.reduce((sum, fc) => sum + fc.unread, 0);
     out.push({ selection: { kind: "category", id }, label: cat.title, unread, depth: 0 });
-    for (const fc of cat.feeds.sort((a, b) => byTitle(a.feed, b.feed))) {
+    for (const fc of [...cat.feeds].sort((a, b) => byTitle(a.feed, b.feed))) {
       out.push({ selection: { kind: "feed", id: fc.feed.id }, label: fc.feed.title, unread: fc.unread, depth: 1 });
     }
   }

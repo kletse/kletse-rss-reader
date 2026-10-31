@@ -4,7 +4,7 @@ mod miniflux;
 mod readeck;
 mod theme;
 
-use miniflux::{Entry, FeedCount, Selection};
+use miniflux::{Entry, FeedCount, Selection, Status as EntryStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tauri::State;
@@ -23,13 +23,18 @@ impl App {
             .user_agent(concat!("kletse-rss/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("http client");
+            .expect("the HTTP client only needs built-in TLS roots");
         let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
         Self { config: RwLock::new(config::read()), http, demo }
     }
 
     fn config(&self) -> config::Config {
-        self.config.read().expect("config lock").clone()
+        // A poisoned lock only means another command panicked mid-write; the config is still plain data.
+        self.config.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn set_config(&self, cfg: config::Config) {
+        *self.config.write().unwrap_or_else(|e| e.into_inner()) = cfg;
     }
 
     fn miniflux(&self) -> Result<miniflux::Client, String> {
@@ -42,7 +47,7 @@ impl App {
 }
 
 /// What the UI needs to know at startup and after saving settings.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Status {
     /// Miniflux URL and key are present; otherwise show onboarding.
     configured: bool,
@@ -54,14 +59,11 @@ struct Status {
 #[tauri::command]
 fn app_status(app: State<'_, App>) -> Status {
     let cfg = app.config();
-    Status {
-        configured: app.demo || cfg.is_complete(),
-        readeck: app.demo || cfg.readeck.is_some(),
-        demo: app.demo,
-    }
+    Status { configured: app.demo || cfg.is_complete(), readeck: app.demo || cfg.readeck.is_some(), demo: app.demo }
 }
 
 /// The settings form, flat. Empty Readeck fields mean "not set up".
+/// No `Debug` on purpose: it holds the API key and token.
 #[derive(Serialize, Deserialize)]
 struct Settings {
     miniflux_url: String,
@@ -95,15 +97,7 @@ async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<Status
         readeck: Some(config::Readeck { url: settings.readeck_url, token: settings.readeck_token }),
     }
     .normalized();
-
-    if cfg.miniflux.url.is_empty() || cfg.miniflux.api_key.is_empty() {
-        return Err("The Miniflux URL and API key are required.".into());
-    }
-    for url in std::iter::once(&cfg.miniflux.url).chain(cfg.readeck.as_ref().map(|r| &r.url)) {
-        if !(url.starts_with("https://") || url.starts_with("http://")) {
-            return Err(format!("{url} should start with https:// or http://"));
-        }
-    }
+    cfg.validate()?;
 
     if !app.demo {
         miniflux::Client::new(app.http.clone(), &cfg.miniflux).check().await?;
@@ -112,12 +106,13 @@ async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<Status
         }
         config::save(&cfg)?;
     }
-    *app.config.write().expect("config lock") = cfg;
+    app.set_config(cfg);
     Ok(app_status(app))
 }
 
+/// Async so the `hyprctl` / `omarchy` calls stay off the main thread.
 #[tauri::command]
-fn get_theme() -> theme::Theme {
+async fn get_theme() -> theme::Theme {
     theme::load()
 }
 
@@ -132,20 +127,17 @@ async fn feed_counts(app: State<'_, App>) -> Result<Vec<FeedCount>, String> {
 #[tauri::command]
 async fn unread_entries(app: State<'_, App>, selection: Selection) -> Result<Vec<Entry>, String> {
     if app.demo {
-        return Ok(demo::unread_entries(&selection));
+        return Ok(demo::unread_entries(selection));
     }
-    app.miniflux()?.unread_entries(&selection).await
+    app.miniflux()?.unread_entries(selection).await
 }
 
 #[tauri::command]
-async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: String) -> Result<(), String> {
-    if status != "read" && status != "unread" {
-        return Err(format!("invalid status {status}"));
-    }
+async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: EntryStatus) -> Result<(), String> {
     if app.demo {
         return Ok(());
     }
-    app.miniflux()?.set_status(&ids, &status).await
+    app.miniflux()?.set_status(&ids, status).await
 }
 
 #[tauri::command]
@@ -164,11 +156,20 @@ async fn refresh_feeds(app: State<'_, App>) -> Result<(), String> {
     app.miniflux()?.refresh_all().await
 }
 
+/// Only web and mail links are handed to the system; anything else (file:, javascript:, …) is refused.
+fn is_openable(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|u| match u.scheme() {
+        "http" | "https" => u.host_str().is_some_and(|h| !h.is_empty()),
+        "mailto" => !u.path().is_empty(),
+        _ => false,
+    })
+}
+
 /// Opens a link in the default browser via xdg-open (on Omarchy: omarchy-launch-browser).
 /// Firefox and Chromium hand the URL to an already running window as a new tab.
 #[tauri::command]
-fn open_in_browser(url: String) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+async fn open_in_browser(url: String) -> Result<(), String> {
+    if !is_openable(&url) {
         return Err(format!("Refusing to open {url}"));
     }
     let mut child = std::process::Command::new("xdg-open")
@@ -192,6 +193,12 @@ async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), String>
     readeck::save(&app.http, &readeck, &url).await
 }
 
+/// `q`: a clean exit, independent of what the webview thinks `window.close()` may do.
+#[tauri::command]
+fn quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(App::new())
@@ -210,8 +217,49 @@ pub fn run() {
             fetch_content,
             refresh_feeds,
             save_to_readeck,
-            open_in_browser
+            open_in_browser,
+            quit
         ])
         .run(tauri::generate_context!())
         .expect("error while running kletse-rss");
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_web_and_mail_links_are_openable() {
+        for ok in ["https://example.com/a?b=c#d", "http://localhost:8080", "mailto:someone@example.com"] {
+            assert!(is_openable(ok), "{ok}");
+        }
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "ftp://example.com",
+            "https://",
+            "mailto:",
+            "example.com",
+            "",
+            "-x",
+        ] {
+            assert!(!is_openable(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn settings_round_trip_the_webview_field_names() {
+        let json = r#"{"miniflux_url":"https://m","miniflux_api_key":"k","readeck_url":"","readeck_token":""}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.miniflux_url, "https://m");
+        assert_eq!(serde_json::to_string(&s).unwrap(), json);
+    }
+
+    #[test]
+    fn status_serializes_flat_booleans() {
+        let s = Status { configured: true, readeck: false, demo: false };
+        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"configured":true,"readeck":false,"demo":false}"#);
+    }
 }

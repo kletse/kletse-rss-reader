@@ -49,4 +49,5 @@ export const api = {
   refreshFeeds: () => invoke<void>("refresh_feeds"),
   saveToReadeck: (url: string) => invoke<void>("save_to_readeck", { url }),
   openInBrowser: (url: string) => invoke<void>("open_in_browser", { url }),
+  quit: () => invoke<void>("quit"),
 };

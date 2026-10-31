@@ -2,12 +2,21 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Entry, EntryFeed, Feed, FeedCount, Selection};
+use crate::miniflux::{Category, Entry, EntryFeed, Feed, FeedCount, Selection, Status};
 
 struct DemoFeed {
     id: i64,
     title: &'static str,
     category: (i64, &'static str),
+}
+
+struct DemoEntry {
+    feed: i64,
+    title: &'static str,
+    author: &'static str,
+    published_at: &'static str,
+    minutes: i64,
+    content: &'static str,
 }
 
 const FEEDS: &[DemoFeed] = &[
@@ -18,65 +27,120 @@ const FEEDS: &[DemoFeed] = &[
     DemoFeed { id: 5, title: "Escapement Journal", category: (3, "Watches") },
 ];
 
-/// (feed id, title, author, published_at, minutes, content)
-const ENTRIES: &[(i64, &str, &str, &str, i64, &str)] = &[
-    (1, "Why I read my feeds one article at a time", "Mira Janssens", "2026-10-24T08:12:00+02:00", 4, ARTICLE_ONE_AT_A_TIME),
-    (5, "Inside a hand-wound movement, gear by gear", "Tomas Verhoeven", "2026-10-25T19:40:00+02:00", 6, ARTICLE_MOVEMENT),
-    (2, "Small Rust services that never wake you up at night", "Ada Lindqvist", "2026-10-26T10:05:00+01:00", 5, ARTICLE_RUST),
-    (3, "The case for a slower internet", "Noor El Amrani", "2026-10-27T14:30:00+01:00", 3, ARTICLE_SLOW_WEB),
-    (4, "Designing with only five colours", "Jonas Peeters", "2026-10-28T09:00:00+01:00", 4, ARTICLE_COLOURS),
-    (1, "A dotfiles setup you can explain in one breath", "Mira Janssens", "2026-10-29T21:15:00+01:00", 2, ARTICLE_DOTFILES),
-    (2, "Error messages are user interface", "Ada Lindqvist", "2026-10-30T07:45:00+01:00", 3, ARTICLE_ERRORS),
-    (5, "Why the tick-tock of a watch is never quite even", "Tomas Verhoeven", "2026-10-30T18:20:00+01:00", 4, ARTICLE_BEAT),
+/// Oldest first; the entry id is its 1-based position here.
+const ENTRIES: &[DemoEntry] = &[
+    DemoEntry {
+        feed: 1,
+        title: "Why I read my feeds one article at a time",
+        author: "Mira Janssens",
+        published_at: "2026-10-24T08:12:00+02:00",
+        minutes: 4,
+        content: ARTICLE_ONE_AT_A_TIME,
+    },
+    DemoEntry {
+        feed: 5,
+        title: "Inside a hand-wound movement, gear by gear",
+        author: "Tomas Verhoeven",
+        published_at: "2026-10-25T19:40:00+02:00",
+        minutes: 6,
+        content: ARTICLE_MOVEMENT,
+    },
+    DemoEntry {
+        feed: 2,
+        title: "Small Rust services that never wake you up at night",
+        author: "Ada Lindqvist",
+        published_at: "2026-10-26T10:05:00+01:00",
+        minutes: 5,
+        content: ARTICLE_RUST,
+    },
+    DemoEntry {
+        feed: 3,
+        title: "The case for a slower internet",
+        author: "Noor El Amrani",
+        published_at: "2026-10-27T14:30:00+01:00",
+        minutes: 3,
+        content: ARTICLE_SLOW_WEB,
+    },
+    DemoEntry {
+        feed: 4,
+        title: "Designing with only five colours",
+        author: "Jonas Peeters",
+        published_at: "2026-10-28T09:00:00+01:00",
+        minutes: 4,
+        content: ARTICLE_COLOURS,
+    },
+    DemoEntry {
+        feed: 1,
+        title: "A dotfiles setup you can explain in one breath",
+        author: "Mira Janssens",
+        published_at: "2026-10-29T21:15:00+01:00",
+        minutes: 2,
+        content: ARTICLE_DOTFILES,
+    },
+    DemoEntry {
+        feed: 2,
+        title: "Error messages are user interface",
+        author: "Ada Lindqvist",
+        published_at: "2026-10-30T07:45:00+01:00",
+        minutes: 3,
+        content: ARTICLE_ERRORS,
+    },
+    DemoEntry {
+        feed: 5,
+        title: "Why the tick-tock of a watch is never quite even",
+        author: "Tomas Verhoeven",
+        published_at: "2026-10-30T18:20:00+01:00",
+        minutes: 4,
+        content: ARTICLE_BEAT,
+    },
 ];
 
 fn feed(id: i64) -> &'static DemoFeed {
-    FEEDS.iter().find(|f| f.id == id).expect("demo feed")
+    FEEDS.iter().find(|f| f.id == id).expect("every demo entry belongs to a listed demo feed")
 }
 
 fn as_feed(f: &DemoFeed) -> Feed {
-    Feed {
-        id: f.id,
-        title: f.title.into(),
-        category: Category { id: f.category.0, title: f.category.1.into() },
-    }
+    Feed { id: f.id, title: f.title.into(), category: Category { id: f.category.0, title: f.category.1.into() } }
 }
 
 pub fn feed_counts() -> Vec<FeedCount> {
     FEEDS
         .iter()
-        .map(|f| FeedCount {
-            feed: as_feed(f),
-            unread: ENTRIES.iter().filter(|e| e.0 == f.id).count() as i64,
-        })
+        .map(|f| FeedCount { feed: as_feed(f), unread: ENTRIES.iter().filter(|e| e.feed == f.id).count() as i64 })
         .collect()
 }
 
-pub fn unread_entries(sel: &Selection) -> Vec<Entry> {
+pub fn unread_entries(sel: Selection) -> Vec<Entry> {
     ENTRIES
         .iter()
         .enumerate()
         .filter(|(_, e)| match sel {
             Selection::All => true,
-            Selection::Category { id } => feed(e.0).category.0 == *id,
-            Selection::Feed { id } => e.0 == *id,
+            Selection::Category { id } => feed(e.feed).category.0 == id,
+            Selection::Feed { id } => e.feed == id,
         })
-        .map(|(i, &(feed_id, title, author, published_at, minutes, content))| Entry {
+        .map(|(i, e)| Entry {
             id: i as i64 + 1,
-            title: title.into(),
+            title: e.title.into(),
             url: format!("https://example.com/demo/{}", i + 1),
-            author: author.into(),
-            content: content.into(),
-            published_at: published_at.into(),
-            status: "unread".into(),
-            reading_time: minutes,
-            feed: EntryFeed { id: feed_id, title: feed(feed_id).title.into() },
+            author: e.author.into(),
+            content: e.content.into(),
+            published_at: e.published_at.into(),
+            status: Status::Unread,
+            reading_time: e.minutes,
+            feed: EntryFeed { id: e.feed, title: feed(e.feed).title.into() },
         })
         .collect()
 }
 
+/// "Fetched" content: the same article again. Unknown ids give an empty page.
 pub fn content(id: i64) -> String {
-    ENTRIES.get((id - 1) as usize).map(|e| e.5.to_string()).unwrap_or_default()
+    usize::try_from(id)
+        .ok()
+        .and_then(|id| id.checked_sub(1))
+        .and_then(|index| ENTRIES.get(index))
+        .map(|e| e.content.to_string())
+        .unwrap_or_default()
 }
 
 const ARTICLE_ONE_AT_A_TIME: &str = r##"
@@ -152,3 +216,63 @@ const ARTICLE_ERRORS: &str = r##"
 const ARTICLE_BEAT: &str = r##"
 <p>Hold a mechanical watch to your ear and the tick-tock should sound perfectly even. When it doesn't, watchmakers call it being “out of beat”, and it's one of the first things they check on a timing machine.</p>
 "##;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_entry_belongs_to_a_feed_and_ids_are_unique() {
+        for e in ENTRIES {
+            assert!(FEEDS.iter().any(|f| f.id == e.feed), "entry {:?} has no feed", e.title);
+        }
+        let mut ids: Vec<_> = FEEDS.iter().map(|f| f.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), FEEDS.len());
+    }
+
+    #[test]
+    fn entries_are_oldest_first() {
+        let dates: Vec<_> = ENTRIES.iter().map(|e| e.published_at).collect();
+        let mut sorted = dates.clone();
+        sorted.sort();
+        assert_eq!(dates, sorted);
+    }
+
+    #[test]
+    fn feed_counts_match_entries() {
+        let counts = feed_counts();
+        assert_eq!(counts.len(), FEEDS.len());
+        let total: i64 = counts.iter().map(|c| c.unread).sum();
+        assert_eq!(total, ENTRIES.len() as i64);
+        assert!(counts.iter().all(|c| c.unread > 0), "every demo feed has something to read");
+    }
+
+    #[test]
+    fn selections_filter_consistently() {
+        let all = unread_entries(Selection::All);
+        assert_eq!(all.len(), ENTRIES.len());
+        assert!(all.iter().all(|e| e.status == Status::Unread));
+        assert_eq!(all.iter().map(|e| e.id).collect::<Vec<_>>(), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
+
+        let dev = unread_entries(Selection::Category { id: 1 });
+        assert!(dev.iter().all(|e| [1, 2].contains(&e.feed.id)));
+        assert_eq!(dev.len(), all.iter().filter(|e| [1, 2].contains(&e.feed.id)).count());
+
+        let watches = unread_entries(Selection::Feed { id: 5 });
+        assert_eq!(watches.len(), 2);
+        assert!(watches.iter().all(|e| e.feed.title == "Escapement Journal"));
+
+        assert!(unread_entries(Selection::Feed { id: 99 }).is_empty());
+    }
+
+    #[test]
+    fn content_by_id_is_safe_for_any_id() {
+        assert_eq!(content(1), ARTICLE_ONE_AT_A_TIME);
+        assert_eq!(content(ENTRIES.len() as i64), ARTICLE_BEAT);
+        for bad in [0, -1, i64::MIN, i64::MAX, ENTRIES.len() as i64 + 1] {
+            assert_eq!(content(bad), "", "id {bad}");
+        }
+    }
+}

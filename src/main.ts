@@ -181,16 +181,21 @@ async function markAllRead() {
   }
 }
 
+let loadId = 0; // picking again while a selection loads makes the older load a no-op
 async function openSelection(item: PickerItem) {
+  const id = ++loadId;
   selectionLabel = item.label;
   queue = [];
   index = 0;
   reader.replaceChildren(el("div", { class: "message" }, el("p", {}, "Loading…")));
+  let entries: Entry[] = [];
   try {
-    queue = await api.unreadEntries(item.selection);
+    entries = await api.unreadEntries(item.selection);
   } catch (err) {
-    toast(String(err), "error");
+    if (id === loadId) toast(String(err), "error");
   }
+  if (id !== loadId) return;
+  queue = entries;
   render();
 }
 
@@ -282,7 +287,7 @@ window.addEventListener("keydown", (e) => {
     case "[": setWidth(widthFactor - 4); break;
     case "]": setWidth(widthFactor + 4); break;
     case "?": toggleHelp(); break;
-    case "q": window.close(); break;
+    case "q": void api.quit(); break;
     default: return;
   }
   e.preventDefault();
@@ -305,7 +310,6 @@ $("picker").addEventListener("click", (e) => {
   if (e.target === $("picker") && queue.length) picker.hide();
 });
 
-// ---- Start ---------------------------------------------------------------
 // ---- Settings / onboarding ------------------------------------------------
 function applyStatus(status: Status) {
   readeckEnabled = status.readeck;
@@ -337,6 +341,7 @@ async function openSettings(firstRun: boolean) {
   }
 }
 
+// ---- Start ---------------------------------------------------------------
 async function start() {
   setFontSize(fontSize);
   setWidth(widthFactor);

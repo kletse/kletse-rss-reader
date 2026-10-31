@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FeedCount } from "./api";
-import { build } from "./picker";
+import { build } from "./picker-items";
 
 const fc = (id: number, title: string, category: [number, string], unread: number): FeedCount => ({
   feed: { id, title, category: { id: category[0], title: category[1] } },

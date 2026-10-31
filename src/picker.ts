@@ -24,7 +24,7 @@ export const picker = {
     switch (e.key) {
       case "j": case "ArrowDown": move(1); return true;
       case "k": case "ArrowUp": move(-1); return true;
-      case "Enter": if (items[cursor]) choose(items[cursor]); return true;
+      case "Enter": case "ArrowRight": if (items[cursor]) choose(items[cursor]); return true;
       case "r": refresh(); return true;
       case "Escape": case "g": case "p": case "Tab": if (canClose) picker.hide(); return true;
     }

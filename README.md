@@ -66,7 +66,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>?</kbd> | Show the keys |
 | <kbd>q</kbd> | Quit |
 
-The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>.
+The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd> or <kbd>→</kbd>.
 
 ## Install
 

@@ -1,8 +1,8 @@
 [package]
 name = "kletse-rss"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2021"
-description = "A one-article-at-a-time Miniflux reader for Omarchy"
+description = "A one-article-at-a-time Miniflux reader for Omarchy and macOS"
 license = "MIT"
 repository = "https://github.com/kletse/kletse-rss-reader"
 authors = ["Ward Werbrouck <ward@kletse.be>"]
@@ -21,8 +21,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 toml = "1"
-notify = "8"
 dirs = "7"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify = "8" # follows the Omarchy theme directory
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

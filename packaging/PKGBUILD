@@ -1,7 +1,7 @@
 # Maintainer: Ward <ward@kletse.be>
 # Builds from this local checkout: cd packaging && makepkg -si
 pkgname=kletse-rss
-pkgver=1.1.1
+pkgver=1.2.0
 pkgrel=1
 pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
 arch=('x86_64')
@@ -15,7 +15,7 @@ _root() { realpath "$startdir/.."; }
 build() {
   cd "$(_root)"
   npm ci
-  npx tauri build --no-bundle
+  npx tauri build --no-bundle # bundling is only on for macOS (tauri.macos.conf.json)
 }
 
 package() {

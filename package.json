@@ -1,11 +1,11 @@
 {
   "name": "kletse-rss",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build --no-bundle",
+    "build": "tauri build",
     "check": "tsc --noEmit",
     "vite:dev": "vite",
     "vite:build": "tsc --noEmit && vite build",

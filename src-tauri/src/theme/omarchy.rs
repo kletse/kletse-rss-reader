@@ -1,19 +1,9 @@
 //! Follows the live Omarchy theme: colors.toml, Hyprland rounding and the Omarchy font.
 //! Emits `theme-changed` whenever the current theme is switched.
 
-use serde::Serialize;
+use super::{Theme, CHANGED_EVENT};
 use std::{collections::HashMap, path::PathBuf, process::Command, sync::mpsc, thread, time::Duration};
 use tauri::{AppHandle, Emitter};
-
-#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
-pub struct Theme {
-    pub colors: HashMap<String, String>,
-    pub rounding: i64,
-    pub font: Option<String>,
-}
-
-/// Name of the event sent to the webview when the theme changes.
-pub const CHANGED_EVENT: &str = "theme-changed";
 
 /// `~/.local/state/omarchy/current`: a symlink Omarchy repoints on every theme switch.
 fn current_dir() -> Option<PathBuf> {

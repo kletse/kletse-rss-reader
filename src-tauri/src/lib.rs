@@ -165,20 +165,24 @@ fn is_openable(url: &str) -> bool {
     })
 }
 
-/// Opens a link in the default browser via xdg-open (on Omarchy: omarchy-launch-browser).
-/// Firefox and Chromium hand the URL to an already running window as a new tab.
+/// The system's "open this URL" command: `open` on macOS, `xdg-open` elsewhere
+/// (on Omarchy that resolves to omarchy-launch-browser).
+const OPENER: &str = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+
+/// Opens a link in the default browser.
+/// Firefox, Chromium and Safari hand the URL to an already running window as a new tab.
 #[tauri::command]
 async fn open_in_browser(url: String) -> Result<(), String> {
     if !is_openable(&url) {
         return Err(format!("Refusing to open {url}"));
     }
-    let mut child = std::process::Command::new("xdg-open")
+    let mut child = std::process::Command::new(OPENER)
         .arg(&url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| format!("Could not start xdg-open: {e}"))?;
+        .map_err(|e| format!("Could not start {OPENER}: {e}"))?;
     // Reap the child so it does not linger as a zombie.
     std::thread::spawn(move || child.wait());
     Ok(())

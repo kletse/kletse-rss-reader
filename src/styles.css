@@ -8,7 +8,8 @@
   --ui-font: monospace;
   --article-font: "Inter Variable", "Inter", system-ui, sans-serif;
   --article-size: 18px;
-  --measure: 85ch;
+  --width-factor: 40; /* [ and ] change it */
+  --measure: calc(var(--article-size) * var(--width-factor)); /* scales with Ctrl +/- */
 }
 
 * { box-sizing: border-box; }
@@ -45,6 +46,8 @@ button {
 button:hover { border-color: var(--accent); color: var(--fg-bright); }
 #picker-btn { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #picker-btn .icon { color: var(--accent); }
+#readeck-btn { display: inline-flex; align-items: center; gap: 6px; }
+.btn-icon { width: 14px; height: 14px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 
 /* ---- Reader ----------------------------------------------------------- */
 #reader { flex: 1; overflow-y: auto; outline: none; padding: 40px 24px 30vh; }

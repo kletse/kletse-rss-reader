@@ -27,7 +27,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ ☰ Tech                       3 / 27         ⤓ Readeck ▲ ▼│
+│ ☰ Tech                       3 / 27        🔖 Readeck ▲ ▼│
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │        LWN · Jonathan Corbet · 31 Oct 2026 · 6 min       │
@@ -37,7 +37,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 │                                                          │
 │        Lorem ipsum dolor sit amet, consectetur           │
 │        adipiscing elit. Article text in a calm,          │
-│        centered ~85 character column…                    │
+│        centered width that scales with the font size column…                    │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -62,7 +62,9 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Shift</kbd>+<kbd>A</kbd> | Mark everything in the current list read (asks first) |
 | <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> | Feeds & categories picker (also closes it) |
 | <kbd>r</kbd> | Refresh all feeds (in the picker) |
-| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Article font size (remembered) |
+| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
+| <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |
+| <kbd>Ctrl</kbd> <kbd>0</kbd> | Reset font size and width |
 | <kbd>?</kbd> | Show the keys |
 | <kbd>q</kbd> | Quit |
 

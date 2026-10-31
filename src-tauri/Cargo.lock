@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "kletse-rss"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "dirs 6.0.0",
  "notify",

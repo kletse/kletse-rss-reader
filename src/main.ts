@@ -27,6 +27,17 @@ function setFontSize(px: number) {
   try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch { /* ignore */ }
 }
 
+// ---- Column width (in multiples of the font size, so it scales with it) --
+const WIDTH_KEY = "kletse-rss:width-factor";
+const DEFAULT_WIDTH = 40;
+let widthFactor = DEFAULT_WIDTH;
+try { widthFactor = Number(localStorage.getItem(WIDTH_KEY)) || DEFAULT_WIDTH; } catch { /* storage unavailable */ }
+function setWidth(factor: number) {
+  widthFactor = Math.min(80, Math.max(20, factor));
+  document.documentElement.style.setProperty("--width-factor", String(widthFactor));
+  try { localStorage.setItem(WIDTH_KEY, String(widthFactor)); } catch { /* ignore */ }
+}
+
 // ---- Rendering -----------------------------------------------------------
 const reader = $("reader");
 
@@ -188,7 +199,9 @@ const KEYS: [string, string][] = [
   ["g / p / Tab", "feeds picker"],
   ["r", "refresh feeds (in picker)"],
   ["Space / Shift+Space", "scroll; Space at the end = next"],
-  ["Ctrl + / Ctrl − / Ctrl 0", "font size"],
+  ["Ctrl + / Ctrl −", "font size"],
+  ["[ / ]", "narrower / wider column"],
+  ["Ctrl 0", "reset font size and width"],
   ["?", "this help"],
   ["q", "quit"],
 ];
@@ -219,7 +232,7 @@ window.addEventListener("keydown", (e) => {
   if (e.ctrlKey) {
     if (e.key === "=" || e.key === "+") setFontSize(fontSize + 1);
     else if (e.key === "-") setFontSize(fontSize - 1);
-    else if (e.key === "0") setFontSize(18);
+    else if (e.key === "0") { setFontSize(18); setWidth(DEFAULT_WIDTH); }
     else return;
     e.preventDefault();
     return;
@@ -243,6 +256,8 @@ window.addEventListener("keydown", (e) => {
     case "f": void fetchFull(); break;
     case "A": void markAllRead(); break;
     case "g": case "p": case "Tab": openPicker(); break;
+    case "[": setWidth(widthFactor - 4); break;
+    case "]": setWidth(widthFactor + 4); break;
     case "?": toggleHelp(); break;
     case "q": window.close(); break;
     default: return;
@@ -269,6 +284,7 @@ $("picker").addEventListener("click", (e) => {
 // ---- Start ---------------------------------------------------------------
 async function start() {
   setFontSize(fontSize);
+  setWidth(widthFactor);
   await initTheme();
   const setupError = await api.setupError();
   if (setupError) {

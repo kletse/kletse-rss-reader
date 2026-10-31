@@ -163,14 +163,16 @@ KLETSE_RSS_DEMO=1 npm run dev
 ```
 
 ```
-src/                 TypeScript UI (no framework)
-  main.ts            queue state, keyboard, reader view
-  picker.ts          feeds & categories overlay
-  settings.ts        onboarding / settings form
+src/                 TypeScript UI (SolidJS)
+  state.ts           app state (signals) and actions: queue, picker, overlays, settings
+  App.tsx            layout, the single keyboard handler, link clicks
+  components/        top bar, article, picker, settings form, help/confirm/toast
+  picker-items.ts    feed counts → picker rows
+  keys.ts            key reference and platform modifier
   content.ts         sanitising article HTML, embeds → links, code highlighting
   theme.ts           theme palette → CSS variables, live
   api.ts             typed wrappers for the Rust commands
-  *.test.ts          vitest unit tests
+  *.test.ts(x)       vitest unit and UI tests
 src-tauri/src/
   lib.rs             Tauri commands
   miniflux.rs        Miniflux API client

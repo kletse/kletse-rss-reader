@@ -6,48 +6,7 @@
     <title>Kletse RSS</title>
   </head>
   <body>
-    <header id="bar" data-tauri-drag-region>
-      <button id="picker-btn" title="Feeds (p)"><span class="icon">☰</span> <span id="selection-label">Feeds</span></button>
-      <span id="position" data-tauri-drag-region></span>
-      <div class="bar-actions">
-        <button id="readeck-btn" title="Save to Readeck (b)" hidden>
-          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/><path d="M12 7v6M9 10h6"/></svg>
-          Readeck
-        </button>
-        <button id="prev-btn" title="Previous (k)">▲</button>
-        <button id="next-btn" title="Next, mark read (j)">▼</button>
-      </div>
-    </header>
-
-    <main id="reader" tabindex="-1"></main>
-
-    <div id="picker" class="overlay" hidden>
-      <div class="panel">
-        <div class="panel-title">
-          <span>Feeds</span>
-          <span class="hint">j/k · Enter or → · r refresh · Esc</span>
-          <button id="settings-btn" title="Settings (,)">
-            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>
-            Settings
-          </button>
-        </div>
-        <ul id="picker-list"></ul>
-      </div>
-    </div>
-
-    <div id="help" class="overlay" hidden>
-      <div class="panel" id="help-panel"></div>
-    </div>
-
-    <div id="confirm" class="overlay" hidden>
-      <div class="panel small">
-        <p id="confirm-text"></p>
-        <p class="hint">Enter / y to confirm · Esc / n to cancel</p>
-      </div>
-    </div>
-
-    <div id="toast" hidden></div>
-
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

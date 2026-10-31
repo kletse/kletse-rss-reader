@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>One unread article at a time. Oldest first. Keyboard all the way.</b><br>
-  A small desktop reader for <a href="https://miniflux.app">Miniflux</a>, made for <a href="https://omarchy.org">Omarchy</a>.
+  A small desktop reader for <a href="https://miniflux.app">Miniflux</a>, for <a href="https://omarchy.org">Omarchy</a> and macOS.
 </p>
 
 <p align="center">
@@ -14,6 +14,7 @@
   <img alt="Rust" src="https://img.shields.io/badge/Rust-backend-B7410E?logo=rust&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-UI-3178C6?logo=typescript&logoColor=white">
   <img alt="Arch package" src="https://img.shields.io/badge/Arch-PKGBUILD-1793D1?logo=archlinux&logoColor=white">
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-.app-000000?logo=apple&logoColor=white">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
@@ -31,7 +32,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 - **Unread only.** Read items never appear, except ones you passed during this session, so **k** can take you back to undo.
 - **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
-- **Follows your Omarchy theme live.** Colours, the UI font and window rounding update the moment you switch themes.
+- **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes. On macOS: light or dark mode and your accent colour, the moment you change them.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
 
 ## Screenshots
@@ -42,7 +43,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | **First-run setup** | | |
 | <img src="docs/screenshots/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> | | |
 
-<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active.</sub>
+<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active; on macOS they follow the system appearance.</sub>
 
 ## Keys
 
@@ -62,6 +63,8 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |
 | <kbd>Ctrl</kbd> <kbd>0</kbd> | Reset font size and width |
+
+On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | <kbd>,</kbd> | Settings |
 | <kbd>?</kbd> | Show the keys |
 | <kbd>q</kbd> | Quit |
@@ -69,6 +72,8 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd> or <kbd>→</kbd>.
 
 ## Install
+
+### Arch / Omarchy
 
 **From a release** (quickest): download `kletse-rss-<version>-x86_64.pkg.tar.zst` from [Releases](https://github.com/kletse/kletse-rss-reader/releases) and run
 
@@ -86,6 +91,20 @@ makepkg -si
 
 This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → *Kletse RSS*) and the icon. To uninstall, run `sudo pacman -R kletse-rss`.
 
+### macOS
+
+Built from source; there is no signed download. You need Xcode's command line tools (`xcode-select --install`), [Rust](https://rustup.rs) and Node:
+
+```bash
+git clone https://github.com/kletse/kletse-rss-reader.git
+cd kletse-rss-reader
+npm install
+npm run build
+cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
+```
+
+Open it from Spotlight or the Dock. The window has no title bar; drag it by the top bar. The app follows the system light/dark mode and accent colour.
+
 ## Set up
 
 The first time you start Kletse RSS, a welcome screen asks for:
@@ -97,7 +116,7 @@ The first time you start Kletse RSS, a welcome screen asks for:
 
 **Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
 
-The settings are stored in `~/.config/kletse-rss/config.toml` (mode `600`), which you can also edit by hand:
+The settings are stored in `~/.config/kletse-rss/config.toml` on Linux and `~/Library/Application Support/kletse-rss/config.toml` on macOS (mode `600`), which you can also edit by hand:
 
 ```toml
 [miniflux]
@@ -117,11 +136,11 @@ npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
 npm test           # UI unit tests (vitest + jsdom)
 npm run lint       # rustfmt --check and clippy on the backend
-npm run build      # release binary → src-tauri/target/release/kletse-rss
+npm run build      # release binary → src-tauri/target/release/kletse-rss (macOS: also …/bundle/macos/Kletse RSS.app)
 (cd src-tauri && cargo test)   # backend tests, with a mock Miniflux/Readeck
 ```
 
-CI runs the same checks plus `npm audit` and `cargo audit` on every push.
+CI runs the same checks plus `npm audit` and `cargo audit` on every push, with clippy and the Rust tests on both Linux and macOS.
 
 **Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
 
@@ -135,15 +154,16 @@ src/                 TypeScript UI (no framework)
   picker.ts          feeds & categories overlay
   settings.ts        onboarding / settings form
   content.ts         sanitising article HTML, embeds → links, code highlighting
-  theme.ts           Omarchy palette → CSS variables, live
+  theme.ts           theme palette → CSS variables, live
   api.ts             typed wrappers for the Rust commands
   *.test.ts          vitest unit tests
 src-tauri/src/
   lib.rs             Tauri commands
   miniflux.rs        Miniflux API client
   readeck.rs         Readeck "save bookmark"
-  theme.rs           reads ~/.local/state/omarchy/current/theme/colors.toml, watches for switches
-  config.rs          ~/.config/kletse-rss/config.toml
+  theme/omarchy.rs   reads ~/.local/state/omarchy/current/theme/colors.toml, watches for switches
+  theme/macos.rs     light/dark mode and accent colour from System Settings, follows changes
+  config.rs          ~/.config/kletse-rss/config.toml (macOS: ~/Library/Application Support/kletse-rss/)
   demo.rs            sample data for KLETSE_RSS_DEMO=1
 packaging/           PKGBUILD, .desktop entry, icon
 ```

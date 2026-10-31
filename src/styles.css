@@ -1,4 +1,4 @@
-/* Colours come from the live Omarchy theme (see theme.ts); these are fallbacks. */
+/* Colours come from the desktop theme (Omarchy / macOS appearance, see theme.ts); these are fallbacks. */
 :root {
   --bg: #1a1b26; --bg-light: #24283b; --bg-dark: #16161e;
   --fg: #c0caf5; --fg-dim: #787c99; --fg-bright: #ffffff;
@@ -33,6 +33,8 @@ body {
   border-bottom: 1px solid var(--bg-light);
   flex: none;
 }
+/* macOS: the window controls float over the bar's left end (overlay title bar). */
+html.mac #bar { padding-left: 84px; }
 #position { color: var(--fg-dim); flex: 1; text-align: center; }
 .bar-actions { display: flex; gap: 6px; }
 button {

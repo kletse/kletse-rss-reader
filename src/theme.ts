@@ -1,4 +1,4 @@
-// Maps the Omarchy colors.toml palette onto CSS variables, live.
+// Maps the theme palette (Omarchy colors.toml on Linux, system appearance on macOS) onto CSS variables, live.
 import { listen } from "@tauri-apps/api/event";
 import { api, type Theme } from "./api";
 
@@ -22,8 +22,13 @@ function apply(theme: Theme) {
     if (c[`bright_${name}`]) root.setProperty(`--bright-${name}`, c[`bright_${name}`]);
   }
   root.setProperty("--radius", `${theme.rounding}px`);
-  if (theme.font) root.setProperty("--ui-font", `"${theme.font}", monospace`);
+  if (theme.font) root.setProperty("--ui-font", `${fontFamily(theme.font)}, monospace`);
   document.documentElement.dataset.mode = c.mode ?? "dark";
+}
+
+/** CSS generic families (`ui-monospace`, `system-ui`, …) go unquoted; real names get quotes. */
+export function fontFamily(name: string): string {
+  return /^[a-z-]+$/.test(name) ? name : `"${name}"`;
 }
 
 export async function initTheme() {

@@ -19,6 +19,12 @@ let inSettings = false;
 
 const current = (): Entry | undefined => queue[index];
 
+// ---- Platform ------------------------------------------------------------
+/** macOS uses ⌘ where Linux uses Ctrl for the font-size shortcuts. */
+const isMac = (platform: string = navigator.platform): boolean => /^Mac/i.test(platform);
+const MOD = isMac() ? "⌘" : "Ctrl";
+if (isMac()) document.documentElement.classList.add("mac");
+
 // ---- Font size -----------------------------------------------------------
 const FONT_KEY = "kletse-rss:font-size";
 let fontSize = 18;
@@ -222,9 +228,9 @@ const KEYS: [string, string][] = [
   ["g / p / Tab", "feeds picker"],
   ["r", "refresh feeds (in picker)"],
   ["Space / Shift+Space", "scroll; Space at the end = next"],
-  ["Ctrl + / Ctrl −", "font size"],
+  [`${MOD} + / ${MOD} −`, "font size"],
   ["[ / ]", "narrower / wider column"],
-  ["Ctrl 0", "reset font size and width"],
+  [`${MOD} 0`, "reset font size and width"],
   [",", "settings"],
   ["?", "this help"],
   ["q", "quit"],
@@ -257,7 +263,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
-  if (e.ctrlKey) {
+  if (isMac() ? e.metaKey : e.ctrlKey) {
     if (e.key === "=" || e.key === "+") setFontSize(fontSize + 1);
     else if (e.key === "-") setFontSize(fontSize - 1);
     else if (e.key === "0") { setFontSize(18); setWidth(DEFAULT_WIDTH); }

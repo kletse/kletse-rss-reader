@@ -12,7 +12,9 @@
 <p align="center">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-backend-B7410E?logo=rust&logoColor=white">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-UI-3178C6?logo=typescript&logoColor=white">
+  <a href="https://github.com/kletse/kletse-rss-reader/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/kletse/kletse-rss-reader?color=7aa2f7"></a>
+  <img alt="SolidJS" src="https://img.shields.io/badge/SolidJS-UI-2C4F7C?logo=solid&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
   <img alt="Arch package" src="https://img.shields.io/badge/Arch-PKGBUILD-1793D1?logo=archlinux&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-.app-000000?logo=apple&logoColor=white">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-green">
@@ -93,9 +95,15 @@ This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</
 
 ### macOS
 
-Built from source; there is no signed download. You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
+**From a release** (quickest): download `Kletse-RSS-<version>-macos-universal.zip` from [Releases](https://github.com/kletse/kletse-rss-reader/releases) (Apple Silicon and Intel), unzip it and move **Kletse RSS.app** to `/Applications`. The app isn't signed by Apple, so macOS blocks it the first time. To allow it, run this once:
 
-**First install:**
+```bash
+xattr -dr com.apple.quarantine "/Applications/Kletse RSS.app"
+```
+
+To update, quit the app, replace it with the new download and run the same command again.
+
+**From source:** you need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
@@ -107,7 +115,7 @@ cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
 
 Open it from Spotlight or the Dock. The window has no title bar: drag it by the top bar, double-click the bar to zoom. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
 
-**Updating:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
+**Updating from source:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 
 ```bash
 git pull
@@ -148,7 +156,7 @@ token = "…"
 npm install
 npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
-npm test           # UI unit tests (vitest + jsdom)
+npm test           # UI unit and component tests (vitest + jsdom)
 npm run lint       # rustfmt --check and clippy on the backend
 npm run build      # release binary → src-tauri/target/release/kletse-rss (macOS: also …/bundle/macos/Kletse RSS.app)
 (cd src-tauri && cargo test)   # backend tests, with a mock Miniflux/Readeck
@@ -181,6 +189,7 @@ src-tauri/src/
   theme/macos.rs     light/dark mode and accent colour from System Settings, follows changes
   config.rs          ~/.config/kletse-rss/config.toml (macOS: ~/Library/Application Support/kletse-rss/)
   demo.rs            sample data for KLETSE_RSS_DEMO=1
+src-tauri/patches/   glib 0.18.5 with a backported security fix (see PATCHED.md there)
 packaging/           PKGBUILD, .desktop entry, icon
 ```
 

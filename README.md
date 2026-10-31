@@ -93,7 +93,9 @@ This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</
 
 ### macOS
 
-Built from source; there is no signed download. You need Xcode's command line tools (`xcode-select --install`), [Rust](https://rustup.rs) and Node:
+Built from source; there is no signed download. You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
+
+**First install:**
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
@@ -104,6 +106,18 @@ cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
 ```
 
 Open it from Spotlight or the Dock. The window has no title bar; drag it by the top bar. The app follows the system light/dark mode and accent colour.
+
+**Updating:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
+
+```bash
+git pull
+npm install
+npm run build
+rm -rf "/Applications/Kletse RSS.app"
+cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
+```
+
+Your settings live outside the app bundle (see [Set up](#set-up)), so replacing it keeps them. To uninstall, delete `/Applications/Kletse RSS.app` and, if you want, `~/Library/Application Support/kletse-rss`.
 
 ## Set up
 

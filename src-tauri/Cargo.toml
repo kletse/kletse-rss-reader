@@ -1,6 +1,6 @@
 [package]
 name = "kletse-rss"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A one-article-at-a-time Miniflux reader for Omarchy"
 
@@ -13,7 +13,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -37,4 +37,5 @@ export const api = {
   fetchContent: (id: number) => invoke<string>("fetch_content", { id }),
   refreshFeeds: () => invoke<void>("refresh_feeds"),
   saveToReadeck: (url: string) => invoke<void>("save_to_readeck", { url }),
+  openInBrowser: (url: string) => invoke<void>("open_in_browser", { url }),
 };

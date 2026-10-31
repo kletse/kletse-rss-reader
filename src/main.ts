@@ -1,7 +1,6 @@
 // Kletse RSS: one unread article at a time, oldest first.
 import "@fontsource-variable/inter";
 import "./styles.css";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, type Entry } from "./api";
 import { renderContent, hostOf } from "./content";
 import { picker, type PickerItem } from "./picker";
@@ -111,11 +110,23 @@ async function toggleRead() {
   toast(`Marked ${entry.status}`);
 }
 
+/** Opens a link in the default browser; shows a toast if that fails. */
+async function openLink(url: string): Promise<boolean> {
+  try {
+    await api.openInBrowser(url);
+    return true;
+  } catch (err) {
+    toast(String(err), "error");
+    return false;
+  }
+}
+
 async function openOriginal() {
   const entry = current();
   if (!entry) return;
-  await openUrl(entry.url);
-  void setStatus(entry, "read");
+  if (!(await openLink(entry.url))) return;
+  toast("Opened in browser");
+  await setStatus(entry, "read");
   render();
 }
 
@@ -270,7 +281,7 @@ document.addEventListener("click", (e) => {
   const a = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
   if (!a) return;
   e.preventDefault();
-  void openUrl(a.href);
+  void openLink(a.href);
 });
 
 $("picker-btn").addEventListener("click", openPicker);

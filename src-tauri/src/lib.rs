@@ -69,6 +69,25 @@ async fn refresh_feeds(app: State<'_, App>) -> Result<(), String> {
     app.miniflux()?.refresh_all().await
 }
 
+/// Opens a link in the default browser via xdg-open (on Omarchy: omarchy-launch-browser).
+/// Firefox and Chromium hand the URL to an already running window as a new tab.
+#[tauri::command]
+fn open_in_browser(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    let mut child = std::process::Command::new("xdg-open")
+        .arg(&url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Could not start xdg-open: {e}"))?;
+    // Reap the child so it does not linger as a zombie.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), String> {
     let (cfg, _) = app.setup.as_ref().map_err(Clone::clone)?;
@@ -77,7 +96,6 @@ async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), String>
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .manage(App::new())
         .setup(|app| {
             theme::watch(app.handle().clone());
@@ -91,7 +109,8 @@ pub fn run() {
             set_status,
             fetch_content,
             refresh_feeds,
-            save_to_readeck
+            save_to_readeck,
+            open_in_browser
         ])
         .run(tauri::generate_context!())
         .expect("error while running kletse-rss");

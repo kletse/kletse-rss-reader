@@ -1,9 +1,10 @@
 // Kletse RSS: one unread article at a time, oldest first.
 import "@fontsource-variable/inter";
 import "./styles.css";
-import { api, type Entry } from "./api";
+import { api, type Entry, type Status } from "./api";
 import { renderContent, hostOf } from "./content";
 import { picker, type PickerItem } from "./picker";
+import { showSettings } from "./settings";
 import { initTheme } from "./theme";
 import { $, el, toast, confirmDialog } from "./ui";
 
@@ -13,6 +14,8 @@ let queue: Entry[] = [];
 let index = 0; // index === queue.length means "all caught up"
 let selectionLabel = "";
 let busy = false;
+let readeckEnabled = false;
+let inSettings = false;
 
 const current = (): Entry | undefined => queue[index];
 
@@ -133,6 +136,10 @@ async function openOriginal() {
 async function saveToReadeck() {
   const entry = current();
   if (!entry || busy) return;
+  if (!readeckEnabled) {
+    toast("Readeck isn't set up. Add it in Settings (press ,).");
+    return;
+  }
   busy = true;
   try {
     await api.saveToReadeck(entry.url);
@@ -213,6 +220,7 @@ const KEYS: [string, string][] = [
   ["Ctrl + / Ctrl −", "font size"],
   ["[ / ]", "narrower / wider column"],
   ["Ctrl 0", "reset font size and width"],
+  [",", "settings"],
   ["?", "this help"],
   ["q", "quit"],
 ];
@@ -228,12 +236,16 @@ function toggleHelp() {
 
 // ---- Keyboard ------------------------------------------------------------
 window.addEventListener("keydown", (e) => {
-  if (!$("confirm").hidden) return;
+  // The settings form handles its own keys; never treat typing as shortcuts.
+  if (inSettings || !$("confirm").hidden) return;
+  if ((e.target as HTMLElement).closest?.("input, textarea")) return;
 
   if (!$("help").hidden) {
     if (["Escape", "?", "q"].includes(e.key)) { e.preventDefault(); toggleHelp(); }
     return;
   }
+
+  if (e.key === ",") { e.preventDefault(); void openSettings(false); return; }
 
   if (picker.open) {
     if (picker.key(e, queue.length > 0 || selectionLabel !== "")) e.preventDefault();
@@ -285,6 +297,7 @@ document.addEventListener("click", (e) => {
 });
 
 $("picker-btn").addEventListener("click", openPicker);
+$("settings-btn").addEventListener("click", () => void openSettings(false));
 $("prev-btn").addEventListener("click", prev);
 $("next-btn").addEventListener("click", () => next(true));
 $("readeck-btn").addEventListener("click", () => void saveToReadeck());
@@ -293,16 +306,47 @@ $("picker").addEventListener("click", (e) => {
 });
 
 // ---- Start ---------------------------------------------------------------
+// ---- Settings / onboarding ------------------------------------------------
+function applyStatus(status: Status) {
+  readeckEnabled = status.readeck;
+  $("readeck-btn").hidden = !readeckEnabled;
+}
+
+/** Opens the settings form. On first run it can't be cancelled. */
+async function openSettings(firstRun: boolean) {
+  if (inSettings) return;
+  inSettings = true;
+  picker.hide();
+  $("help").hidden = true;
+  $("bar").classList.add("settings-mode");
+  const status = await showSettings(firstRun);
+  $("bar").classList.remove("settings-mode");
+  inSettings = false;
+  if (status) {
+    applyStatus(status);
+    if (!firstRun) toast("Settings saved");
+    // The server may have changed: start from the picker with a fresh queue.
+    queue = [];
+    index = 0;
+    selectionLabel = "";
+    render();
+    openPicker();
+  } else {
+    render();
+    if (!queue.length) openPicker();
+  }
+}
+
 async function start() {
   setFontSize(fontSize);
   setWidth(widthFactor);
   await initTheme();
-  const setupError = await api.setupError();
-  if (setupError) {
-    reader.replaceChildren(el("div", { class: "message" }, el("h1", {}, "Setup needed"),
-      el("p", {}, setupError), el("p", { class: "hint" }, "Restart the app after editing the config.")));
+  const status = await api.status();
+  if (!status.configured) {
+    await openSettings(true);
     return;
   }
+  applyStatus(status);
   render();
   openPicker();
 }

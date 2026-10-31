@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::config;
 
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base: String,
@@ -101,6 +102,29 @@ impl Client {
         }
         let body = resp.text().await.unwrap_or_default();
         Err(format!("Miniflux {status}: {body}"))
+    }
+
+    /// Checks URL and API key; returns the username.
+    pub async fn check(&self) -> Result<String, String> {
+        #[derive(Deserialize)]
+        struct Me {
+            username: String,
+        }
+        let resp = self
+            .req(reqwest::Method::GET, "/me")
+            .send()
+            .await
+            .map_err(|_| format!("Could not reach Miniflux at {}. Check the address and that the server is running.", self.base))?;
+        match resp.status().as_u16() {
+            200 => resp
+                .json::<Me>()
+                .await
+                .map(|me| me.username)
+                .map_err(|_| format!("{} doesn't look like a Miniflux server", self.base)),
+            401 | 403 => Err("Miniflux rejected the API key".into()),
+            404 => Err(format!("{} doesn't look like a Miniflux server", self.base)),
+            code => Err(format!("Miniflux answered with HTTP {code}")),
+        }
     }
 
     pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, String> {

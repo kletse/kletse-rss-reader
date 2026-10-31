@@ -22,6 +22,15 @@ export type Selection =
   | { kind: "category"; id: number }
   | { kind: "feed"; id: number };
 
+export interface Status { configured: boolean; readeck: boolean; demo: boolean }
+
+export interface Settings {
+  miniflux_url: string;
+  miniflux_api_key: string;
+  readeck_url: string;
+  readeck_token: string;
+}
+
 export interface Theme {
   colors: Record<string, string>;
   rounding: number;
@@ -29,7 +38,9 @@ export interface Theme {
 }
 
 export const api = {
-  setupError: () => invoke<string | null>("setup_error"),
+  status: () => invoke<Status>("app_status"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<Status>("save_settings", { settings }),
   theme: () => invoke<Theme>("get_theme"),
   feedCounts: () => invoke<FeedCount[]>("feed_counts"),
   unreadEntries: (selection: Selection) => invoke<Entry[]>("unread_entries", { selection }),

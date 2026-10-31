@@ -39,6 +39,8 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | Feeds picker | Code, highlighted in theme colours | Keys (<kbd>?</kbd>) |
 | --- | --- | --- |
 | <img src="docs/screenshots/picker.png" alt="Feeds and categories picker"> | <img src="docs/screenshots/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/help.png" alt="Keyboard shortcut overlay"> |
+| **First-run setup** | | |
+| <img src="docs/screenshots/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> | | |
 
 <sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active.</sub>
 
@@ -60,6 +62,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |
 | <kbd>Ctrl</kbd> <kbd>0</kbd> | Reset font size and width |
+| <kbd>,</kbd> | Settings |
 | <kbd>?</kbd> | Show the keys |
 | <kbd>q</kbd> | Quit |
 
@@ -83,23 +86,28 @@ makepkg -si
 
 This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → *Kletse RSS*) and the icon. To uninstall, run `sudo pacman -R kletse-rss`.
 
-## Configure
+## Set up
 
-On first launch the app creates `~/.config/kletse-rss/config.toml` (mode `600`):
+The first time you start Kletse RSS, a welcome screen asks for:
+
+| | |
+| --- | --- |
+| **Miniflux URL + API key** | *Required.* In Miniflux: Settings → API Keys → Create a new API key. |
+| **Readeck URL + API token** | *Optional.* In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden. |
+
+**Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
+
+The settings are stored in `~/.config/kletse-rss/config.toml` (mode `600`), which you can also edit by hand:
 
 ```toml
 [miniflux]
 url = "https://miniflux.example.com"
-# Miniflux → Settings → API Keys → Create a new API key
-api_key = ""
+api_key = "…"
 
-[readeck]
+[readeck]          # optional
 url = "https://readeck.example.com"
-# Readeck → Profile → API Tokens → Create a new token (needs bookmarks write)
-token = ""
+token = "…"
 ```
-
-Fill in your Miniflux and Readeck addresses and keys, then restart the app. You only need the Readeck token if you use <kbd>b</kbd>.
 
 ## Develop
 
@@ -120,6 +128,7 @@ KLETSE_RSS_DEMO=1 npm run dev
 src/                 TypeScript UI (no framework)
   main.ts            queue state, keyboard, reader view
   picker.ts          feeds & categories overlay
+  settings.ts        onboarding / settings form
   content.ts         sanitising article HTML, embeds → links, code highlighting
   theme.ts           Omarchy palette → CSS variables, live
   api.ts             typed wrappers for the Rust commands

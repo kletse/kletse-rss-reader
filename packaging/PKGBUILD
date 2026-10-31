@@ -1,7 +1,7 @@
 # Maintainer: Ward <ward@kletse.be>
 # Builds from this local checkout: cd packaging && makepkg -si
 pkgname=kletse-rss
-pkgver=2.0.0
+pkgver=2.0.1
 pkgrel=1
 pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
 arch=('x86_64')

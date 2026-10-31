@@ -1,6 +1,6 @@
 [package]
 name = "kletse-rss"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "A one-article-at-a-time Miniflux reader for Omarchy"
 license = "MIT"

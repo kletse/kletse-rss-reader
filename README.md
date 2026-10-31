@@ -25,27 +25,22 @@ Most feed readers give you three panes and a wall of headlines. Kletse RSS shows
 
 You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, you get *“All caught up”* and you're back at the feed picker.
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ ☰ Tech                       3 / 27        🔖 Readeck ▲ ▼│
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│        LWN · Jonathan Corbet · 31 Oct 2026 · 6 min       │
-│                                                          │
-│        A look at the new scheduler                       │
-│        lwn.net                                           │
-│                                                          │
-│        Lorem ipsum dolor sit amet, consectetur           │
-│        adipiscing elit. Article text in a calm,          │
-│        centered width that scales with the font size column…                    │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/screenshots/article.png" alt="Reading an article" width="900">
+</p>
 
 - **Unread only.** Read items never appear, except ones you passed during this session, so **k** can take you back to undo.
 - **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your Omarchy theme live.** Colours, the UI font and window rounding update the moment you switch themes.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
+
+## Screenshots
+
+| Feeds picker | Code, highlighted in theme colours | Keys (<kbd>?</kbd>) |
+| --- | --- | --- |
+| <img src="docs/screenshots/picker.png" alt="Feeds and categories picker"> | <img src="docs/screenshots/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/help.png" alt="Keyboard shortcut overlay"> |
+
+<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active.</sub>
 
 ## Keys
 
@@ -104,7 +99,7 @@ url = "https://readeck.example.com"
 token = ""
 ```
 
-Fill in the keys and restart the app. You only need the Readeck token if you use <kbd>b</kbd>.
+Fill in your Miniflux and Readeck addresses and keys, then restart the app. You only need the Readeck token if you use <kbd>b</kbd>.
 
 ## Develop
 
@@ -113,6 +108,12 @@ npm install
 npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
 npm run build      # release binary → src-tauri/target/release/kletse-rss
+```
+
+**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
+
+```bash
+KLETSE_RSS_DEMO=1 npm run dev
 ```
 
 ```
@@ -128,6 +129,7 @@ src-tauri/src/
   readeck.rs         Readeck "save bookmark"
   theme.rs           reads ~/.local/state/omarchy/current/theme/colors.toml, watches for switches
   config.rs          ~/.config/kletse-rss/config.toml
+  demo.rs            sample data for KLETSE_RSS_DEMO=1
 packaging/           PKGBUILD, .desktop entry, icon
 ```
 

@@ -1,4 +1,5 @@
 mod config;
+mod demo;
 mod miniflux;
 mod readeck;
 mod theme;
@@ -10,6 +11,8 @@ use tauri::State;
 struct App {
     setup: Result<(config::Config, miniflux::Client), String>,
     http: reqwest::Client,
+    /// `KLETSE_RSS_DEMO=1`: serve built-in sample data, never touch a server.
+    demo: bool,
 }
 
 impl App {
@@ -23,7 +26,8 @@ impl App {
             let client = miniflux::Client::new(http.clone(), &cfg.miniflux);
             (cfg, client)
         });
-        Self { setup, http }
+        let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+        Self { setup, http, demo }
     }
 
     fn miniflux(&self) -> Result<&miniflux::Client, String> {
@@ -33,6 +37,9 @@ impl App {
 
 #[tauri::command]
 fn setup_error(app: State<'_, App>) -> Option<String> {
+    if app.demo {
+        return None;
+    }
     app.setup.as_ref().err().cloned()
 }
 
@@ -43,11 +50,17 @@ fn get_theme() -> theme::Theme {
 
 #[tauri::command]
 async fn feed_counts(app: State<'_, App>) -> Result<Vec<FeedCount>, String> {
+    if app.demo {
+        return Ok(demo::feed_counts());
+    }
     app.miniflux()?.feed_counts().await
 }
 
 #[tauri::command]
 async fn unread_entries(app: State<'_, App>, selection: Selection) -> Result<Vec<Entry>, String> {
+    if app.demo {
+        return Ok(demo::unread_entries(&selection));
+    }
     app.miniflux()?.unread_entries(&selection).await
 }
 
@@ -56,16 +69,25 @@ async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: String) -> Resul
     if status != "read" && status != "unread" {
         return Err(format!("invalid status {status}"));
     }
+    if app.demo {
+        return Ok(());
+    }
     app.miniflux()?.set_status(&ids, &status).await
 }
 
 #[tauri::command]
 async fn fetch_content(app: State<'_, App>, id: i64) -> Result<String, String> {
+    if app.demo {
+        return Ok(demo::content(id));
+    }
     app.miniflux()?.fetch_content(id).await
 }
 
 #[tauri::command]
 async fn refresh_feeds(app: State<'_, App>) -> Result<(), String> {
+    if app.demo {
+        return Ok(());
+    }
     app.miniflux()?.refresh_all().await
 }
 
@@ -90,6 +112,9 @@ fn open_in_browser(url: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), String> {
+    if app.demo {
+        return Ok(());
+    }
     let (cfg, _) = app.setup.as_ref().map_err(Clone::clone)?;
     readeck::save(&app.http, &cfg.readeck, &url).await
 }

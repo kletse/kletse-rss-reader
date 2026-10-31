@@ -204,7 +204,11 @@ fn quit(app: tauri::AppHandle) {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Mac apps reopen where they were left; under a tiling compositor the WM decides.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    builder
         .manage(App::new())
         .setup(|app| {
             theme::watch(app.handle().clone());

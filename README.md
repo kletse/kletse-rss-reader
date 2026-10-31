@@ -105,7 +105,7 @@ npm run build
 cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
 ```
 
-Open it from Spotlight or the Dock. The window has no title bar; drag it by the top bar. The app follows the system light/dark mode and accent colour.
+Open it from Spotlight or the Dock. The window has no title bar: drag it by the top bar, double-click the bar to zoom. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
 
 **Updating:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 

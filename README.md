@@ -60,7 +60,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>b</kbd> | Save to Readeck, mark read, go to the next article |
 | <kbd>f</kbd> | Fetch the full article (Miniflux's readability scraper) |
 | <kbd>Shift</kbd>+<kbd>A</kbd> | Mark everything in the current list read (asks first) |
-| <kbd>g</kbd> / <kbd>Tab</kbd> | Feeds & categories picker |
+| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> | Feeds & categories picker (also closes it) |
 | <kbd>r</kbd> | Refresh all feeds (in the picker) |
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Article font size (remembered) |
 | <kbd>?</kbd> | Show the keys |

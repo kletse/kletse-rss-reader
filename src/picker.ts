@@ -26,7 +26,7 @@ export const picker = {
       case "k": case "ArrowUp": move(-1); return true;
       case "Enter": if (items[cursor]) choose(items[cursor]); return true;
       case "r": refresh(); return true;
-      case "Escape": case "g": case "Tab": if (canClose) picker.hide(); return true;
+      case "Escape": case "g": case "p": case "Tab": if (canClose) picker.hide(); return true;
     }
     return false;
   },

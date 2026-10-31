@@ -37,7 +37,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 │                                                          │
 │        Lorem ipsum dolor sit amet, consectetur           │
 │        adipiscing elit. Article text in a calm,          │
-│        centered ~70 character column…                    │
+│        centered ~85 character column…                    │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```

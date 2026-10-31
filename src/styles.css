@@ -8,7 +8,7 @@
   --ui-font: monospace;
   --article-font: "Inter Variable", "Inter", system-ui, sans-serif;
   --article-size: 18px;
-  --measure: 70ch;
+  --measure: 85ch;
 }
 
 * { box-sizing: border-box; }

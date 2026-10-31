@@ -20,7 +20,7 @@ struct App {
 impl App {
     fn new() -> Self {
         let http = reqwest::Client::builder()
-            .user_agent("kletse-rss/1.0")
+            .user_agent(concat!("kletse-rss/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("http client");

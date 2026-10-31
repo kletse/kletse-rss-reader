@@ -48,3 +48,7 @@ lto = true
 strip = true
 codegen-units = 1
 panic = "abort"
+
+# Backport of the glib VariantStrIter soundness fix; see patches/glib-0.18.5/PATCHED.md.
+[patch.crates-io]
+glib = { path = "patches/glib-0.18.5" }

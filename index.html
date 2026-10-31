@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kletse RSS</title>
+  </head>
+  <body>
+    <header id="bar">
+      <button id="picker-btn" title="Feeds (g)"><span class="icon">☰</span> <span id="selection-label">Feeds</span></button>
+      <span id="position"></span>
+      <div class="bar-actions">
+        <button id="readeck-btn" title="Save to Readeck (b)">⤓ Readeck</button>
+        <button id="prev-btn" title="Previous (k)">▲</button>
+        <button id="next-btn" title="Next, mark read (j)">▼</button>
+      </div>
+    </header>
+
+    <main id="reader" tabindex="-1"></main>
+
+    <div id="picker" class="overlay" hidden>
+      <div class="panel">
+        <div class="panel-title">Feeds <span class="hint">j/k · Enter · r refresh · Esc</span></div>
+        <ul id="picker-list"></ul>
+      </div>
+    </div>
+
+    <div id="help" class="overlay" hidden>
+      <div class="panel" id="help-panel"></div>
+    </div>
+
+    <div id="confirm" class="overlay" hidden>
+      <div class="panel small">
+        <p id="confirm-text"></p>
+        <p class="hint">Enter / y to confirm · Esc / n to cancel</p>
+      </div>
+    </div>
+
+    <div id="toast" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

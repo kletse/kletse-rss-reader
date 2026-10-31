@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kletse RSS
+GenericName=Feed Reader
+Comment=Read your unread Miniflux articles one at a time
+Exec=kletse-rss
+Icon=kletse-rss
+Terminal=false
+Categories=Network;News;Feed;
+Keywords=rss;feeds;miniflux;news;
+StartupWMClass=kletse-rss

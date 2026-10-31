@@ -1,0 +1,27 @@
+# Maintainer: Ward <ward@kletse.be>
+# Builds from this local checkout: cd packaging && makepkg -si
+pkgname=kletse-rss
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
+arch=('x86_64')
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3')
+makedepends=('cargo' 'npm')
+options=('!lto' '!debug')
+
+_root() { realpath "$startdir/.."; }
+
+build() {
+  cd "$(_root)"
+  npm ci
+  npx tauri build --no-bundle
+}
+
+package() {
+  local root; root="$(_root)"
+  install -Dm755 "$root/src-tauri/target/release/kletse-rss" "$pkgdir/usr/bin/kletse-rss"
+  install -Dm644 "$root/packaging/kletse-rss.desktop" "$pkgdir/usr/share/applications/kletse-rss.desktop"
+  install -Dm644 "$root/packaging/kletse-rss.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/kletse-rss.svg"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,22 +1,29 @@
 // The small overlays: key help, yes/no confirmation, and the toast.
-import { For, Show } from "solid-js";
+import { type Accessor, For, type JSX, Show } from "solid-js";
 import { KEYS } from "../keys";
-import { confirmText, toastMessage } from "../state";
+import { confirmText, type Toast as ToastMessage, toastMessage } from "../state/ui";
 
-export function Help() {
+export function Help(): JSX.Element {
   return (
     <div id="help" class="overlay">
       <div class="panel" id="help-panel">
         <div class="panel-title">Keys</div>
         <dl>
-          <For each={KEYS}>{([k, v]) => <><dt>{k}</dt><dd>{v}</dd></>}</For>
+          <For each={KEYS}>
+            {([key, action]: readonly [string, string]): JSX.Element => (
+              <>
+                <dt>{key}</dt>
+                <dd>{action}</dd>
+              </>
+            )}
+          </For>
         </dl>
       </div>
     </div>
   );
 }
 
-export function Confirm() {
+export function Confirm(): JSX.Element {
   return (
     <div id="confirm" class="overlay">
       <div class="panel small">
@@ -27,10 +34,14 @@ export function Confirm() {
   );
 }
 
-export function Toast() {
+export function Toast(): JSX.Element {
   return (
     <Show when={toastMessage()}>
-      {(t) => <div id="toast" class={t().kind}>{t().message}</div>}
+      {(t: Accessor<ToastMessage>): JSX.Element => (
+        <div id="toast" role="status" data-kind={t().kind}>
+          {t().message}
+        </div>
+      )}
     </Show>
   );
 }

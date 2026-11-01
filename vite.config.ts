@@ -1,5 +1,5 @@
-import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
+import { defineConfig } from "vitest/config";
 
 // Tauri expects a fixed port in dev and plain static files in build.
 export default defineConfig({

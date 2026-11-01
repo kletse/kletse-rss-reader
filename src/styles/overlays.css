@@ -1,0 +1,138 @@
+/* The picker, help, confirm dialog and toast. */
+@layer app {
+  /* ---- Overlays ------------------------------------------------------- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--bg-dark) 70%, transparent);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-block: 8vh;
+    padding-inline: 16px;
+    z-index: 10;
+  }
+  .panel {
+    inline-size: min(560px, 100%);
+    max-block-size: 80vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+  }
+  .panel.small {
+    padding-block: 16px;
+    padding-inline: 20px;
+  }
+  .panel-title {
+    padding-block: 10px;
+    padding-inline: 14px;
+    border-block-end: 1px solid var(--bg-light);
+    color: var(--accent);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  #help-btn {
+    margin-inline-start: auto;
+  }
+  #settings-btn,
+  #mode-btn,
+  #help-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding-block: 2px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+
+  #picker-list {
+    list-style: none;
+    margin: 0;
+    padding-block: 6px;
+    padding-inline: 0;
+    overflow-y: auto;
+  }
+  #picker-list button {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    inline-size: 100%;
+    padding-block: 5px;
+    padding-inline: 14px;
+    border: none;
+    border-radius: 0;
+    text-align: start;
+    cursor: pointer;
+  }
+  #picker-list button:hover {
+    background: var(--bg-light);
+  }
+  #picker-list button[data-depth="0"] {
+    color: var(--fg-bright);
+    margin-block-start: 4px;
+  }
+  #picker-list button[data-depth="1"] {
+    padding-inline-start: 32px;
+    color: var(--fg);
+  }
+  #picker-list button[aria-current="true"] {
+    background: var(--selection);
+    color: var(--fg-bright);
+  }
+  #picker-list li.empty {
+    padding-block: 5px;
+    padding-inline: 14px;
+    color: var(--fg-dim);
+  }
+  #picker-list li.error {
+    color: var(--red);
+    white-space: pre-wrap;
+  }
+  #picker-list .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #picker-list .count {
+    color: var(--fg-dim);
+  }
+
+  #help-panel dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 20px;
+    margin: 0;
+    padding: 14px;
+    overflow-y: auto;
+  }
+  #help-panel dt {
+    color: var(--accent);
+  }
+  #help-panel dd {
+    margin: 0;
+  }
+
+  #toast {
+    position: fixed;
+    inset-block-end: 16px;
+    inset-inline: 0;
+    margin-inline: auto;
+    inline-size: fit-content;
+    max-inline-size: calc(100% - 32px);
+    background: var(--bg-light);
+    color: var(--fg-bright);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding-block: 8px;
+    padding-inline: 14px;
+    z-index: 20;
+    white-space: pre-wrap;
+  }
+  #toast[data-kind="error"] {
+    border-color: var(--red);
+  }
+}

@@ -1,0 +1,71 @@
+/* The settings and onboarding form, shown in place of the article. */
+@layer app {
+  /* ---- Settings / onboarding ---------------------------------------- */
+  .settings {
+    max-inline-size: 560px;
+    margin-inline: auto;
+    padding-block-start: 4vh;
+  }
+  .settings h1 {
+    font-family: var(--article-font);
+    color: var(--fg-bright);
+    margin-block: 0 8px;
+    margin-inline: 0;
+  }
+  .settings .intro {
+    color: var(--fg-dim);
+    margin-block: 0 28px;
+    margin-inline: 0;
+    line-height: 1.5;
+  }
+  .settings fieldset {
+    border: 1px solid var(--bg-light);
+    border-radius: var(--radius);
+    margin-block: 0 18px;
+    margin-inline: 0;
+    padding-block: 12px 16px;
+    padding-inline: 16px;
+  }
+  .settings legend {
+    color: var(--accent);
+    padding-block: 0;
+    padding-inline: 6px;
+  }
+  .settings label {
+    display: block;
+    margin-block-start: 10px;
+  }
+  .settings label > span {
+    display: block;
+    color: var(--fg-dim);
+    font-size: 12px;
+    margin-block-end: 4px;
+  }
+  .settings input {
+    inline-size: 100%;
+    font: inherit;
+    color: var(--fg-bright);
+    background: var(--bg-dark);
+    border: 1px solid var(--bg-light);
+    border-radius: var(--radius);
+    padding-block: 8px;
+    padding-inline: 10px;
+    outline: none;
+  }
+  .settings input:focus {
+    border-color: var(--accent);
+  }
+  .settings input::placeholder {
+    color: var(--muted);
+  }
+  .settings .form-error {
+    color: var(--bright-red);
+    min-block-size: 1.2em;
+    white-space: pre-wrap;
+  }
+  .settings .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+}

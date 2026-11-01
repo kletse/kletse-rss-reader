@@ -1,0 +1,6 @@
+/* State that must win over every layout rule above, without !important. */
+@layer state {
+  [hidden] {
+    display: none;
+  }
+}

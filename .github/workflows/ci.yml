@@ -10,7 +10,7 @@ env:
 
 jobs:
   ui:
-    name: UI type-check and tests
+    name: UI lint, type-check and tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +19,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npx biome ci
       - run: npm run check
       - run: npm test
 

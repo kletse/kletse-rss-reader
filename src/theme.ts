@@ -1,37 +1,54 @@
 // Maps the theme palette (Omarchy colors.toml on Linux, system appearance on macOS) onto CSS variables, live.
 import { listen } from "@tauri-apps/api/event";
-import { api, type Theme } from "./api";
+import { api, HUES, type Theme } from "./api";
 
-function apply(theme: Theme) {
-  const c = theme.colors;
+/** CSS generic families (`ui-monospace`, `system-ui`, …) are a single lowercase word, maybe with dashes. */
+const GENERIC_FAMILY = /^[a-z-]+$/u;
+
+/** The base palette: CSS variable, the theme's value, and a Tokyo Night fallback. */
+function palette(c: Theme["colors"]): [string, string | undefined, string][] {
+  return [
+    ["--bg", c.background, "#1a1b26"],
+    ["--bg-light", c.lighter_background, "#24283b"],
+    ["--bg-dark", c.dark_background, "#16161e"],
+    ["--fg", c.foreground, "#c0caf5"],
+    ["--fg-dim", c.dark_foreground, "#787c99"],
+    ["--fg-bright", c.bright_foreground ?? c.light_foreground, "#ffffff"],
+    ["--accent", c.accent, "#7aa2f7"],
+    ["--muted", c.muted, "#565f89"],
+    ["--selection", c.selection, "#33467c"],
+  ];
+}
+
+/** Hues the theme doesn't define keep the defaults from styles/tokens.css. */
+function hues(c: Theme["colors"]): [string, string][] {
+  return HUES.flatMap((hue): [string, string | undefined][] => [
+    [`--${hue}`, c[hue]],
+    [`--bright-${hue}`, c[`bright_${hue}`]],
+  ]).filter((pair): pair is [string, string] => pair[1] !== undefined);
+}
+
+function apply(theme: Theme): void {
   const root = document.documentElement.style;
-  const set = (name: string, value: string | undefined, fallback: string) =>
+  for (const [name, value, fallback] of palette(theme.colors)) {
     root.setProperty(name, value ?? fallback);
-
-  set("--bg", c.background, "#1a1b26");
-  set("--bg-light", c.lighter_background, "#24283b");
-  set("--bg-dark", c.dark_background, "#16161e");
-  set("--fg", c.foreground, "#c0caf5");
-  set("--fg-dim", c.dark_foreground, "#787c99");
-  set("--fg-bright", c.bright_foreground ?? c.light_foreground, "#ffffff");
-  set("--accent", c.accent, "#7aa2f7");
-  set("--muted", c.muted, "#565f89");
-  set("--selection", c.selection, "#33467c");
-  for (const name of ["red", "yellow", "green", "cyan", "blue", "magenta", "orange"]) {
-    if (c[name]) root.setProperty(`--${name}`, c[name]);
-    if (c[`bright_${name}`]) root.setProperty(`--bright-${name}`, c[`bright_${name}`]);
+  }
+  for (const [name, value] of hues(theme.colors)) {
+    root.setProperty(name, value);
   }
   root.setProperty("--radius", `${theme.rounding}px`);
-  if (theme.font) root.setProperty("--ui-font", `${fontFamily(theme.font)}, monospace`);
-  document.documentElement.dataset.mode = c.mode ?? "dark";
+  if (theme.font !== undefined && theme.font !== "") {
+    root.setProperty("--ui-font", `${fontFamily(theme.font)}, monospace`);
+  }
+  document.documentElement.setAttribute("data-mode", theme.colors.mode ?? "dark");
 }
 
 /** CSS generic families (`ui-monospace`, `system-ui`, …) go unquoted; real names get quotes. */
 export function fontFamily(name: string): string {
-  return /^[a-z-]+$/.test(name) ? name : `"${name}"`;
+  return GENERIC_FAMILY.test(name) ? name : `"${name}"`;
 }
 
-export async function initTheme() {
+export async function initTheme(): Promise<void> {
   apply(await api.theme());
   await listen<Theme>("theme-changed", (event) => apply(event.payload));
 }

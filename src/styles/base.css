@@ -1,0 +1,45 @@
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    block-size: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--ui-font);
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  ::selection {
+    background: var(--selection);
+    color: var(--fg-bright);
+  }
+  /* The app mounts here; it stays out of the body's flex layout. */
+  #root {
+    display: contents;
+  }
+  button {
+    font: inherit;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--bg-light);
+    border-radius: var(--radius);
+    padding-block: 4px;
+    padding-inline: 10px;
+    cursor: pointer;
+  }
+  button:hover {
+    border-color: var(--accent);
+    color: var(--fg-bright);
+  }
+  button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+}

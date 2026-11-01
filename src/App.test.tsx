@@ -1,47 +1,90 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Entry, FeedCount, Status } from "./api";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { App } from "./App";
+import type { Entry, EntryPage, EntryStatus, FeedCount, api as realApi, Selection, Status } from "./api";
+import { HISTORY_PAGE, hasMore, queue } from "./state/queue";
+import { closeSettings, start } from "./state/settings";
+import { setOverlay } from "./state/ui";
 
-const entry = (id: number, title: string, status: Entry["status"] = "unread"): Entry => ({
-  id, title, url: `https://example.com/${id}`, author: "", content: `<p>${title} body</p>`,
-  published_at: "2026-10-01T10:00:00Z", status, reading_time: 1, feed: { id: 1, title: "Feed" },
-});
+type Api = typeof realApi;
+type MockedApi = { [K in keyof Api]: Mock<Api[K]> };
+
+const api = vi.hoisted(
+  (): MockedApi => ({
+    status: vi.fn(),
+    getSettings: vi.fn(),
+    saveSettings: vi.fn(),
+    theme: vi.fn(),
+    feedCounts: vi.fn(),
+    unreadEntries: vi.fn(),
+    readEntries: vi.fn(),
+    setStatus: vi.fn(),
+    fetchContent: vi.fn(),
+    refreshFeeds: vi.fn(),
+    saveToReadeck: vi.fn(),
+    openInBrowser: vi.fn(),
+    quit: vi.fn(),
+  }),
+);
+vi.mock("./api", () => ({ api }));
+vi.mock("./theme", () => ({ initTheme: (): Promise<void> => Promise.resolve() }));
+
+function noLayout(): void {
+  // jsdom does no layout, so it has no scrolling methods.
+}
+Element.prototype.scrollIntoView = noLayout;
+Element.prototype.scrollBy = noLayout;
+
+function entry(id: number, title: string, status: EntryStatus = "unread"): Entry {
+  return {
+    id,
+    title,
+    url: `https://example.com/${id}`,
+    author: "",
+    content: `<p>${title} body</p>`,
+    published_at: "2026-10-01T10:00:00Z",
+    status,
+    reading_time: 1,
+    feed: { id: 1, title: "Feed" },
+  };
+}
 const counts: FeedCount[] = [{ feed: { id: 1, title: "Feed", category: { id: 1, title: "Dev" } }, unread: 2, read: 3 }];
 const configured: Status = { configured: true, readeck: false, demo: true };
 
-const api = vi.hoisted(() => ({
-  status: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn(), theme: vi.fn(), feedCounts: vi.fn(),
-  unreadEntries: vi.fn(), readEntries: vi.fn(), setStatus: vi.fn(), fetchContent: vi.fn(), refreshFeeds: vi.fn(),
-  saveToReadeck: vi.fn(), openInBrowser: vi.fn(), quit: vi.fn(),
-}));
-vi.mock("./api", () => ({ api }));
-vi.mock("./theme", () => ({ initTheme: async () => {} }));
-Element.prototype.scrollIntoView = () => {}; // not in jsdom
-Element.prototype.scrollBy = () => {};
+/** Key events bubble from the body to the window, where the app listens. */
+function key(k: string, opts: KeyboardEventInit = {}): void {
+  fireEvent.keyDown(document.body, { key: k, ...opts });
+}
 
-const { App } = await import("./App");
-const s = await import("./state");
-
-const key = (k: string, opts: KeyboardEventInit = {}) => fireEvent.keyDown(window, { key: k, ...opts });
+function element(selector: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(selector);
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.status.mockResolvedValue(configured);
   api.feedCounts.mockResolvedValue(counts);
-  api.unreadEntries.mockImplementation(async () => [entry(1, "First"), entry(2, "Second")]);
-  api.setStatus.mockResolvedValue(undefined);
-  api.getSettings.mockResolvedValue({ miniflux_url: "https://mf", miniflux_api_key: "k", readeck_url: "", readeck_token: "" });
-  s.setOverlay("none");
+  api.unreadEntries.mockResolvedValue([entry(1, "First"), entry(2, "Second")]);
+  api.setStatus.mockResolvedValue();
+  api.getSettings.mockResolvedValue({
+    miniflux_url: "https://mf",
+    miniflux_api_key: "k",
+    readeck_url: "",
+    readeck_token: "",
+  });
+  setOverlay("none");
 });
 afterEach(cleanup);
 
 /** Waits until the picker is open with its rows loaded. */
-const pickerLoaded = () => waitFor(() => expect(document.querySelector("#picker-list li.depth-0")).not.toBeNull());
+async function pickerLoaded(): Promise<void> {
+  await waitFor(() => expect(element("#picker-list button[data-depth='0']")).not.toBeNull());
+}
 
 /** Starts the app and opens "All unread" from the picker. */
-async function openQueue() {
+async function openQueue(): Promise<void> {
   render(() => <App />);
-  await s.start();
+  await start();
   await pickerLoaded();
   key("Enter");
   await screen.findByText("First");
@@ -56,7 +99,7 @@ describe("reader", () => {
     expect(api.setStatus).toHaveBeenCalledWith([1], "read");
     key("k");
     await screen.findByText("First");
-    expect(document.querySelector(".status")?.textContent).toBe("read");
+    expect(element(".status")?.textContent).toBe("read");
   });
 
   it("n skips without marking read, and the end says all caught up", async () => {
@@ -72,31 +115,35 @@ describe("reader", () => {
     await openQueue();
     key("m");
     await screen.findByText("offline");
-    expect(document.querySelector(".status")?.textContent).toBe("unread");
+    expect(element(".status")?.textContent).toBe("unread");
   });
 
-  it("Esc opens the picker, and Esc closes it again once there is a queue", async () => {
+  it("esc opens the picker, and Esc closes it again once there is a queue", async () => {
     await openQueue();
     key("Escape");
     await pickerLoaded();
     key("Escape");
-    await waitFor(() => expect(document.getElementById("picker")).toBeNull());
+    await waitFor(() => expect(element("#picker")).toBeNull());
   });
 });
 
 describe("history", () => {
   /** Read entries newest first, `total` of them, served a page at a time. */
-  function serveHistory(total: number) {
-    api.readEntries.mockImplementation(async (_sel, offset: number, limit: number) => ({
-      total,
-      entries: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) =>
-        entry(total - offset - i, `Read ${total - offset - i}`, "read")),
-    }));
+  function serveHistory(total: number): void {
+    api.readEntries.mockImplementation(
+      (_selection: Selection, offset: number, limit: number): Promise<EntryPage> =>
+        Promise.resolve({
+          total,
+          entries: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) =>
+            entry(total - offset - i, `Read ${total - offset - i}`, "read"),
+          ),
+        }),
+    );
   }
 
-  async function openHistory() {
+  async function openHistory(): Promise<void> {
     render(() => <App />);
-    await s.start();
+    await start();
     await pickerLoaded();
     key("h");
     await screen.findByText("History", { selector: ".panel-title span" });
@@ -108,29 +155,33 @@ describe("history", () => {
     serveHistory(3);
     await openHistory();
     await screen.findByText("Read 3");
-    expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, 0, s.HISTORY_PAGE);
-    expect(document.getElementById("mode-badge")?.hidden).toBe(false);
+    expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, 0, HISTORY_PAGE);
+    expect(element("#mode-badge")?.hidden).toBe(false);
     key("j");
     await screen.findByText("Read 2");
     expect(api.setStatus).not.toHaveBeenCalled(); // already read
     key("m");
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith([2], "unread"));
-    expect(document.querySelector(".status")?.textContent).toBe("unread");
+    expect(element(".status")?.textContent).toBe("unread");
     key("k");
     await screen.findByText("Read 3");
-    key("n"); key("n"); key("n");
+    key("n");
+    key("n");
+    key("n");
     await screen.findByText("End of history");
   });
 
   it("loads the next page as you get near the end", async () => {
-    serveHistory(s.HISTORY_PAGE + 5);
+    serveHistory(HISTORY_PAGE + 5);
     await openHistory();
-    await screen.findByText(`Read ${s.HISTORY_PAGE + 5}`);
-    expect(screen.getByText(`1 / ${s.HISTORY_PAGE + 5}`)).toBeTruthy();
-    for (let i = 0; i < s.HISTORY_PAGE - 10; i++) key("n");
-    await waitFor(() => expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, s.HISTORY_PAGE, s.HISTORY_PAGE));
-    await waitFor(() => expect(s.queue().length).toBe(s.HISTORY_PAGE + 5));
-    expect(s.hasMore()).toBe(false);
+    await screen.findByText(`Read ${HISTORY_PAGE + 5}`);
+    expect(screen.getByText(`1 / ${HISTORY_PAGE + 5}`)).toBeTruthy();
+    for (let i = 0; i < HISTORY_PAGE - 10; i += 1) {
+      key("n");
+    }
+    await waitFor(() => expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, HISTORY_PAGE, HISTORY_PAGE));
+    await waitFor(() => expect(queue()).toHaveLength(HISTORY_PAGE + 5));
+    expect(hasMore()).toBe(false);
   });
 
   it("h in the reader opens the picker in the other mode; Esc goes back to the open queue", async () => {
@@ -138,31 +189,43 @@ describe("history", () => {
     key("h");
     await screen.findByText("History", { selector: ".panel-title span" });
     key("Escape");
-    await waitFor(() => expect(document.getElementById("picker")).toBeNull());
+    await waitFor(() => expect(element("#picker")).toBeNull());
     expect(screen.getByText("First")).toBeTruthy();
-    expect(document.getElementById("mode-badge")?.hidden).toBe(true);
+    expect(element("#mode-badge")?.hidden).toBe(true);
   });
 });
 
 describe("overlays", () => {
   it("the picker can't be dismissed before anything was opened", async () => {
     render(() => <App />);
-    await s.start();
-    s.closeSettings({ ...configured }); // resets the queue and selection
+    await start();
+    closeSettings({ ...configured }); // resets the queue and selection
     await pickerLoaded();
     key("Escape");
-    expect(document.getElementById("picker")).not.toBeNull();
+    expect(element("#picker")).not.toBeNull();
   });
 
   it("the confirm dialog swallows reader keys", async () => {
     await openQueue();
     key("A", { shiftKey: true });
-    await screen.findByText(/Mark all 2 unread items/);
+    await screen.findByText(/Mark all 2 unread items/u);
     key("j");
     expect(screen.getByText("First")).toBeTruthy();
     key("n");
-    await waitFor(() => expect(document.getElementById("confirm")).toBeNull());
+    await waitFor(() => expect(element("#confirm")).toBeNull());
     expect(api.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("? in the picker shows the keys, and closing them goes back to the picker", async () => {
+    render(() => <App />);
+    await start();
+    await pickerLoaded();
+    expect(screen.queryByText(/r refresh/u)).toBeNull(); // the picker itself only shows "?"
+    key("?");
+    await screen.findByText("Keys");
+    key("Escape");
+    await waitFor(() => expect(screen.queryByText("Keys")).toBeNull());
+    expect(element("#picker")).not.toBeNull();
   });
 
   it("help opens with ? and closes with Esc", async () => {
@@ -175,24 +238,24 @@ describe("overlays", () => {
 });
 
 describe("settings", () => {
-  it("Esc cancels settings", async () => {
+  it("esc cancels settings", async () => {
     await openQueue();
     key(",");
     await screen.findByText("Settings");
     key("Escape");
-    await screen.findByText("First");
+    expect(await screen.findByText("First")).toBeTruthy();
   });
 
   it("onboarding can't be cancelled and connects on submit", async () => {
     api.status.mockResolvedValue({ configured: false, readeck: false, demo: false });
     api.saveSettings.mockResolvedValue({ ...configured, readeck: true });
     render(() => <App />);
-    await s.start();
+    await start();
     await screen.findByText("Welcome to Kletse RSS");
     key("Escape");
     expect(screen.getByText("Welcome to Kletse RSS")).toBeTruthy();
     fireEvent.click(screen.getByText("Connect"));
     await pickerLoaded();
-    expect(document.getElementById("readeck-btn")?.hidden).toBe(false);
+    expect(element("#readeck-btn")?.hidden).toBe(false);
   });
 });

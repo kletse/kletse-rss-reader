@@ -1,0 +1,223 @@
+// Biome: lint and format for the UI (TypeScript/TSX, CSS, JSON, Markdown). The Rust side uses rustfmt and clippy.
+// Strategy: every stable rule ("all") plus every nursery rule, then switch off only what can't apply to this
+// stack or would make the code worse. Each rule that is off says why.
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    // Vendored glib sources and Tauri-generated schemas aren't ours to lint.
+    "includes": ["**", "!package-lock.json", "!src-tauri/patches", "!src-tauri/capabilities"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120 // same as src-tauri/rustfmt.toml
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "all",
+      "complexity": {
+        // `void promise` marks a deliberate fire-and-forget (errors are handled inside); noFloatingPromises needs it.
+        "noVoid": "off"
+      },
+      "correctness": {
+        // React Native and Qwik rules; this is SolidJS.
+        "noReactNativeRawText": "off",
+        "useQwikValidLexicalScope": "off",
+        // TypeScript with bundler resolution imports without extensions.
+        "useImportExtensions": "off",
+        // Aimed at React's useId for reusable components; these ids are app singletons the CSS and tests use.
+        "useUniqueElementIds": "off"
+      },
+      "performance": {
+        // Solid components run once; an inline handler isn't recreated on every render as in React.
+        "noJsxPropsBind": "off"
+      },
+      "style": {
+        // Theme colours are hex values (Omarchy colors.toml, Tokyo Night fallbacks).
+        "noHexColors": "off",
+        // The UI is English only; there's no translation layer to route text through.
+        "noJsxLiterals": "off",
+        // Ternaries are the idiomatic conditional in JSX; noNestedTernary still keeps them flat.
+        "noTernary": "off",
+        // A `default:` would hide a missing case; nursery/useExhaustiveSwitchCases checks every union member.
+        "useDefaultSwitchClause": "off",
+        // Modules read top-down (types, then the code that uses them); moving all exports last would invert that.
+        "useExportsLast": "off",
+        // Components are PascalCase.tsx; everything else kebab-case.
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": { "filenameCases": ["kebab-case", "PascalCase", "export"] }
+        },
+        // The wire format is snake_case (Miniflux API, Rust serde, Omarchy colors.toml) and DOMPurify's
+        // options are SCREAMING_CASE; renaming would mean a mapping layer for no gain.
+        "useNamingConvention": "off"
+      },
+      "suspicious": {
+        // Flags Solid's `class`, `classList` and Tauri's `data-tauri-drag-region` as unknown React attributes.
+        "noUnknownAttribute": "off",
+        // The app runs in a known WebKit (Tauri), not the open web; ::selection and display: contents are fine there.
+        "useBaseline": "off"
+      },
+      // Every nursery rule except the ones for frameworks this app doesn't use (Vue, Svelte, Astro, Tailwind,
+      // React, Bun, Playwright, TanStack) and noRestrictedDependencies, which needs a deny-list (nothing to deny).
+      "nursery": {
+        "noAccidentalBitwiseOperators": "error",
+        "noArgumentsCallerOrCallee": "error",
+        "noArraySortForMinMax": "error",
+        "noBaseToString": "error",
+        "noBooleanSortComparator": "error",
+        "noConsoleSpaces": "error",
+        "noDanglingUnderscore": "error",
+        "noDoubleComparison": "error",
+        "noDuplicateMapKeys": "error",
+        "noEagerArrayMethodsInLoops": "error",
+        "noExcessiveStatementsPerFunction": "error",
+        "noExtendNative": "error",
+        "noFloatingPromises": "error",
+        "noImpliedEval": "error",
+        "noInvalidFileInputAccept": "error",
+        "noInvalidPropertyInitValue": "error",
+        "noInvalidThis": "error",
+        "noJsRestrictedProperties": "error",
+        "noJsonUnsafeValues": "error",
+        "noMagicArrayFlatDepth": "error",
+        "noMeaninglessVoidOperator": "error",
+        "noMisleadingReturnType": "error",
+        "noMisplacedListElements": "error",
+        "noMisusedPromises": "error",
+        "noNegationInEqualityCheck": "error",
+        "noNestedSwitch": "error",
+        "noNestedTemplateLiterals": "error",
+        "noNewRequire": "error",
+        "noNonScalableViewport": "error",
+        "noNull": "error",
+        "noObjectConstructor": "error",
+        "noObsoleteAttributes": "error",
+        "noObsoleteTags": "error",
+        "noOctal": "error",
+        "noPathConcat": "error",
+        "noProcessExit": "error",
+        "noPromiseExecutorReturn": "error",
+        "noReturnArrayPush": "error",
+        "noReturnInFinally": "error",
+        "noSelfImport": "error",
+        "noSelfNestedLayer": "error",
+        "noShortTimeValues": "error",
+        "noThisOutsideOfClass": "error",
+        "noUndeclaredClasses": "error",
+        "noUndeclaredCustomProperties": "error",
+        "noUnmodifiedLoopCondition": "error",
+        "noUnreadableForOfExpression": "error",
+        "noUnreadableIife": "error",
+        "noUnsafeIframeSandbox": "error",
+        "noUnsafePlusOperands": "error",
+        "noUnsafeReturn": "error",
+        "noUnsafeTypeAssertion": "error",
+        "noUnsafeUnaryMinus": "error",
+        "noUnusedClasses": "error",
+        "noUselessAssignment": "error",
+        "noUselessCall": "error",
+        "noUselessDateGetTime": "error",
+        "noUselessRecursion": "error",
+        "noUselessSplice": "error",
+        "noUselessTypeConversion": "error",
+        "noXorAsExponentiation": "error",
+        "noYamlBooleanKeys": "error",
+        "noZeroFractions": "error",
+        "noZeroLengthUnit": "error",
+        "useAwaitThenable": "error",
+        "useBetterDomTraversing": "error",
+        "useBigintLiterals": "error",
+        "useBlockStatementOverIife": "error",
+        "useCapitalizedConstructors": "error",
+        "useConsistentBlockLang": "error",
+        // Function declarations (hoisted, named in stack traces); arrows stay fine for callbacks and accessors.
+        "useConsistentFunctionStyle": {
+          "level": "error",
+          "options": { "style": "declaration", "allowArrowFunctions": true }
+        },
+        "useConsistentHeadingLevel": "error",
+        "useConsistentJsonFileRead": "error",
+        "useConsistentLightnessNotation": "error",
+        "useConsistentObjectKeys": "error",
+        "useConsistentUnicodeBom": "error",
+        "useControlLabel": "error",
+        "useDisposables": "error",
+        "useExhaustiveSwitchCases": "error",
+        "useExpectToContain": "error",
+        "useExplicitReturnType": "error",
+        "useExplicitType": "error",
+        "useFencedCodeLanguage": "error",
+        "useFlatMathMinMax": "error",
+        "useIncludes": "error",
+        "useIteratorZip": "error",
+        "useLayeredStyles": "error",
+        "useLogicalProperties": "error",
+        "useLowercaseTestTitle": "error",
+        "useMatchingFunctionName": "error",
+        "useMathAbs": "error",
+        "useMathTrunc": "error",
+        "useModernMathApis": "error",
+        "useNamedFunction": "error",
+        "useNamedLayer": "error",
+        "useNullishCoalescing": "error",
+        "usePackageJsonValidCpu": "error",
+        "usePackageJsonValidEngines": "error",
+        "usePromiseRejectErrors": "error",
+        "useRegexpExec": "error",
+        "useSimplifiedBooleanReturn": "error",
+        "useSingleTopLevelHeading": "error",
+        "useStrictBooleanExpressions": "error",
+        "useStringStartsEndsWith": "error",
+        "useTopLevelHeading": "error",
+        "useUnaryMinus": "error",
+        "useValidTestTitle": "error",
+        "useWhileLoopCondition": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          // Tests are long lists of assertions with literal fixtures, grouped in describe() blocks.
+          "complexity": { "noExcessiveLinesPerFunction": "off", "useMaxParams": "off" },
+          "nursery": { "noExcessiveStatementsPerFunction": "off" },
+          "performance": { "useTopLevelRegex": "off" },
+          // Fixture strings (base64 images, font names) look like secrets to the entropy check.
+          "security": { "noSecrets": "off" },
+          // After an explicit null check in an assertion, `!` is clearer than another guard.
+          "style": { "noMagicNumbers": "off", "noNonNullAssertion": "off" },
+          // Shared helpers like pickerLoaded() assert inside waitFor().
+          "suspicious": { "noMisplacedAssertion": "off" }
+        }
+      }
+    },
+    {
+      // Vite requires a default export.
+      "includes": ["vite.config.ts"],
+      "linter": { "rules": { "style": { "noDefaultExport": "off" } } }
+    }
+  ]
+}

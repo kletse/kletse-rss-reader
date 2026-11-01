@@ -16,9 +16,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app"
-    ],
+    "targets": ["app"],
     "category": "News",
     "macOS": {
       "minimumSystemVersion": "11.0"

@@ -1,0 +1,46 @@
+/* Syntax highlighting in theme colours. highlight.js adds these classes to code blocks at runtime. */
+/* biome-ignore-start lint/nursery/noUnusedClasses: highlight.js adds these classes at runtime, so no markup has them */
+@layer syntax {
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-built_in {
+    color: var(--magenta);
+  }
+  .hljs-string,
+  .hljs-attr,
+  .hljs-template-tag {
+    color: var(--green);
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-symbol {
+    color: var(--orange);
+  }
+  .hljs-comment,
+  .hljs-quote {
+    color: var(--fg-dim);
+    font-style: italic;
+  }
+  .hljs-title,
+  .hljs-section,
+  .hljs-function {
+    color: var(--blue);
+  }
+  .hljs-type,
+  .hljs-class,
+  .hljs-variable {
+    color: var(--yellow);
+  }
+  .hljs-meta,
+  .hljs-tag,
+  .hljs-name {
+    color: var(--cyan);
+  }
+  .hljs-deletion {
+    color: var(--red);
+  }
+  .hljs-addition {
+    color: var(--green);
+  }
+}
+/* biome-ignore-end lint/nursery/noUnusedClasses: highlight.js adds these classes at runtime, so no markup has them */

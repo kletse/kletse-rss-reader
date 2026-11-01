@@ -88,7 +88,7 @@ const READER_KEYS = keymap([
   [["f"], always(() => void fetchFull())],
   [["A"], always(() => void markAllRead())],
   [["h"], always(toggleMode)],
-  [["g", "p", "Tab", "Escape"], always(() => openPicker())],
+  [["g", "p", "Tab", "Escape", "ArrowLeft"], always(() => openPicker())],
   [["["], always(narrower)],
   [["]"], always(wider)],
   [["?"], always(openHelp)],

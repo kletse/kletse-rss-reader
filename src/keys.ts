@@ -17,7 +17,7 @@ export const KEYS: readonly (readonly [key: string, action: string])[] = [
   ["b", "save to Readeck, then next"],
   ["f", "fetch full article"],
   ["Shift+A", "mark whole queue read"],
-  ["g / p / Tab / Esc", "feeds picker"],
+  ["g / p / Tab / Esc / ←", "feeds picker (→ picks a row)"],
   ["r", "refresh feeds (in picker)"],
   ["h", "history: read items, newest first (again for unread)"],
   ["Space / Shift+Space", "scroll; Space at the end = next"],

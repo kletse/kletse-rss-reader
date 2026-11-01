@@ -118,6 +118,15 @@ describe("reader", () => {
     expect(element(".status")?.textContent).toBe("unread");
   });
 
+  it("← opens the picker, and → opens the chosen row", async () => {
+    await openQueue();
+    key("ArrowLeft");
+    await pickerLoaded();
+    key("ArrowRight");
+    await waitFor(() => expect(element("#picker")).toBeNull());
+    expect(await screen.findByText("First")).toBeTruthy();
+  });
+
   it("esc opens the picker, and Esc closes it again once there is a queue", async () => {
     await openQueue();
     key("Escape");

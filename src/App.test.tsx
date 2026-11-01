@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-li
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { App } from "./App";
 import type { AppStatus, Entry, EntryPage, EntryStatus, FeedCount, api as realApi, Selection } from "./api";
-import { HISTORY_PAGE, hasMore, queue } from "./state/queue";
+import { clearQueue, HISTORY_PAGE, hasMore, queue } from "./state/queue";
 import { closeSettings, start } from "./state/settings";
 import { setOverlay } from "./state/ui";
 
@@ -75,6 +75,7 @@ beforeEach(() => {
     readeck_token: "",
   });
   setOverlay("none");
+  clearQueue();
 });
 afterEach(cleanup);
 
@@ -118,6 +119,43 @@ describe("reader", () => {
     key("m");
     await screen.findByText("offline");
     expect(element(".status")?.textContent).toBe("unread");
+  });
+
+  it("f fetches the full article once, then switches between it and the feed's version", async () => {
+    api.fetchContent.mockResolvedValue("<p>Full text</p>");
+    await openQueue();
+    key("f");
+    await screen.findByText("Full text");
+    expect(api.fetchContent).toHaveBeenCalledWith(1);
+    expect(screen.getByText("Full article")).toBeTruthy();
+    key("f");
+    await screen.findByText("First body");
+    expect(screen.getByText("Feed version")).toBeTruthy();
+    key("f");
+    await screen.findByText("Full text");
+    expect(screen.getByText("Full article")).toBeTruthy();
+    expect(api.fetchContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("f finishing after moving on leaves the article on screen alone", async () => {
+    let finish: (content: string) => void = noLayout;
+    api.fetchContent.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await openQueue();
+    key("f");
+    key("n");
+    await screen.findByText("Second");
+    finish("<p>Full text</p>");
+    await waitFor(() => expect(queue()[0]?.content).toBe("<p>Full text</p>"));
+    expect(screen.queryByText("Full article")).toBeNull();
+    key("k");
+    await screen.findByText("Full text");
+    key("f");
+    await screen.findByText("First body");
+    expect(api.fetchContent).toHaveBeenCalledTimes(1);
   });
 
   it("← opens the picker, and → opens the chosen row", async () => {

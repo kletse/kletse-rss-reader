@@ -6,7 +6,7 @@ import { createStore } from "solid-js/store";
 import { api, type Entry, type EntryPage, type EntryStatus, type Selection } from "../api";
 import type { Mode, PickerItem } from "../picker-items";
 import { readeckEnabled } from "./server";
-import { confirmDialog, toast, toastError } from "./ui";
+import { confirmDialog, scrollToTop, toast, toastError } from "./ui";
 
 const [store, setStore] = createStore<{ queue: Entry[] }>({ queue: [] });
 const [index, setIndex] = createSignal(0); // index === queue.length means "all caught up"
@@ -50,6 +50,7 @@ function resetQueue(contents: QueueContents): void {
 /** Empties the queue and cancels a selection that is still loading (after the server changed). */
 export function clearQueue(): void {
   loads.latest += 1;
+  versions.clear();
   setLoading(false);
   resetQueue({ entries: [], label: "", size: 0, more: false });
 }
@@ -255,20 +256,47 @@ export async function saveToReadeck(): Promise<void> {
   });
 }
 
+/**
+ * Both versions of each article whose full text was fetched this session, by entry id, so f can switch back.
+ * Kept across selections: the server stores the fetched text, so a reloaded entry no longer has the feed's.
+ */
+const versions = new Map<number, { feed: string; full: string }>();
+
+/** Swaps an article's text; if it's the one on screen, starts it from the top and says which version it is. */
+function showContent(i: number, content: string, version: string): void {
+  setStore("queue", i, "content", content);
+  if (index() === i) {
+    scrollToTop();
+    toast(version);
+  }
+}
+
+/** Fetches the full article and shows it, unless another selection was opened meanwhile. */
+async function fetchVersions(i: number, id: number, feed: string): Promise<void> {
+  toast("Fetching full article…");
+  const full = await api.fetchContent(id);
+  if (store.queue[i]?.id === id) {
+    versions.set(id, { feed, full });
+    showContent(i, full, "Full article");
+  }
+}
+
+/** Fetches the full article the first time, then switches between it and the feed's version. */
 export async function fetchFull(): Promise<void> {
   const entry = current();
   if (entry === undefined) {
     return;
   }
-  const { id } = entry;
+  const { id, content } = entry;
   const i = index();
-  await exclusive(async () => {
-    toast("Fetching full article…");
-    const content = await api.fetchContent(id);
-    if (store.queue[i]?.id === id) {
-      setStore("queue", i, "content", content);
-    }
-  });
+  const known = versions.get(id);
+  if (known === undefined) {
+    await exclusive(() => fetchVersions(i, id, content));
+  } else if (content === known.full) {
+    showContent(i, known.feed, "Feed version");
+  } else {
+    showContent(i, known.full, "Full article");
+  }
 }
 
 /** After the server marked `count` items read: show it, and go to the end of the queue. */

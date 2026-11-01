@@ -61,7 +61,7 @@ describe("help overlay", () => {
       ["m", "toggle read / unread"],
       ["o", "open original in browser"],
       ["b", "save to Readeck, then next"],
-      ["f", "fetch full article"],
+      ["f", "fetch full article (again for feed version)"],
       ["Shift+A", "mark whole queue read"],
       ["g / p / Tab / Esc / ←", "feeds picker (→ / o picks a row)"],
       ["r", "refresh feeds (in picker)"],

@@ -69,7 +69,7 @@ export const HELP: readonly HelpRow[] = [
   { keys: ["m"], action: "toggle read / unread" },
   { keys: ["o"], action: "open original in browser" },
   { keys: ["b"], action: "save to Readeck, then next" },
-  { keys: ["f"], action: "fetch full article" },
+  { keys: ["f"], action: "fetch full article (again for feed version)" },
   { keys: ["A"], action: "mark whole queue read" },
   {
     keys: ["g", "p", "Tab", "Escape", "ArrowLeft"],

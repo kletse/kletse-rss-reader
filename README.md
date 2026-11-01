@@ -69,7 +69,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>                         | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one |
 | <kbd>o</kbd>                                                                 | Open the original in your browser                                                |
 | <kbd>b</kbd>                                                                 | Save to Readeck, mark read, go to the next article                               |
-| <kbd>f</kbd>                                                                 | Fetch the full article (Miniflux's readability scraper)                          |
+| <kbd>f</kbd>                                                                 | Fetch the full article (Miniflux's scraper); again for the feed's version        |
 | <kbd>Shift</kbd>+<kbd>A</kbd>                                                | Mark everything in the current list read (asks first)                            |
 | <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> / <kbd>←</kbd> | Feeds & categories picker (all but <kbd>←</kbd> also close it)                   |
 | <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                |

@@ -20,10 +20,9 @@ notes=${1:?usage: packaging/release.sh NOTES.md}
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
-version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' package.json)
+version=$(packaging/check-version.sh)
 tag="v$version"
 sha=$(git rev-parse HEAD)
-[ -n "$version" ] || { echo "No version in package.json" >&2; exit 1; }
 git fetch -q origin
 git merge-base --is-ancestor "$sha" origin/main || { echo "HEAD isn't on origin/main yet: push it first" >&2; exit 1; }
 if git ls-remote --exit-code --tags origin "$tag" >/dev/null; then

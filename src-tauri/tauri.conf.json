@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kletse RSS",
-  "version": "3.2.1",
   "identifier": "be.kletse.rss",
   "mainBinaryName": "kletse-rss",
   "build": {

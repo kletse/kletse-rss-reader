@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Same version in every file that carries it
+        run: packaging/check-version.sh
       - run: npx biome ci
       - run: npm run check
       - run: npm test

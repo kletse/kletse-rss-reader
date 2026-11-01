@@ -127,7 +127,7 @@ npm run build
 cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
 ```
 
-Open it from Spotlight or the Dock. The window has no title bar: drag it by the top bar, double-click the bar to zoom. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
+Open it from Spotlight or the Dock. The window has no title bar: drag it by the top bar, double-click the bar to zoom. The window title, shown in Mission Control and the Window menu, is the article you're reading. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
 
 **Updating from source:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 
@@ -206,6 +206,7 @@ src/                 TypeScript UI (SolidJS)
   keys.ts            key reference and platform modifier
   content.ts         sanitising article HTML, embeds → links, code highlighting
   theme.ts           theme palette → CSS variables, live
+  title.ts           the window title follows the article on screen
   api.ts             typed wrappers for the Rust commands
   *.test.ts(x)       vitest unit and UI tests
 src-tauri/src/

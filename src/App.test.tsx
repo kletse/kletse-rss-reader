@@ -28,6 +28,8 @@ const api = vi.hoisted(
 );
 vi.mock("./api", () => ({ api }));
 vi.mock("./theme", () => ({ initTheme: (): Promise<void> => Promise.resolve() }));
+const setTitle = vi.hoisted(() => vi.fn((_title: string): Promise<void> => Promise.resolve()));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: (): { setTitle: typeof setTitle } => ({ setTitle }) }));
 
 function noLayout(): void {
   // jsdom does no layout, so it has no scrolling methods.
@@ -133,6 +135,33 @@ describe("reader", () => {
     await pickerLoaded();
     key("Escape");
     await waitFor(() => expect(element("#picker")).toBeNull());
+  });
+
+  it("the window title shows the article, and just the app name elsewhere", async () => {
+    const windowTitle = (): string | undefined => setTitle.mock.lastCall?.[0];
+    await openQueue();
+    expect(windowTitle()).toBe("First — Kletse RSS");
+    key("Escape");
+    await pickerLoaded();
+    expect(windowTitle()).toBe("Kletse RSS");
+    key("Escape");
+    await waitFor(() => expect(windowTitle()).toBe("First — Kletse RSS"));
+    key("n");
+    await screen.findByText("Second");
+    expect(windowTitle()).toBe("Second — Kletse RSS");
+    key("n");
+    await screen.findByText("All caught up");
+    expect(windowTitle()).toBe("Kletse RSS");
+  });
+
+  it("an untitled article is (untitled) in the window title too", async () => {
+    api.unreadEntries.mockResolvedValue([entry(1, "")]);
+    render(() => <App />);
+    await start();
+    await pickerLoaded();
+    key("Enter");
+    await screen.findByText("(untitled)");
+    expect(setTitle.mock.lastCall?.[0]).toBe("(untitled) — Kletse RSS");
   });
 });
 

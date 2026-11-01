@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window. start-dragging: the top bar is the drag region (data-tauri-drag-region).",
+  "description": "Permissions for the main window. start-dragging: the top bar is the drag region (data-tauri-drag-region). set-title: the window title shows the article you're reading.",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title"
   ]
 }

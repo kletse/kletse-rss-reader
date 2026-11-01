@@ -9,6 +9,7 @@ import { TopBar } from "./components/TopBar";
 import { onKey } from "./keyboard";
 import { current, hasMore, index, loading, openLink, queue, queueMode } from "./state/queue";
 import { inSettings, overlay, scrollToTop, setReader } from "./state/ui";
+import { followWindowTitle } from "./title";
 
 /** Links (in articles and titles) always open in the browser. */
 function onClick(e: MouseEvent): void {
@@ -64,6 +65,7 @@ export function App(): JSX.Element {
   });
   // A new article (or the settings form) starts at the top.
   createEffect(on([queue, index, inSettings], scrollToTop));
+  followWindowTitle();
 
   return (
     <>

@@ -94,6 +94,11 @@ function absolute(url: string, base: string): string {
   }
 }
 
+/** An article title as shown, in the article and the window title. */
+export function displayTitle(title: string): string {
+  return title === "" ? "(untitled)" : title;
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(LEADING_WWW, "");

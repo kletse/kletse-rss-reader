@@ -1,6 +1,6 @@
 import { createMemo, type JSX } from "solid-js";
 import type { Entry } from "../api";
-import { hostOf, renderContent } from "../content";
+import { displayTitle, hostOf, renderContent } from "../content";
 
 function formatDate(d: Date): string {
   return d.toLocaleString(undefined, {
@@ -35,7 +35,7 @@ export function Article(props: { entry: Entry }): JSX.Element {
       </div>
       <h1>
         <a href={props.entry.url} class="title-link">
-          {props.entry.title === "" ? "(untitled)" : props.entry.title}
+          {displayTitle(props.entry.title)}
         </a>
       </h1>
       <div class="source">{hostOf(props.entry.url)}</div>

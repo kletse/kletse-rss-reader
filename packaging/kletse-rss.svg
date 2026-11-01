@@ -1,9 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <title>Kletse RSS</title>
-  <rect width="512" height="512" rx="96" fill="#0e0f0e"/>
-  <g fill="none" stroke="#dbdab8" stroke-width="44" stroke-linecap="round">
-    <path d="M136 232a144 144 0 0 1 144 144"/>
-    <path d="M136 136a240 240 0 0 1 240 240"/>
-  </g>
-  <circle cx="152" cy="360" r="32" fill="#3f8f6d"/>
+  <rect width="512" height="512" rx="112" fill="#dbdab8"/>
+  <path d="M152 160a200 200 0 0 1 200 200" fill="none" stroke="#3f8f6d" stroke-width="64" stroke-linecap="round"/>
+  <circle cx="176" cy="336" r="72" fill="#0e0f0e"/>
 </svg>

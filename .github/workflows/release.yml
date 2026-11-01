@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Install git
         run: pacman -Syu --noconfirm --needed git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
       - name: Build with makepkg

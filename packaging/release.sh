@@ -60,7 +60,15 @@ until [ -n "$run" ]; do
   run=$(gh run list --workflow release.yml --commit "$sha" --event push --json databaseId -q '.[0].databaseId')
   [ -n "$run" ] || sleep 5
 done
-gh run watch "$run" --exit-status
+# Poll rather than `gh run watch`, which was seen to keep waiting long after a run had finished.
+until [ "$(gh run view "$run" --json status -q .status)" = completed ]; do
+  sleep 15
+done
+conclusion=$(gh run view "$run" --json conclusion -q .conclusion)
+if [ "$conclusion" != success ]; then
+  echo "The Linux build ended with: $conclusion. The release stays a draft: $(gh run view "$run" --json url -q .url)" >&2
+  exit 1
+fi
 
 echo "==> Publish"
 gh release edit "$tag" --draft=false --latest

@@ -2,10 +2,12 @@
 mod bindings;
 mod config;
 mod demo;
+mod error;
 mod miniflux;
 mod readeck;
 mod theme;
 
+use error::Error;
 use miniflux::{EntryPage, EntryStatus, FeedCount, Selection};
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
@@ -39,10 +41,10 @@ impl App {
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = cfg;
     }
 
-    fn miniflux(&self) -> Result<miniflux::Client, String> {
+    fn miniflux(&self) -> Result<miniflux::Client, Error> {
         let cfg = self.config();
         if !cfg.is_complete() {
-            return Err("Miniflux is not set up yet".into());
+            return Err(Error::Setup("Miniflux is not set up yet".into()));
         }
         Ok(miniflux::Client::new(self.http.clone(), &cfg.miniflux))
     }
@@ -89,11 +91,11 @@ fn get_settings(app: State<'_, App>) -> Settings {
 
 /// Validates the settings against the real servers, then saves and applies them.
 #[tauri::command]
-async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<AppStatus, String> {
+async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<AppStatus, Error> {
     let has_readeck_url = !settings.readeck_url.trim().is_empty();
     let has_readeck_token = !settings.readeck_token.trim().is_empty();
     if has_readeck_url != has_readeck_token {
-        return Err("Fill in both Readeck fields, or leave both empty.".into());
+        return Err(Error::Setup("Fill in both Readeck fields, or leave both empty.".into()));
     }
     let cfg = config::Config {
         miniflux: config::Miniflux { url: settings.miniflux_url, api_key: settings.miniflux_api_key },
@@ -107,20 +109,28 @@ async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<AppSta
         if let Some(readeck) = &cfg.readeck {
             readeck::check(&app.http, readeck).await?;
         }
-        config::save(&cfg)?;
+        // Writing and flushing the file blocks; keep it off the async runtime's few workers.
+        let saved = cfg.clone();
+        tauri::async_runtime::spawn_blocking(move || config::save(&saved)).await.map_err(|e| Error::Io {
+            context: "Could not save the settings".into(),
+            source: std::io::Error::other(e),
+        })??;
     }
     app.set_config(cfg);
     Ok(app_status(app))
 }
 
-/// Async so the `hyprctl` / `omarchy` calls stay off the main thread.
+/// `theme::load` starts `hyprctl` / `omarchy` / `defaults` and waits for them, so it runs on a thread meant for
+/// blocking work: off the main thread, which would freeze the window, and off the async runtime's few workers.
 #[tauri::command]
 async fn get_theme() -> theme::Theme {
-    theme::load()
+    // Only a panic in `load` fails the join, and a release build aborts on panic first; in a debug build the
+    // webview gets an empty theme, which it copes with.
+    tauri::async_runtime::spawn_blocking(theme::load).await.unwrap_or_default()
 }
 
 #[tauri::command]
-async fn feed_counts(app: State<'_, App>) -> Result<Vec<FeedCount>, String> {
+async fn feed_counts(app: State<'_, App>) -> Result<Vec<FeedCount>, Error> {
     if app.demo {
         return Ok(demo::feed_counts());
     }
@@ -135,7 +145,7 @@ async fn entries(
     status: EntryStatus,
     past: i64,
     limit: usize,
-) -> Result<EntryPage, String> {
+) -> Result<EntryPage, Error> {
     if app.demo {
         return Ok(demo::entries(selection, status, past, limit));
     }
@@ -144,7 +154,7 @@ async fn entries(
 
 /// The selection's newest unread entry id when it's opened: "mark all read" goes up to there.
 #[tauri::command]
-async fn newest_unread_id(app: State<'_, App>, selection: Selection) -> Result<i64, String> {
+async fn newest_unread_id(app: State<'_, App>, selection: Selection) -> Result<i64, Error> {
     if app.demo {
         return Ok(demo::newest_unread_id(selection));
     }
@@ -152,7 +162,7 @@ async fn newest_unread_id(app: State<'_, App>, selection: Selection) -> Result<i
 }
 
 #[tauri::command]
-async fn unread_count(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<i64, String> {
+async fn unread_count(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<i64, Error> {
     if app.demo {
         return Ok(demo::unread_count(selection, up_to));
     }
@@ -161,7 +171,7 @@ async fn unread_count(app: State<'_, App>, selection: Selection, up_to: i64) -> 
 
 /// Marks the selection's unread entries up to an id read; returns how many.
 #[tauri::command]
-async fn mark_read_up_to(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<usize, String> {
+async fn mark_read_up_to(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<usize, Error> {
     if app.demo {
         return Ok(demo::mark_read_up_to(selection, up_to));
     }
@@ -169,7 +179,7 @@ async fn mark_read_up_to(app: State<'_, App>, selection: Selection, up_to: i64) 
 }
 
 #[tauri::command]
-async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: EntryStatus) -> Result<(), String> {
+async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: EntryStatus) -> Result<(), Error> {
     if app.demo {
         return Ok(());
     }
@@ -177,7 +187,7 @@ async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: EntryStatus) -> 
 }
 
 #[tauri::command]
-async fn fetch_content(app: State<'_, App>, id: i64) -> Result<String, String> {
+async fn fetch_content(app: State<'_, App>, id: i64) -> Result<String, Error> {
     if app.demo {
         return Ok(demo::content(id));
     }
@@ -185,7 +195,7 @@ async fn fetch_content(app: State<'_, App>, id: i64) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn refresh_feeds(app: State<'_, App>) -> Result<(), String> {
+async fn refresh_feeds(app: State<'_, App>) -> Result<(), Error> {
     if app.demo {
         return Ok(());
     }
@@ -208,9 +218,9 @@ const OPENER: &str = if cfg!(target_os = "macos") { "open" } else { "xdg-open" }
 /// Opens a link in the default browser.
 /// Firefox, Chromium and Safari hand the URL to an already running window as a new tab.
 #[tauri::command]
-async fn open_in_browser(url: String) -> Result<(), String> {
+async fn open_in_browser(url: String) -> Result<(), Error> {
     if !is_openable(&url) {
-        return Err(format!("Refusing to open {url}"));
+        return Err(Error::Refused(format!("Refusing to open {url}")));
     }
     let mut child = std::process::Command::new(OPENER)
         .arg(&url)
@@ -218,18 +228,19 @@ async fn open_in_browser(url: String) -> Result<(), String> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| format!("Could not start {OPENER}: {e}"))?;
+        .map_err(|source| Error::Io { context: format!("Could not start {OPENER}"), source })?;
     // Reap the child so it does not linger as a zombie.
     std::thread::spawn(move || child.wait());
     Ok(())
 }
 
 #[tauri::command]
-async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), String> {
+async fn save_to_readeck(app: State<'_, App>, url: String) -> Result<(), Error> {
     if app.demo {
         return Ok(());
     }
-    let readeck = app.config().readeck.ok_or("Readeck is not set up. Add it in Settings.")?;
+    let readeck =
+        app.config().readeck.ok_or_else(|| Error::Setup("Readeck is not set up. Add it in Settings.".into()))?;
     readeck::save(&app.http, &readeck, &url).await
 }
 

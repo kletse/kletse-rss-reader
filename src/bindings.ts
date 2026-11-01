@@ -62,7 +62,21 @@ export type EntryPage = { total: number, entries: Array<Entry>, };
  */
 export type Selection = { "kind": "all" } | { "kind": "category", id: number, } | { "kind": "feed", id: number, };
 
-/** Every command in `generate_handler!`: the arguments `invoke` takes (camelCase, as Tauri expects) and what it resolves to. */
+/**
+ * What kind of problem a `CommandError` is.
+ */
+export type ErrorKind = "setup" | "unreachable" | "rejected" | "server" | "local";
+
+/**
+ * How a command error reaches the webview: the rejected value of `invoke`.
+ */
+export type CommandError = { kind: ErrorKind,
+/**
+ * Ready to show as is.
+ */
+message: string, };
+
+/** Every command in `generate_handler!`: the arguments `invoke` takes (camelCase, as Tauri expects) and what it resolves to. A failing command rejects with a `CommandError`. */
 export type Commands = {
   app_status: { args: Record<string, never>; returns: AppStatus };
   get_settings: { args: Record<string, never>; returns: Settings };

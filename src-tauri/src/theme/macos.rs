@@ -2,7 +2,15 @@
 //! Two hand-picked palettes carry the rest; the accent is the system one.
 
 use super::{Theme, CHANGED_EVENT};
-use std::{collections::HashMap, process::Command, sync::Mutex, thread};
+use std::{
+    collections::HashMap,
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, PoisonError,
+    },
+    thread,
+};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 /// Corner radius of macOS windows and controls.
@@ -21,18 +29,38 @@ pub fn load() -> Theme {
 /// (the accent colour has no change event), emitting only when something actually differs.
 pub fn watch(app: AppHandle) {
     let Some(window) = app.get_webview_window("main") else { return };
-    let last = Mutex::new(load());
-    let handle = app.clone();
+    let checks = Arc::new(Checks::default());
+    recheck(&app, &checks);
     window.on_window_event(move |event| {
-        if !matches!(event, WindowEvent::ThemeChanged(_) | WindowEvent::Focused(true)) {
-            return;
+        if matches!(event, WindowEvent::ThemeChanged(_) | WindowEvent::Focused(true)) {
+            recheck(&app, &checks);
         }
+    });
+}
+
+#[derive(Default)]
+struct Checks {
+    /// The theme last seen; `None` until the first check, which then emits once, harmlessly.
+    last: Mutex<Option<Theme>>,
+    /// A check is waiting to start. Requests meanwhile join it: it reads the system after they came in.
+    queued: AtomicBool,
+}
+
+/// Loads the theme on a thread of its own: window events arrive on the main thread, and `load` waits for
+/// `defaults` twice. At most one check runs and one waits, however fast the focus events come.
+fn recheck(app: &AppHandle, checks: &Arc<Checks>) {
+    if checks.queued.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let (app, checks) = (app.clone(), Arc::clone(checks));
+    thread::spawn(move || {
+        let mut last = checks.last.lock().unwrap_or_else(PoisonError::into_inner);
+        // From here on, a new request starts a new check: this one may already have read the system.
+        checks.queued.store(false, Ordering::Release);
         let theme = load();
-        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
-        if *last != theme {
-            *last = theme.clone();
-            let handle = handle.clone();
-            thread::spawn(move || handle.emit(CHANGED_EVENT, theme));
+        if last.as_ref() != Some(&theme) {
+            let _ = app.emit(CHANGED_EVENT, &theme);
+            *last = Some(theme);
         }
     });
 }

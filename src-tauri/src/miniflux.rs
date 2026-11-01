@@ -6,12 +6,23 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config;
+use crate::error::{ok_status, Error, Service};
 
-#[derive(Debug, Clone)]
+/// `Debug` leaves out the API key.
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base: String,
     key: String,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .field("key", &config::Redacted(&self.key))
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -138,8 +149,6 @@ impl Selection {
 const MAX_PAGE: usize = 1000;
 /// Entries per request when walking a selection by id to mark it read.
 const ID_PAGE: usize = 250;
-/// How much of an error response body to echo in a message.
-const MAX_ERROR_BODY: usize = 300;
 
 impl Client {
     pub fn new(http: reqwest::Client, cfg: &config::Miniflux) -> Self {
@@ -150,46 +159,40 @@ impl Client {
         self.http.request(method, format!("{}/v1{path}", self.base)).header("X-Auth-Token", &self.key)
     }
 
-    async fn send(rb: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
-        let resp = rb.send().await.map_err(|e| format!("Miniflux unreachable: {e}"))?;
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(resp);
-        }
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("Miniflux {status}: {}", truncate(&body, MAX_ERROR_BODY)))
+    async fn send(&self, rb: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
+        let resp = rb.send().await.map_err(|e| Error::unreachable(Service::Miniflux, &self.base, e))?;
+        ok_status(Service::Miniflux, resp).await
     }
 
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        Self::send(self.req(reqwest::Method::GET, path))
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
+        self.send(self.req(reqwest::Method::GET, path))
             .await?
             .json()
             .await
-            .map_err(|e| format!("Unexpected answer from Miniflux: {e}"))
+            .map_err(|e| Error::reading(Service::Miniflux, &self.base, e))
     }
 
     /// Checks URL and API key; returns the username.
-    pub async fn check(&self) -> Result<String, String> {
+    pub async fn check(&self) -> Result<String, Error> {
         #[derive(Deserialize)]
         struct Me {
             username: String,
         }
-        let resp = self.req(reqwest::Method::GET, "/me").send().await.map_err(|_| {
-            format!("Could not reach Miniflux at {}. Check the address and that the server is running.", self.base)
-        })?;
+        let not_miniflux = || Error::Setup(format!("{} doesn't look like a Miniflux server", self.base));
+        let resp = self
+            .req(reqwest::Method::GET, "/me")
+            .send()
+            .await
+            .map_err(|e| Error::unreachable(Service::Miniflux, &self.base, e))?;
         match resp.status().as_u16() {
-            200 => resp
-                .json::<Me>()
-                .await
-                .map(|me| me.username)
-                .map_err(|_| format!("{} doesn't look like a Miniflux server", self.base)),
-            401 | 403 => Err("Miniflux rejected the API key".into()),
-            404 => Err(format!("{} doesn't look like a Miniflux server", self.base)),
-            code => Err(format!("Miniflux answered with HTTP {code}")),
+            200 => resp.json::<Me>().await.map(|me| me.username).map_err(|_| not_miniflux()),
+            401 | 403 => Err(Error::Rejected("Miniflux rejected the API key".into())),
+            404 => Err(not_miniflux()),
+            code => Err(Error::unexpected(format!("Miniflux answered with HTTP {code}"))),
         }
     }
 
-    pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, String> {
+    pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, Error> {
         let feeds: Vec<Feed> = self.get_json("/feeds").await?;
         let counters: Counters = self.get_json("/feeds/counters").await?;
         Ok(merge_counts(feeds, &counters))
@@ -207,7 +210,7 @@ impl Client {
         status: EntryStatus,
         past: i64,
         limit: usize,
-    ) -> Result<EntryPage, String> {
+    ) -> Result<EntryPage, Error> {
         let limit = limit.clamp(1, MAX_PAGE);
         let (direction, bound) = match status {
             EntryStatus::Unread => ("asc", "after"),
@@ -226,14 +229,14 @@ impl Client {
 
     /// The id of the selection's newest unread entry, 0 if there is none. Entry ids only grow, so anything with
     /// a higher id arrived later: that is how "mark all read" leaves alone what you haven't been shown.
-    pub async fn newest_unread_id(&self, sel: Selection) -> Result<i64, String> {
+    pub async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
         let path = format!("{}/entries?status=unread&order=id&direction=desc&limit=1", sel.path_prefix());
         let page: IdPage = self.get_json(&path).await?;
         Ok(page.entries.first().map_or(0, |e| e.id))
     }
 
     /// How many of the selection's entries with an id up to `up_to` are unread.
-    pub async fn unread_count(&self, sel: Selection, up_to: i64) -> Result<i64, String> {
+    pub async fn unread_count(&self, sel: Selection, up_to: i64) -> Result<i64, Error> {
         if up_to < 1 {
             return Ok(0); // Miniflux ignores before_entry_id=0 and would count everything
         }
@@ -244,7 +247,7 @@ impl Client {
 
     /// Marks the selection's unread entries with an id up to `up_to` read; returns how many.
     /// Walks them by id, which no status change can shift, a page at a time.
-    pub async fn mark_read_up_to(&self, sel: Selection, up_to: i64) -> Result<usize, String> {
+    pub async fn mark_read_up_to(&self, sel: Selection, up_to: i64) -> Result<usize, Error> {
         let mut marked = 0;
         if up_to < 1 {
             return Ok(marked);
@@ -269,24 +272,24 @@ impl Client {
         }
     }
 
-    pub async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), String> {
+    pub async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), Error> {
         if ids.is_empty() {
             return Ok(());
         }
         let body = json!({ "entry_ids": ids, "status": status });
-        Self::send(self.req(reqwest::Method::PUT, "/entries").json(&body)).await?;
+        self.send(self.req(reqwest::Method::PUT, "/entries").json(&body)).await?;
         Ok(())
     }
 
     /// Asks Miniflux to scrape the original page and returns the full content.
-    pub async fn fetch_content(&self, id: i64) -> Result<String, String> {
+    pub async fn fetch_content(&self, id: i64) -> Result<String, Error> {
         let fetched: FetchedContent =
             self.get_json(&format!("/entries/{id}/fetch-content?update_content=true")).await?;
         Ok(fetched.content)
     }
 
-    pub async fn refresh_all(&self) -> Result<(), String> {
-        Self::send(self.req(reqwest::Method::PUT, "/feeds/refresh")).await?;
+    pub async fn refresh_all(&self) -> Result<(), Error> {
+        self.send(self.req(reqwest::Method::PUT, "/feeds/refresh")).await?;
         Ok(())
     }
 }
@@ -304,19 +307,12 @@ fn merge_counts(feeds: Vec<Feed>, counters: &Counters) -> Vec<FeedCount> {
         .collect()
 }
 
-/// Cuts `text` to at most `max` characters, marking the cut.
-pub fn truncate(text: &str, max: usize) -> String {
-    let text = text.trim();
-    match text.char_indices().nth(max) {
-        Some((at, _)) => format!("{}…", &text[..at]),
-        None => text.to_string(),
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
+    use std::time::Duration;
     use wiremock::matchers::{body_json, header, method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -384,14 +380,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn truncate_cuts_on_char_boundaries() {
-        assert_eq!(truncate("short", 10), "short");
-        assert_eq!(truncate("  padded  ", 10), "padded");
-        assert_eq!(truncate("héllo wörld", 5), "héllo…");
-        assert_eq!(truncate("exact", 5), "exact");
-    }
-
     /// Mounts a `/me` answer for the duration of the returned guard.
     async fn me_answers(server: &MockServer, response: ResponseTemplate) -> wiremock::MockGuard {
         Mock::given(method("GET"))
@@ -403,31 +391,42 @@ mod tests {
             .await
     }
 
+    #[test]
+    fn debug_output_leaves_out_the_key() {
+        let cfg = config::Miniflux { url: "https://m.example.com".into(), api_key: "mf-secret-123".into() };
+        let shown = format!("{:?}", Client::new(reqwest::Client::new(), &cfg));
+        assert!(!shown.contains("mf-secret-123") && shown.contains("<redacted>"), "{shown}");
+    }
+
     #[tokio::test]
     async fn check_maps_status_codes_to_messages() {
         let server = MockServer::start().await;
         let c = client(&server);
 
         let guard = me_answers(&server, ResponseTemplate::new(200).set_body_json(json!({ "username": "ward" }))).await;
-        assert_eq!(c.check().await, Ok("ward".into()));
+        assert_eq!(c.check().await.unwrap(), "ward");
         drop(guard);
 
         for code in [401, 403] {
             let guard = me_answers(&server, ResponseTemplate::new(code)).await;
-            assert_eq!(c.check().await.unwrap_err(), "Miniflux rejected the API key");
+            let err = c.check().await.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Rejected);
+            assert_eq!(err.message(), "Miniflux rejected the API key");
             drop(guard);
         }
 
         let guard = me_answers(&server, ResponseTemplate::new(404)).await;
-        assert!(c.check().await.unwrap_err().contains("doesn't look like a Miniflux server"));
+        let err = c.check().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Setup);
+        assert!(err.message().contains("doesn't look like a Miniflux server"));
         drop(guard);
 
         let guard = me_answers(&server, ResponseTemplate::new(200).set_body_string("<html>not json</html>")).await;
-        assert!(c.check().await.unwrap_err().contains("doesn't look like a Miniflux server"));
+        assert!(c.check().await.unwrap_err().message().contains("doesn't look like a Miniflux server"));
         drop(guard);
 
         let guard = me_answers(&server, ResponseTemplate::new(502)).await;
-        assert_eq!(c.check().await.unwrap_err(), "Miniflux answered with HTTP 502");
+        assert_eq!(c.check().await.unwrap_err().message(), "Miniflux answered with HTTP 502");
         drop(guard);
     }
 
@@ -437,7 +436,12 @@ mod tests {
         let uri = "http://127.0.0.1:1".to_string();
         let cfg = config::Miniflux { url: uri.clone(), api_key: "k".into() };
         let err = Client::new(reqwest::Client::new(), &cfg).check().await.unwrap_err();
-        assert!(err.starts_with(&format!("Could not reach Miniflux at {uri}")), "{err}");
+        assert_eq!(err.kind(), ErrorKind::Unreachable);
+        // The root cause ("Connection refused", worded per OS) follows, so the user can tell DNS from TLS from down.
+        let message = err.message();
+        let prefix = format!("Could not reach Miniflux at {uri}: ");
+        assert!(message.starts_with(&prefix) && message.len() > prefix.len(), "{message}");
+        assert!(message.ends_with(". Check the address and that the server is running."), "{message}");
     }
 
     #[tokio::test]
@@ -538,14 +542,14 @@ mod tests {
             .mount_as_scoped(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await, Ok(81));
+        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await.unwrap(), 81);
         drop(guard);
         Mock::given(method("GET"))
             .and(path("/v1/feeds/7/entries"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "entries": [] })))
             .mount(&server)
             .await;
-        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await, Ok(0));
+        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -560,8 +564,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 80).await, Ok(57));
-        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 0).await, Ok(0));
+        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 80).await.unwrap(), 57);
+        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 0).await.unwrap(), 0);
         // no request
     }
 
@@ -597,7 +601,7 @@ mod tests {
                 .mount(&server)
                 .await;
         }
-        assert_eq!(client(&server).mark_read_up_to(Selection::All, 1000).await, Ok(ID_PAGE + 2));
+        assert_eq!(client(&server).mark_read_up_to(Selection::All, 1000).await.unwrap(), ID_PAGE + 2);
     }
 
     #[tokio::test]
@@ -617,8 +621,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.mark_read_up_to(Selection::All, 1000).await, Ok(ID_PAGE));
-        assert_eq!(c.mark_read_up_to(Selection::All, 0).await, Ok(0)); // no request
+        assert_eq!(c.mark_read_up_to(Selection::All, 1000).await.unwrap(), ID_PAGE);
+        assert_eq!(c.mark_read_up_to(Selection::All, 0).await.unwrap(), 0); // no request
     }
 
     #[tokio::test]
@@ -632,8 +636,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.set_status(&[4, 5], EntryStatus::Read).await, Ok(()));
-        assert_eq!(c.set_status(&[], EntryStatus::Read).await, Ok(()));
+        c.set_status(&[4, 5], EntryStatus::Read).await.unwrap();
+        c.set_status(&[], EntryStatus::Read).await.unwrap();
     }
 
     #[tokio::test]
@@ -654,8 +658,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.fetch_content(42).await, Ok("<p>full</p>".into()));
-        assert_eq!(c.refresh_all().await, Ok(()));
+        assert_eq!(c.fetch_content(42).await.unwrap(), "<p>full</p>");
+        c.refresh_all().await.unwrap();
     }
 
     #[tokio::test]
@@ -668,8 +672,51 @@ mod tests {
             .mount(&server)
             .await;
         let err = client(&server).refresh_all().await.unwrap_err();
-        assert!(err.starts_with("Miniflux 500 Internal Server Error: xxx"), "{err}");
-        assert!(err.chars().count() < MAX_ERROR_BODY + 50, "{}", err.len());
-        assert!(err.ends_with('…'));
+        assert_eq!(err.kind(), ErrorKind::Server);
+        let message = err.message();
+        assert!(message.starts_with("Miniflux 500 Internal Server Error: xxx"), "{message}");
+        assert!(message.chars().count() < 350, "{}", message.len());
+        assert!(message.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn a_key_turned_down_while_reading_is_rejected_not_a_server_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Access Unauthorized"))
+            .mount(&server)
+            .await;
+        let err = client(&server).feed_counts().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Rejected);
+        assert_eq!(err.message(), "Miniflux turned down the API key (401 Unauthorized). Check it in Settings.");
+    }
+
+    #[tokio::test]
+    async fn an_answer_cut_off_by_a_timeout_is_unreachable_not_unusable() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])).set_delay(Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+        let http = reqwest::Client::builder().timeout(Duration::from_millis(200)).build().unwrap();
+        let cfg = config::Miniflux { url: server.uri(), api_key: "secret".into() };
+        let err = Client::new(http, &cfg).feed_counts().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Unreachable, "{}", err.message());
+    }
+
+    #[tokio::test]
+    async fn an_unusable_answer_names_what_was_wrong() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": 1 }])))
+            .mount(&server)
+            .await;
+        let err = client(&server).feed_counts().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Server);
+        assert!(err.message().starts_with("Unexpected answer from Miniflux: "), "{}", err.message());
+        assert!(err.message().contains("title"), "names the missing field: {}", err.message());
     }
 }

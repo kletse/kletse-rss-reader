@@ -13,6 +13,7 @@ use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 use ts_rs::{Config, TS};
 
+use crate::error::{CommandError, ErrorKind};
 use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::theme::Theme;
 use crate::{AppStatus, Settings};
@@ -54,7 +55,7 @@ macro_rules! exported {
 }
 
 fn types(cfg: &Config) -> Vec<Exported> {
-    exported![cfg; AppStatus, Settings, Theme, Category, Feed, FeedCount, EntryStatus, EntryFeed, Entry, EntryPage, Selection]
+    exported![cfg; AppStatus, Settings, Theme, Category, Feed, FeedCount, EntryStatus, EntryFeed, Entry, EntryPage, Selection, ErrorKind, CommandError]
 }
 
 /// A command as the webview calls it: `invoke(name, args)` resolves to `returns`.
@@ -115,14 +116,18 @@ fn ts_type(ty: &syn::Type, known: &BTreeMap<&str, &str>) -> String {
     }
 }
 
-/// What the `invoke` promise resolves to: a command's `Ok` value (its `Err` string rejects it).
+/// What the `invoke` promise resolves to: a command's `Ok` value (its `Err` rejects it with a `CommandError`).
 fn ts_result(ret: &syn::ReturnType, known: &BTreeMap<&str, &str>) -> String {
     let syn::ReturnType::Type(_, ty) = ret else { return "void".into() };
     if let syn::Type::Path(p) = &**ty {
         let seg = last_segment(&p.path);
         if seg.ident == "Result" {
             let [ok, err] = generic_args(seg)[..] else { panic!("Result without two type arguments") };
-            assert_eq!(ts_type(err, known), "string", "command errors reach the webview as strings");
+            // Exactly `Error`, the one lib.rs imports from `error`: `io::Error` or `tauri::Error` would not
+            // serialize as a `CommandError`.
+            let is_crate_error = matches!(err, syn::Type::Path(p) if p.qself.is_none() && p.path.is_ident("Error"));
+            assert!(is_crate_error, "commands fail with error::Error (imported as `Error`), sent as a CommandError");
+            assert_eq!(ts_type(err, known), "CommandError", "commands fail with error::Error, sent as a CommandError");
             return ts_type(ok, known);
         }
     }
@@ -187,9 +192,27 @@ impl<'ast> Visit<'ast> for Handler {
     }
 }
 
+/// The segments of a plain `use a::b::C;` (empty for groups, globs and renames).
+fn use_path(tree: &syn::UseTree) -> Vec<String> {
+    match tree {
+        syn::UseTree::Path(p) => {
+            let rest = use_path(&p.tree);
+            if rest.is_empty() {
+                return rest;
+            }
+            std::iter::once(p.ident.to_string()).chain(rest).collect()
+        }
+        syn::UseTree::Name(n) => vec![n.ident.to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// The registered commands, in `generate_handler!` order.
 fn commands(known: &BTreeMap<&str, &str>) -> Vec<Command> {
     let file = syn::parse_file(LIB_RS).expect("lib.rs parses");
+    let imports_error =
+        file.items.iter().any(|item| matches!(item, syn::Item::Use(u) if use_path(&u.tree) == ["error", "Error"]));
+    assert!(imports_error, "lib.rs imports `use error::Error;`, the error every command returns");
     let mut defined: BTreeMap<String, Command> = file
         .items
         .iter()
@@ -221,7 +244,9 @@ fn render() -> String {
             assert!(names.contains(dep.as_str()), "{} uses {dep}; add it to types() in bindings.rs", t.ts);
         }
     }
-    let known: BTreeMap<&str, &str> = types.iter().map(|t| (t.rust, t.ts.as_str())).collect();
+    let mut known: BTreeMap<&str, &str> = types.iter().map(|t| (t.rust, t.ts.as_str())).collect();
+    // Commands fail with `error::Error`, whose `Serialize` sends a `CommandError`.
+    known.insert("Error", "CommandError");
 
     let mut out = String::from(HEADER);
     for t in &types {
@@ -232,7 +257,7 @@ fn render() -> String {
 
     out.push_str(
         "\n/** Every command in `generate_handler!`: the arguments `invoke` takes (camelCase, as Tauri expects) \
-         and what it resolves to. */\nexport type Commands = {\n",
+         and what it resolves to. A failing command rejects with a `CommandError`. */\nexport type Commands = {\n",
     );
     for c in commands(&known) {
         let args = if c.args.is_empty() {

@@ -2,46 +2,41 @@
 
 use serde_json::json;
 
-use crate::{config, miniflux::truncate};
+use crate::config;
+use crate::error::{ok_status, Error, Service};
 
-/// How much of an error response body to echo in a message.
-const MAX_ERROR_BODY: usize = 300;
-
-pub async fn save(http: &reqwest::Client, cfg: &config::Readeck, url: &str) -> Result<(), String> {
+pub async fn save(http: &reqwest::Client, cfg: &config::Readeck, url: &str) -> Result<(), Error> {
     let resp = http
         .post(format!("{}/api/bookmarks", cfg.url))
         .bearer_auth(&cfg.token)
         .json(&json!({ "url": url }))
         .send()
         .await
-        .map_err(|e| format!("Readeck unreachable: {e}"))?;
-    let status = resp.status();
-    if status.is_success() {
-        Ok(())
-    } else {
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("Readeck {status}: {}", truncate(&body, MAX_ERROR_BODY)))
-    }
+        .map_err(|e| Error::unreachable(Service::Readeck, &cfg.url, e))?;
+    ok_status(Service::Readeck, resp).await?;
+    Ok(())
 }
 
 /// Checks that Readeck is reachable and accepts the token, without creating anything.
 /// A token that only has `bookmarks:write` gets 403 on the profile endpoint, which still
 /// proves the token itself is valid; only 401 means it is wrong.
-pub async fn check(http: &reqwest::Client, cfg: &config::Readeck) -> Result<(), String> {
+pub async fn check(http: &reqwest::Client, cfg: &config::Readeck) -> Result<(), Error> {
     let resp = http
         .get(format!("{}/api/profile", cfg.url))
         .bearer_auth(&cfg.token)
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|_| {
-            format!("Could not reach Readeck at {}. Check the address and that the server is running.", cfg.url)
-        })?;
+        .map_err(|e| Error::unreachable(Service::Readeck, &cfg.url, e))?;
     match resp.status().as_u16() {
         200 | 403 => Ok(()),
-        401 => Err("Readeck rejected the token. Copy the token value itself, not its ID, and give it the “Bookmarks: write” permission.".into()),
-        404 => Err(format!("{} doesn't look like a Readeck server", cfg.url)),
-        code => Err(format!("Readeck answered with HTTP {code}")),
+        401 => Err(Error::Rejected(
+            "Readeck rejected the token. Copy the token value itself, not its ID, and give it the “Bookmarks: write” \
+             permission."
+                .into(),
+        )),
+        404 => Err(Error::Setup(format!("{} doesn't look like a Readeck server", cfg.url))),
+        code => Err(Error::unexpected(format!("Readeck answered with HTTP {code}"))),
     }
 }
 
@@ -49,6 +44,7 @@ pub async fn check(http: &reqwest::Client, cfg: &config::Readeck) -> Result<(), 
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -67,7 +63,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        assert_eq!(save(&reqwest::Client::new(), &cfg(&server), "https://example.com/a").await, Ok(()));
+        save(&reqwest::Client::new(), &cfg(&server), "https://example.com/a").await.unwrap();
     }
 
     #[tokio::test]
@@ -79,7 +75,20 @@ mod tests {
             .mount(&server)
             .await;
         let err = save(&reqwest::Client::new(), &cfg(&server), "nope").await.unwrap_err();
-        assert_eq!(err, "Readeck 422 Unprocessable Entity: invalid url");
+        assert_eq!(err.message(), "Readeck 422 Unprocessable Entity: invalid url");
+    }
+
+    #[tokio::test]
+    async fn save_with_a_token_lacking_write_permission_is_rejected() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/bookmarks"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let err = save(&reqwest::Client::new(), &cfg(&server), "https://example.com/a").await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Rejected);
+        assert_eq!(err.message(), "Readeck turned down the token (403 Forbidden). Check it in Settings.");
     }
 
     #[tokio::test]
@@ -93,28 +102,35 @@ mod tests {
                 .respond_with(ResponseTemplate::new(code))
                 .mount_as_scoped(&server)
                 .await;
-            assert_eq!(check(&http, &cfg(&server)).await, Ok(()), "HTTP {code}");
+            assert!(check(&http, &cfg(&server)).await.is_ok(), "HTTP {code}");
         }
-        let _guard = Mock::given(method("GET"))
+        let guard = Mock::given(method("GET"))
             .and(path("/api/profile"))
             .respond_with(ResponseTemplate::new(401))
             .mount_as_scoped(&server)
             .await;
-        assert!(check(&http, &cfg(&server)).await.unwrap_err().starts_with("Readeck rejected the token"));
-        drop(_guard);
-        let _guard = Mock::given(method("GET"))
+        let err = check(&http, &cfg(&server)).await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Rejected);
+        assert!(err.message().starts_with("Readeck rejected the token. Copy the token value itself"));
+        assert!(err.message().ends_with("“Bookmarks: write” permission."), "{}", err.message());
+        drop(guard);
+        let guard = Mock::given(method("GET"))
             .and(path("/api/profile"))
             .respond_with(ResponseTemplate::new(404))
             .mount_as_scoped(&server)
             .await;
-        assert!(check(&http, &cfg(&server)).await.unwrap_err().contains("doesn't look like a Readeck server"));
-        drop(_guard);
+        assert!(check(&http, &cfg(&server))
+            .await
+            .unwrap_err()
+            .message()
+            .contains("doesn't look like a Readeck server"));
+        drop(guard);
         let _guard = Mock::given(method("GET"))
             .and(path("/api/profile"))
             .respond_with(ResponseTemplate::new(503))
             .mount_as_scoped(&server)
             .await;
-        assert_eq!(check(&http, &cfg(&server)).await.unwrap_err(), "Readeck answered with HTTP 503");
+        assert_eq!(check(&http, &cfg(&server)).await.unwrap_err().message(), "Readeck answered with HTTP 503");
     }
 
     #[tokio::test]
@@ -122,6 +138,8 @@ mod tests {
         // Port 1 is never listening; a freed mock port could be reused by a parallel test.
         let c = config::Readeck { url: "http://127.0.0.1:1".into(), token: "tok".into() };
         let err = check(&reqwest::Client::new(), &c).await.unwrap_err();
-        assert!(err.starts_with(&format!("Could not reach Readeck at {}", c.url)), "{err}");
+        assert_eq!(err.kind(), ErrorKind::Unreachable);
+        let prefix = format!("Could not reach Readeck at {}: ", c.url);
+        assert!(err.message().starts_with(&prefix) && err.message().len() > prefix.len(), "{}", err.message());
     }
 }

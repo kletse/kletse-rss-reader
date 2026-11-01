@@ -16,10 +16,12 @@ import type {
 export type {
   AppStatus,
   Category,
+  CommandError,
   Entry,
   EntryFeed,
   EntryPage,
   EntryStatus,
+  ErrorKind,
   Feed,
   FeedCount,
   Selection,

@@ -168,6 +168,8 @@ npm run build      # release binary → src-tauri/target/release/kletse-rss (mac
 
 CI runs the same checks plus `npm audit` and `cargo audit` on every push, with clippy and the Rust tests on both Linux and macOS.
 
+**Release builds:** `packaging/release.sh [ref]` builds every download from a Mac into `packaging/release/`: the Arch package and the Linux binary in an x86_64 Arch Linux container (Docker; slow under emulation on Apple Silicon), and the universal macOS app. It builds what's committed at the ref (default `HEAD`). It needs Docker running and `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
+
 **Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
 
 ```bash

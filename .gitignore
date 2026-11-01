@@ -5,3 +5,4 @@ src-tauri/gen/
 packaging/pkg/
 packaging/src/
 packaging/*.pkg.tar.*
+packaging/release/

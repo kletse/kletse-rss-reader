@@ -1,4 +1,4 @@
-// Kletse RSS: one unread article at a time, oldest first.
+// Kletse RSS: one unread article at a time, oldest first. Or, in history mode, read ones, newest first.
 import { createEffect, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Article } from "./components/Article";
 import { Confirm, Help, Toast } from "./components/Overlays";
@@ -45,6 +45,7 @@ function handle(e: KeyboardEvent): boolean {
       case "k": case "ArrowUp": s.movePicker(-1); return true;
       case "Enter": case "ArrowRight": s.choose(); return true;
       case "r": void s.refreshFeeds(); return true;
+      case "h": s.toggleMode(); return true;
       case "Escape": case "g": case "p": case "Tab": if (s.pickerCanClose()) s.closePicker(); return true;
     }
     return false;
@@ -75,6 +76,7 @@ function handle(e: KeyboardEvent): boolean {
     case "b": void s.saveToReadeck(); break;
     case "f": void s.fetchFull(); break;
     case "A": void s.markAllRead(); break;
+    case "h": s.toggleMode(); break;
     case "g": case "p": case "Tab": case "Escape": s.openPicker(); break;
     case "[": s.setWidth(s.widthFactor - 4); break;
     case "]": s.setWidth(s.widthFactor + 4); break;
@@ -115,9 +117,10 @@ export function App() {
           <Match when={s.inSettings()}><Settings firstRun={s.overlay() === "onboarding"} /></Match>
           <Match when={s.loading()}><div class="message"><p>Loading…</p></div></Match>
           <Match when={s.current()} keyed>{(entry) => <Article entry={entry} />}</Match>
+          <Match when={s.hasMore()}><div class="message"><p>Loading…</p></div></Match>
           <Match when={s.queue().length > 0}>
             <div class="message">
-              <h1>All caught up</h1>
+              <h1>{s.queueMode() === "history" ? "End of history" : "All caught up"}</h1>
               <p>Press j or Enter for the feeds, k to go back.</p>
             </div>
           </Match>

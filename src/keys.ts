@@ -15,6 +15,7 @@ export const KEYS: [string, string][] = [
   ["Shift+A", "mark whole queue read"],
   ["g / p / Tab / Esc", "feeds picker"],
   ["r", "refresh feeds (in picker)"],
+  ["h", "history: read items, newest first (again for unread)"],
   ["Space / Shift+Space", "scroll; Space at the end = next"],
   [`${MOD} + / ${MOD} −`, "font size"],
   ["[ / ]", "narrower / wider column"],

@@ -1,27 +1,73 @@
 // App state and actions. Components read these signals; changing them updates the UI.
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { api, type Entry, type Status } from "./api";
-import { build, type PickerItem } from "./picker-items";
+import { api, type Entry, type FeedCount, type Status } from "./api";
+import { build, type Mode, type PickerItem } from "./picker-items";
 import { initTheme } from "./theme";
 
 // ---- Queue ---------------------------------------------------------------
-// The queue is fixed when a selection is opened; going back shows items read this session.
+// Unread mode: the queue is fixed when a selection is opened; going back shows items read this session.
+// History mode: read items, newest first, loaded a page at a time as you get near the end.
 const [store, setStore] = createStore({ queue: [] as Entry[] });
 export const queue = () => store.queue;
 const [index, setIndex] = createSignal(0); // index === queue.length means "all caught up"
 const [selectionLabel, setSelectionLabel] = createSignal("");
 const [loading, setLoading] = createSignal(false);
 const [readeckEnabled, setReadeckEnabled] = createSignal(false);
-export { index, selectionLabel, loading, readeckEnabled };
+const [queueMode, setQueueMode] = createSignal<Mode>("unread");
+const [total, setTotal] = createSignal(0); // the whole selection, including pages not loaded yet
+const [hasMore, setHasMore] = createSignal(false); // history only: more pages on the server
+export { index, selectionLabel, loading, readeckEnabled, queueMode, total, hasMore };
 let busy = false;
 
 export const current = (): Entry | undefined => store.queue[index()];
 
-function resetQueue(entries: Entry[] = [], label = selectionLabel()) {
+function resetQueue(entries: Entry[] = [], label = selectionLabel(), size = entries.length, more = false) {
   setStore("queue", entries);
   setIndex(0);
   setSelectionLabel(label);
+  setTotal(size);
+  setHasMore(more);
+}
+
+// ---- History paging ------------------------------------------------------
+export const HISTORY_PAGE = 50;
+/** Load the next page when this few loaded items are left. */
+const PREFETCH = 10;
+let historySelection: PickerItem["selection"] | undefined;
+/** Position in the server's read list. Items marked unread here drop out of that list, hence not queue.length. */
+let historyOffset = 0;
+let loadingMore = false;
+
+function adjustHistoryOffset(delta: number) {
+  if (queueMode() === "history") historyOffset += delta;
+}
+
+async function loadMore() {
+  const selection = historySelection;
+  if (!hasMore() || loadingMore || !selection) return;
+  const id = loadId;
+  loadingMore = true;
+  try {
+    const page = await api.readEntries(selection, historyOffset, HISTORY_PAGE);
+    if (id !== loadId) return;
+    historyOffset += page.entries.length;
+    // Items read elsewhere meanwhile shift the list; skip what we already have.
+    const have = new Set(store.queue.map((e) => e.id));
+    const fresh = page.entries.filter((e) => !have.has(e.id));
+    setStore("queue", (q) => [...q, ...fresh]);
+    const more = page.entries.length > 0 && historyOffset < page.total;
+    setHasMore(more);
+    setTotal(more ? Math.max(page.total, store.queue.length) : store.queue.length);
+  } catch (err) {
+    if (id === loadId) toast(String(err), "error");
+  } finally {
+    loadingMore = false;
+  }
+}
+
+function prefetch() {
+  if (hasMore() && index() >= store.queue.length - PREFETCH) void loadMore();
 }
 
 // ---- Overlays ------------------------------------------------------------
@@ -110,8 +156,10 @@ async function setStatus(i: number, status: Entry["status"]) {
   if (!entry || entry.status === status) return;
   const { id, status: before } = entry;
   setStore("queue", i, "status", status); // optimistic
+  const load = loadId;
   try {
     await api.setStatus([id], status);
+    if (load === loadId) adjustHistoryOffset(status === "read" ? 1 : -1);
   } catch (err) {
     // Roll back, unless another selection was opened meanwhile.
     if (store.queue[i]?.id === id) setStore("queue", i, "status", before);
@@ -120,9 +168,14 @@ async function setStatus(i: number, status: Entry["status"]) {
 }
 
 export function next(markRead: boolean) {
-  if (!current()) { openPicker(); return; }
+  if (!current()) {
+    if (hasMore()) void loadMore(); // still loading the next page of history (or retrying it)
+    else openPicker();
+    return;
+  }
   if (markRead) void setStatus(index(), "read");
   setIndex(index() + 1);
+  prefetch();
 }
 
 export function prev() {
@@ -196,41 +249,76 @@ export async function markAllRead() {
   const unread = store.queue.filter((e) => e.status === "unread");
   if (!unread.length) return;
   if (!(await confirmDialog(`Mark all ${unread.length} unread items in “${selectionLabel()}” as read?`))) return;
+  const load = loadId;
   try {
     await api.setStatus(unread.map((e) => e.id), "read");
+    if (load !== loadId) return;
+    adjustHistoryOffset(unread.length);
     setStore("queue", (e) => e.status === "unread", "status", "read");
     setIndex(store.queue.length);
+    prefetch();
   } catch (err) {
     toast(String(err), "error");
   }
 }
 
 let loadId = 0; // picking again while a selection loads makes the older load a no-op
-export async function openSelection(item: PickerItem) {
+export async function openSelection(item: PickerItem, mode: Mode = "unread") {
   const id = ++loadId;
+  setQueueMode(mode);
+  historySelection = mode === "history" ? item.selection : undefined;
+  historyOffset = 0;
   resetQueue([], item.label);
   setLoading(true);
   let entries: Entry[] = [];
+  let size = 0;
   try {
-    entries = await api.unreadEntries(item.selection);
+    if (mode === "history") {
+      const page = await api.readEntries(item.selection, 0, HISTORY_PAGE);
+      entries = page.entries;
+      size = page.total;
+    } else {
+      entries = await api.unreadEntries(item.selection);
+    }
   } catch (err) {
     if (id === loadId) toast(String(err), "error");
   }
   if (id !== loadId) return;
   setLoading(false);
-  resetQueue(entries);
+  historyOffset = entries.length;
+  const more = mode === "history" && entries.length > 0 && entries.length < size;
+  resetQueue(entries, undefined, Math.max(size, entries.length), more);
 }
 
 // ---- Picker --------------------------------------------------------------
-export type PickerList = { kind: "loading" } | { kind: "error"; message: string } | { kind: "items"; items: PickerItem[] };
+// The picker has its own mode: switching it doesn't touch the open queue until you choose something.
+export type PickerList = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; counts: FeedCount[] };
 const [pickerList, setPickerList] = createSignal<PickerList>({ kind: "loading" });
 const [pickerCursor, setPickerCursor] = createSignal(0);
-export { pickerList, pickerCursor };
-const pickerItems = () => { const l = pickerList(); return l.kind === "items" ? l.items : []; };
+const [pickerMode, setPickerModeSignal] = createSignal<Mode>("unread");
+export { pickerList, pickerCursor, pickerMode };
+export const pickerItems = (): PickerItem[] => {
+  const l = pickerList();
+  return l.kind === "ready" ? build(l.counts, pickerMode()) : [];
+};
 
-export function openPicker() {
+function setPickerMode(mode: Mode) {
+  if (mode === pickerMode()) return;
+  setPickerModeSignal(mode);
+  setPickerCursor(0);
+}
+
+/** Opens the picker, by default in the mode of the open queue. */
+export function openPicker(mode: Mode = queueMode()) {
+  setPickerMode(mode);
   setOverlay("picker");
   void loadPicker();
+}
+
+/** h: switch between unread and history (read items, newest first). */
+export function toggleMode() {
+  const other: Mode = (overlay() === "picker" ? pickerMode() : queueMode()) === "history" ? "unread" : "history";
+  openPicker(other);
 }
 
 export function closePicker() {
@@ -241,11 +329,11 @@ export function closePicker() {
 export const pickerCanClose = () => store.queue.length > 0 || selectionLabel() !== "";
 
 async function loadPicker() {
-  if (pickerList().kind !== "items") setPickerList({ kind: "loading" });
+  if (pickerList().kind !== "ready") setPickerList({ kind: "loading" });
   try {
-    const items = build(await api.feedCounts());
-    setPickerList({ kind: "items", items });
-    setPickerCursor((c) => Math.min(c, Math.max(items.length - 1, 0)));
+    setPickerList({ kind: "ready", counts: await api.feedCounts() });
+    const n = pickerItems().length;
+    setPickerCursor((c) => Math.min(c, Math.max(n - 1, 0)));
   } catch (err) {
     setPickerList({ kind: "error", message: String(err) });
   }
@@ -271,7 +359,7 @@ export function movePicker(delta: number) {
 export function choose(item: PickerItem | undefined = pickerItems()[pickerCursor()]) {
   if (!item) return;
   closePicker();
-  void openSelection(item);
+  void openSelection(item, pickerMode());
 }
 
 // ---- Settings / onboarding ------------------------------------------------
@@ -310,5 +398,5 @@ export async function start() {
     return;
   }
   applyStatus(status);
-  openPicker();
+  openPicker("unread");
 }

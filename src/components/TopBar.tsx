@@ -1,15 +1,16 @@
-import { index, inSettings, next, openPicker, prev, queue, readeckEnabled, saveToReadeck, selectionLabel } from "../state";
+import { hasMore, index, inSettings, next, openPicker, prev, queue, queueMode, readeckEnabled, saveToReadeck, selectionLabel, total } from "../state";
 
 export function TopBar() {
   const position = () => {
     const n = queue().length;
-    return n ? `${Math.min(index() + 1, n)} / ${n}` : "";
+    return n ? `${Math.min(index() + 1, n)} / ${hasMore() ? total() : n}` : "";
   };
   return (
     <header id="bar" data-tauri-drag-region classList={{ "settings-mode": inSettings() }}>
-      <button id="picker-btn" title="Feeds (p)" onClick={openPicker}>
+      <button id="picker-btn" title="Feeds (p)" onClick={() => openPicker()}>
         <span class="icon">☰</span> <span id="selection-label">{selectionLabel() || "Feeds"}</span>
       </button>
+      <span id="mode-badge" hidden={queueMode() !== "history" || !selectionLabel()} title="Read items, newest first (h to switch)">History</span>
       <span id="position" data-tauri-drag-region>{position()}</span>
       <div class="bar-actions">
         <button id="readeck-btn" title="Save to Readeck (b)" hidden={!readeckEnabled()} onClick={() => void saveToReadeck()}>

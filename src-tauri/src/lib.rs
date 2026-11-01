@@ -4,7 +4,7 @@ mod miniflux;
 mod readeck;
 mod theme;
 
-use miniflux::{Entry, FeedCount, Selection, Status as EntryStatus};
+use miniflux::{Entry, EntryPage, FeedCount, Selection, Status as EntryStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tauri::State;
@@ -132,6 +132,20 @@ async fn unread_entries(app: State<'_, App>, selection: Selection) -> Result<Vec
     app.miniflux()?.unread_entries(selection).await
 }
 
+/// One page of read history, newest first.
+#[tauri::command]
+async fn read_entries(
+    app: State<'_, App>,
+    selection: Selection,
+    offset: usize,
+    limit: usize,
+) -> Result<EntryPage, String> {
+    if app.demo {
+        return Ok(demo::read_entries(selection, offset, limit));
+    }
+    app.miniflux()?.read_entries(selection, offset, limit).await
+}
+
 #[tauri::command]
 async fn set_status(app: State<'_, App>, ids: Vec<i64>, status: EntryStatus) -> Result<(), String> {
     if app.demo {
@@ -221,6 +235,7 @@ pub fn run() {
             get_theme,
             feed_counts,
             unread_entries,
+            read_entries,
             set_status,
             fetch_content,
             refresh_feeds,

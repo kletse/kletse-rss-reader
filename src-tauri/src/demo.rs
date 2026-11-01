@@ -2,7 +2,7 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Entry, EntryFeed, Feed, FeedCount, Selection, Status};
+use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, Feed, FeedCount, Selection, Status};
 
 struct DemoFeed {
     id: i64,
@@ -103,11 +103,24 @@ fn as_feed(f: &DemoFeed) -> Feed {
     Feed { id: f.id, title: f.title.into(), category: Category { id: f.category.0, title: f.category.1.into() } }
 }
 
+/// Every demo article counts as both unread and read, so the history has something to show too.
 pub fn feed_counts() -> Vec<FeedCount> {
     FEEDS
         .iter()
-        .map(|f| FeedCount { feed: as_feed(f), unread: ENTRIES.iter().filter(|e| e.feed == f.id).count() as i64 })
+        .map(|f| {
+            let n = ENTRIES.iter().filter(|e| e.feed == f.id).count() as i64;
+            FeedCount { feed: as_feed(f), unread: n, read: n }
+        })
         .collect()
+}
+
+/// The same articles as `unread_entries`, marked read, newest first, one page at a time.
+pub fn read_entries(sel: Selection, offset: usize, limit: usize) -> EntryPage {
+    let mut all = unread_entries(sel);
+    all.reverse();
+    let total = all.len() as i64;
+    let entries = all.into_iter().skip(offset).take(limit).map(|e| Entry { status: Status::Read, ..e }).collect();
+    EntryPage { total, entries }
 }
 
 pub fn unread_entries(sel: Selection) -> Vec<Entry> {
@@ -265,6 +278,24 @@ mod tests {
         assert!(watches.iter().all(|e| e.feed.title == "Escapement Journal"));
 
         assert!(unread_entries(Selection::Feed { id: 99 }).is_empty());
+    }
+
+    #[test]
+    fn history_is_read_newest_first_and_paged() {
+        let all = read_entries(Selection::All, 0, 100);
+        assert_eq!(all.total, ENTRIES.len() as i64);
+        assert!(all.entries.iter().all(|e| e.status == Status::Read));
+        assert_eq!(
+            all.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            (1..=ENTRIES.len() as i64).rev().collect::<Vec<_>>()
+        );
+
+        let page = read_entries(Selection::All, 2, 3);
+        assert_eq!(
+            page.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            all.entries[2..5].iter().map(|e| e.id).collect::<Vec<_>>()
+        );
+        assert!(read_entries(Selection::All, 100, 3).entries.is_empty());
     }
 
     #[test]

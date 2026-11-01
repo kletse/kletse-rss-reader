@@ -32,7 +32,8 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
   <img src="docs/screenshots/article.png" alt="Reading an article" width="900">
 </p>
 
-- **Unread only.** Read items never appear, except ones you passed during this session, so **k** can take you back to undo.
+- **Unread first.** Read items don't appear, except ones you passed during this session, so **k** can take you back to undo.
+- **History when you need it.** Press **h** to switch to the items you've already read, newest first, with all the same keys. Press **h** again to go back to unread.
 - **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes. On macOS: light or dark mode and your accent colour, the moment you change them.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
@@ -62,6 +63,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Shift</kbd>+<kbd>A</kbd> | Mark everything in the current list read (asks first) |
 | <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> | Feeds & categories picker (also closes it) |
 | <kbd>r</kbd> | Refresh all feeds (in the picker) |
+| <kbd>h</kbd> | Switch between unread and history (read items, newest first) |
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |
 | <kbd>Ctrl</kbd> <kbd>0</kbd> | Reset font size and width |
@@ -72,6 +74,8 @@ On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | <kbd>q</kbd> | Quit |
 
 The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd> or <kbd>→</kbd>.
+
+Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: **All read**, categories and feeds with read counts. What you open there shows read items newest first, loaded a page at a time as you go, and a **History** badge appears in the top bar. Every key works the same: <kbd>m</kbd> marks an item unread again, <kbd>b</kbd> saves it to Readeck, and so on. <kbd>Esc</kbd> closes the picker without switching, so you're back where you were.
 
 ## Install
 
@@ -202,7 +206,7 @@ packaging/           PKGBUILD, .desktop entry, icon
 
 ## Not (yet) in scope
 
-Managing feeds (use the Miniflux web UI), starring, browsing read items, offline reading, notifications and a bar widget.
+Managing feeds (use the Miniflux web UI), starring, offline reading, notifications and a bar widget.
 
 ## License
 

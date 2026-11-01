@@ -57,14 +57,17 @@ pub struct Entry {
     pub feed: EntryFeed,
 }
 
-#[derive(Deserialize)]
-struct EntryPage {
-    total: i64,
-    entries: Vec<Entry>,
+/// One page of entries, plus how many the server has in total for the query.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EntryPage {
+    pub total: i64,
+    pub entries: Vec<Entry>,
 }
 
 #[derive(Deserialize)]
 struct Counters {
+    #[serde(default)]
+    reads: HashMap<String, i64>,
     #[serde(default)]
     unreads: HashMap<String, i64>,
 }
@@ -74,14 +77,15 @@ struct FetchedContent {
     content: String,
 }
 
-/// What the picker shows: every feed with its category and unread count.
+/// What the picker shows: every feed with its category and its unread and read counts.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct FeedCount {
     pub feed: Feed,
     pub unread: i64,
+    pub read: i64,
 }
 
-/// Which set of unread entries to read.
+/// Which set of entries to read.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Selection {
@@ -103,6 +107,8 @@ impl Selection {
 
 /// Entries per request when paging through a selection.
 const PAGE: usize = 250;
+/// Upper bound on one page of read history requested by the UI.
+const MAX_HISTORY_PAGE: usize = 250;
 /// Upper bound on entries loaded for one selection; keeps a confused server from making us loop forever.
 const MAX_ENTRIES: usize = 10_000;
 /// How much of an error response body to echo in a message.
@@ -159,7 +165,7 @@ impl Client {
     pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, String> {
         let feeds: Vec<Feed> = self.get_json("/feeds").await?;
         let counters: Counters = self.get_json("/feeds/counters").await?;
-        Ok(merge_counts(feeds, &counters.unreads))
+        Ok(merge_counts(feeds, &counters))
     }
 
     /// All unread entries of the selection, oldest first.
@@ -179,6 +185,17 @@ impl Client {
                 return Ok(all);
             }
         }
+    }
+
+    /// One page of the selection's read entries, newest first. The history is loaded as you go,
+    /// since it can be far longer than the unread list.
+    pub async fn read_entries(&self, sel: Selection, offset: usize, limit: usize) -> Result<EntryPage, String> {
+        let limit = limit.clamp(1, MAX_HISTORY_PAGE);
+        let path = format!(
+            "{}/entries?status=read&order=published_at&direction=desc&limit={limit}&offset={offset}",
+            sel.path_prefix()
+        );
+        self.get_json(&path).await
     }
 
     pub async fn set_status(&self, ids: &[i64], status: Status) -> Result<(), String> {
@@ -203,13 +220,15 @@ impl Client {
     }
 }
 
-/// Pairs each feed with its unread count; feeds the counters don't mention have none.
-fn merge_counts(feeds: Vec<Feed>, unreads: &HashMap<String, i64>) -> Vec<FeedCount> {
+/// Pairs each feed with its unread and read counts; feeds the counters don't mention have none.
+fn merge_counts(feeds: Vec<Feed>, counters: &Counters) -> Vec<FeedCount> {
     feeds
         .into_iter()
         .map(|feed| {
-            let unread = unreads.get(&feed.id.to_string()).copied().unwrap_or(0);
-            FeedCount { feed, unread }
+            let id = feed.id.to_string();
+            let unread = counters.unreads.get(&id).copied().unwrap_or(0);
+            let read = counters.reads.get(&id).copied().unwrap_or(0);
+            FeedCount { feed, unread, read }
         })
         .collect()
 }
@@ -280,11 +299,17 @@ mod tests {
     #[test]
     fn merge_counts_defaults_to_zero() {
         let feeds = vec![feed(1, "A", (1, "Cat")), feed(2, "B", (1, "Cat"))];
-        let unreads = HashMap::from([("1".to_string(), 4), ("99".to_string(), 9)]);
-        let counts = merge_counts(feeds.clone(), &unreads);
+        let counters = Counters {
+            unreads: HashMap::from([("1".to_string(), 4), ("99".to_string(), 9)]),
+            reads: HashMap::from([("2".to_string(), 7)]),
+        };
+        let counts = merge_counts(feeds.clone(), &counters);
         assert_eq!(
             counts,
-            vec![FeedCount { feed: feeds[0].clone(), unread: 4 }, FeedCount { feed: feeds[1].clone(), unread: 0 }]
+            vec![
+                FeedCount { feed: feeds[0].clone(), unread: 4, read: 0 },
+                FeedCount { feed: feeds[1].clone(), unread: 0, read: 7 }
+            ]
         );
     }
 
@@ -364,7 +389,10 @@ mod tests {
             .mount(&server)
             .await;
         let counts = client(&server).feed_counts().await.unwrap();
-        assert_eq!(counts.iter().map(|c| (c.feed.id, c.unread)).collect::<Vec<_>>(), vec![(1, 0), (2, 3)]);
+        assert_eq!(
+            counts.iter().map(|c| (c.feed.id, c.unread, c.read)).collect::<Vec<_>>(),
+            vec![(1, 0, 5), (2, 3, 0)]
+        );
     }
 
     #[tokio::test]
@@ -412,6 +440,25 @@ mod tests {
             .await;
         let entries = client(&server).unread_entries(Selection::All).await.unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn read_entries_asks_for_one_page_newest_first() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/7/entries"))
+            .and(query_param("status", "read"))
+            .and(query_param("order", "published_at"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("limit", MAX_HISTORY_PAGE.to_string()))
+            .and(query_param("offset", "40"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 41, "entries": [entry_json(3)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let page = client(&server).read_entries(Selection::Feed { id: 7 }, 40, 10_000).await.unwrap();
+        assert_eq!(page.total, 41);
+        assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![3]);
     }
 
     #[tokio::test]

@@ -50,6 +50,7 @@ button {
 button:hover { border-color: var(--accent); color: var(--fg-bright); }
 #picker-btn { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #picker-btn .icon { color: var(--accent); }
+#mode-badge { color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius); padding: 1px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; white-space: nowrap; }
 #readeck-btn { display: inline-flex; align-items: center; gap: 6px; }
 .btn-icon { width: 14px; height: 14px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 
@@ -126,7 +127,7 @@ article h1 {
 .panel.small { padding: 16px 20px; }
 .panel-title { padding: 10px 14px; border-bottom: 1px solid var(--bg-light); color: var(--accent); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .panel-title .hint { margin-left: auto; }
-#settings-btn { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px; }
+#settings-btn, #mode-btn { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px; }
 #bar.settings-mode > * { visibility: hidden; }
 
 /* ---- Settings / onboarding ---------------------------------------------- */

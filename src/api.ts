@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface Category { id: number; title: string }
 export interface Feed { id: number; title: string; category: Category }
-export interface FeedCount { feed: Feed; unread: number }
+export interface FeedCount { feed: Feed; unread: number; read: number }
 
 export interface Entry {
   id: number;
@@ -16,6 +16,8 @@ export interface Entry {
   reading_time: number;
   feed: { id: number; title: string };
 }
+
+export interface EntryPage { total: number; entries: Entry[] }
 
 export type Selection =
   | { kind: "all" }
@@ -44,6 +46,8 @@ export const api = {
   theme: () => invoke<Theme>("get_theme"),
   feedCounts: () => invoke<FeedCount[]>("feed_counts"),
   unreadEntries: (selection: Selection) => invoke<Entry[]>("unread_entries", { selection }),
+  readEntries: (selection: Selection, offset: number, limit: number) =>
+    invoke<EntryPage>("read_entries", { selection, offset, limit }),
   setStatus: (ids: number[], status: "read" | "unread") => invoke<void>("set_status", { ids, status }),
   fetchContent: (id: number) => invoke<string>("fetch_content", { id }),
   refreshFeeds: () => invoke<void>("refresh_feeds"),

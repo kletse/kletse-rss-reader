@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { App } from "./App";
-import type { Entry, EntryPage, EntryStatus, FeedCount, api as realApi, Selection, Status } from "./api";
+import type { AppStatus, Entry, EntryPage, EntryStatus, FeedCount, api as realApi, Selection } from "./api";
 import { HISTORY_PAGE, hasMore, queue } from "./state/queue";
 import { closeSettings, start } from "./state/settings";
 import { setOverlay } from "./state/ui";
@@ -49,7 +49,7 @@ function entry(id: number, title: string, status: EntryStatus = "unread"): Entry
   };
 }
 const counts: FeedCount[] = [{ feed: { id: 1, title: "Feed", category: { id: 1, title: "Dev" } }, unread: 2, read: 3 }];
-const configured: Status = { configured: true, readeck: false, demo: true };
+const configured: AppStatus = { configured: true, readeck: false };
 
 /** Key events bubble from the body to the window, where the app listens. */
 function key(k: string, opts: KeyboardEventInit = {}): void {
@@ -256,7 +256,7 @@ describe("settings", () => {
   });
 
   it("onboarding can't be cancelled and connects on submit", async () => {
-    api.status.mockResolvedValue({ configured: false, readeck: false, demo: false });
+    api.status.mockResolvedValue({ configured: false, readeck: false });
     api.saveSettings.mockResolvedValue({ ...configured, readeck: true });
     render(() => <App />);
     await start();

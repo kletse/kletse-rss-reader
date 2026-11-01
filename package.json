@@ -10,6 +10,7 @@
     "vite:dev": "vite",
     "vite:build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "bindings": "cargo test --manifest-path src-tauri/Cargo.toml --lib bindings::export_bindings",
     "lint": "biome check && npm run lint:rust",
     "lint:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "format": "biome check --write && cargo fmt --manifest-path src-tauri/Cargo.toml"

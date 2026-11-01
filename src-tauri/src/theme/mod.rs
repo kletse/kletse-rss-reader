@@ -16,6 +16,7 @@ mod omarchy;
 use omarchy as provider;
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Theme {
     /// Omarchy `colors.toml` keys: `background`, `foreground`, `accent`, `mode`, …
     pub colors: HashMap<String, String>,
@@ -23,6 +24,7 @@ pub struct Theme {
     pub rounding: i64,
     /// UI (monospace) font family, if the desktop has a preference. Left out of the JSON when there's none.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font: Option<String>,
 }
 

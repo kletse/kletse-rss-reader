@@ -1,5 +1,5 @@
 // Settings and onboarding, and starting the app.
-import { api, type Status } from "../api";
+import { type AppStatus, api } from "../api";
 import { initTheme } from "../theme";
 import { openPicker } from "./picker";
 import { applyPrefs } from "./prefs";
@@ -15,7 +15,7 @@ export function openSettings(firstRun = false): void {
 }
 
 /** Called with the new status after a successful save, or undefined when cancelled. */
-export function closeSettings(status: Status | undefined): void {
+export function closeSettings(status: AppStatus | undefined): void {
   const firstRun = overlay() === "onboarding";
   if (status !== undefined) {
     applyStatus(status);

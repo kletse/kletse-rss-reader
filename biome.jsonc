@@ -9,8 +9,9 @@
     "useIgnoreFile": true
   },
   "files": {
-    // Vendored glib sources and Tauri-generated schemas aren't ours to lint.
-    "includes": ["**", "!package-lock.json", "!src-tauri/patches", "!src-tauri/capabilities"]
+    // Vendored glib sources, Tauri-generated schemas and the ts-rs bindings (src-tauri/src/bindings.rs writes them)
+    // aren't ours to lint.
+    "includes": ["**", "!package-lock.json", "!src-tauri/patches", "!src-tauri/capabilities", "!src/bindings.ts"]
   },
   "formatter": {
     "enabled": true,

@@ -15,12 +15,14 @@ pub struct Client {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Category {
     pub id: i64,
     pub title: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Feed {
     pub id: i64,
     pub title: String,
@@ -28,6 +30,7 @@ pub struct Feed {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct EntryFeed {
     pub id: i64,
     pub title: String,
@@ -35,13 +38,15 @@ pub struct EntryFeed {
 
 /// Read state of an entry, as Miniflux spells it. (Miniflux also has `removed`, which we never see.)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
-pub enum Status {
+pub enum EntryStatus {
     Read,
     Unread,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Entry {
     pub id: i64,
     pub title: String,
@@ -51,7 +56,7 @@ pub struct Entry {
     #[serde(default)]
     pub content: String,
     pub published_at: String,
-    pub status: Status,
+    pub status: EntryStatus,
     #[serde(default)]
     pub reading_time: i64,
     pub feed: EntryFeed,
@@ -59,6 +64,7 @@ pub struct Entry {
 
 /// One page of entries, plus how many the server has in total for the query.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct EntryPage {
     pub total: i64,
     pub entries: Vec<Entry>,
@@ -79,6 +85,7 @@ struct FetchedContent {
 
 /// What the picker shows: every feed with its category and its unread and read counts.
 #[derive(Debug, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FeedCount {
     pub feed: Feed,
     pub unread: i64,
@@ -87,6 +94,7 @@ pub struct FeedCount {
 
 /// Which set of entries to read.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Selection {
     All,
@@ -198,7 +206,7 @@ impl Client {
         self.get_json(&path).await
     }
 
-    pub async fn set_status(&self, ids: &[i64], status: Status) -> Result<(), String> {
+    pub async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), String> {
         if ids.is_empty() {
             return Ok(());
         }
@@ -281,10 +289,10 @@ mod tests {
     }
 
     #[test]
-    fn status_uses_miniflux_spelling() {
-        assert_eq!(serde_json::to_string(&Status::Read).unwrap(), r#""read""#);
-        assert_eq!(serde_json::from_str::<Status>(r#""unread""#).unwrap(), Status::Unread);
-        assert!(serde_json::from_str::<Status>(r#""removed""#).is_err());
+    fn entry_status_uses_miniflux_spelling() {
+        assert_eq!(serde_json::to_string(&EntryStatus::Read).unwrap(), r#""read""#);
+        assert_eq!(serde_json::from_str::<EntryStatus>(r#""unread""#).unwrap(), EntryStatus::Unread);
+        assert!(serde_json::from_str::<EntryStatus>(r#""removed""#).is_err());
     }
 
     #[test]
@@ -293,7 +301,7 @@ mod tests {
         assert_eq!(e.author, "");
         assert_eq!(e.content, "");
         assert_eq!(e.reading_time, 0);
-        assert_eq!(e.status, Status::Unread);
+        assert_eq!(e.status, EntryStatus::Unread);
     }
 
     #[test]
@@ -472,8 +480,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        assert_eq!(c.set_status(&[4, 5], Status::Read).await, Ok(()));
-        assert_eq!(c.set_status(&[], Status::Read).await, Ok(()));
+        assert_eq!(c.set_status(&[4, 5], EntryStatus::Read).await, Ok(()));
+        assert_eq!(c.set_status(&[], EntryStatus::Read).await, Ok(()));
     }
 
     #[tokio::test]

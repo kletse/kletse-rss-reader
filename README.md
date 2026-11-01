@@ -171,6 +171,7 @@ npm install
 npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
 npm test           # UI unit and component tests (vitest + jsdom)
+npm run bindings   # regenerate src/bindings.ts (IPC types and commands) from the Rust side; CI fails if it is stale
 npm run lint       # Biome (UI lint + format check), then rustfmt --check and clippy on the backend
 npm run format     # Biome and rustfmt: format and apply safe fixes
 npm run build      # release binary → src-tauri/target/release/kletse-rss (macOS: also …/bundle/macos/Kletse RSS.app)

@@ -2,7 +2,7 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, Feed, FeedCount, Selection, Status};
+use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 
 struct DemoFeed {
     id: i64,
@@ -119,7 +119,7 @@ pub fn read_entries(sel: Selection, offset: usize, limit: usize) -> EntryPage {
     let mut all = unread_entries(sel);
     all.reverse();
     let total = all.len() as i64;
-    let entries = all.into_iter().skip(offset).take(limit).map(|e| Entry { status: Status::Read, ..e }).collect();
+    let entries = all.into_iter().skip(offset).take(limit).map(|e| Entry { status: EntryStatus::Read, ..e }).collect();
     EntryPage { total, entries }
 }
 
@@ -139,7 +139,7 @@ pub fn unread_entries(sel: Selection) -> Vec<Entry> {
             author: e.author.into(),
             content: e.content.into(),
             published_at: e.published_at.into(),
-            status: Status::Unread,
+            status: EntryStatus::Unread,
             reading_time: e.minutes,
             feed: EntryFeed { id: e.feed, title: feed(e.feed).title.into() },
         })
@@ -266,7 +266,7 @@ mod tests {
     fn selections_filter_consistently() {
         let all = unread_entries(Selection::All);
         assert_eq!(all.len(), ENTRIES.len());
-        assert!(all.iter().all(|e| e.status == Status::Unread));
+        assert!(all.iter().all(|e| e.status == EntryStatus::Unread));
         assert_eq!(all.iter().map(|e| e.id).collect::<Vec<_>>(), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
 
         let dev = unread_entries(Selection::Category { id: 1 });
@@ -284,7 +284,7 @@ mod tests {
     fn history_is_read_newest_first_and_paged() {
         let all = read_entries(Selection::All, 0, 100);
         assert_eq!(all.total, ENTRIES.len() as i64);
-        assert!(all.entries.iter().all(|e| e.status == Status::Read));
+        assert!(all.entries.iter().all(|e| e.status == EntryStatus::Read));
         assert_eq!(
             all.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
             (1..=ENTRIES.len() as i64).rev().collect::<Vec<_>>()

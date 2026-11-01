@@ -1,10 +1,12 @@
+#[cfg(test)]
+mod bindings;
 mod config;
 mod demo;
 mod miniflux;
 mod readeck;
 mod theme;
 
-use miniflux::{Entry, EntryPage, FeedCount, Selection, Status as EntryStatus};
+use miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tauri::State;
@@ -48,23 +50,24 @@ impl App {
 
 /// What the UI needs to know at startup and after saving settings.
 #[derive(Debug, Serialize)]
-struct Status {
+#[cfg_attr(test, derive(ts_rs::TS))]
+struct AppStatus {
     /// Miniflux URL and key are present; otherwise show onboarding.
     configured: bool,
     /// Readeck is set up; otherwise hide the bookmark button.
     readeck: bool,
-    demo: bool,
 }
 
 #[tauri::command]
-fn app_status(app: State<'_, App>) -> Status {
+fn app_status(app: State<'_, App>) -> AppStatus {
     let cfg = app.config();
-    Status { configured: app.demo || cfg.is_complete(), readeck: app.demo || cfg.readeck.is_some(), demo: app.demo }
+    AppStatus { configured: app.demo || cfg.is_complete(), readeck: app.demo || cfg.readeck.is_some() }
 }
 
 /// The settings form, flat. Empty Readeck fields mean "not set up".
 /// No `Debug` on purpose: it holds the API key and token.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct Settings {
     miniflux_url: String,
     miniflux_api_key: String,
@@ -86,7 +89,7 @@ fn get_settings(app: State<'_, App>) -> Settings {
 
 /// Validates the settings against the real servers, then saves and applies them.
 #[tauri::command]
-async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<Status, String> {
+async fn save_settings(app: State<'_, App>, settings: Settings) -> Result<AppStatus, String> {
     let has_readeck_url = !settings.readeck_url.trim().is_empty();
     let has_readeck_token = !settings.readeck_token.trim().is_empty();
     if has_readeck_url != has_readeck_token {
@@ -281,8 +284,8 @@ mod tests {
     }
 
     #[test]
-    fn status_serializes_flat_booleans() {
-        let s = Status { configured: true, readeck: false, demo: false };
-        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"configured":true,"readeck":false,"demo":false}"#);
+    fn app_status_serializes_flat_booleans() {
+        let s = AppStatus { configured: true, readeck: false };
+        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"configured":true,"readeck":false}"#);
     }
 }

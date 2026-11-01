@@ -45,6 +45,10 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: src/bindings.ts matches the Rust types and commands (run `npm run bindings`)
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib bindings::export_bindings
+          git diff --exit-code -- src/bindings.ts
 
   macos:
     name: macOS clippy and tests

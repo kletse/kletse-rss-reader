@@ -30,13 +30,18 @@ describe("picker build", () => {
       ["Alpha", 3, 1],
       ["Zed", 2, 1],
     ]);
-    expect(items[0].selection).toEqual({ kind: "all" });
-    expect(items[1].selection).toEqual({ kind: "category", id: 2 });
-    expect(items[2].selection).toEqual({ kind: "feed", id: 4 });
+    expect(items.slice(0, 3).map((i) => i.selection)).toEqual([
+      { kind: "all" },
+      { kind: "category", id: 2 },
+      { kind: "feed", id: 4 },
+    ]);
   });
 
   it("history mode uses read counts and hides feeds with nothing read", () => {
-    const items = build([fc(1, "Zed", [1, "Dev"], 2, 0), fc(2, "Alpha", [1, "Dev"], 0, 7), fc(3, "Loud", [2, "Blogs"], 1, 3)], "history");
+    const items = build(
+      [fc(1, "Zed", [1, "Dev"], 2, 0), fc(2, "Alpha", [1, "Dev"], 0, 7), fc(3, "Loud", [2, "Blogs"], 1, 3)],
+      "history",
+    );
     expect(items.map((i) => [i.label, i.count, i.depth])).toEqual([
       ["All read", 10, 0],
       ["Blogs", 3, 0],

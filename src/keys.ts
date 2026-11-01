@@ -1,10 +1,14 @@
 // Platform modifier and the key reference shown in the help overlay.
 
-/** macOS uses ⌘ where Linux uses Ctrl for the font-size shortcuts. */
-export const isMac = (platform: string = navigator.platform): boolean => /^Mac/i.test(platform);
-export const MOD = isMac() ? "⌘" : "Ctrl";
+const MAC_PLATFORM = /^Mac/iu;
 
-export const KEYS: [string, string][] = [
+/** macOS uses ⌘ where Linux uses Ctrl for the font-size shortcuts. */
+export function isMac(platform: string = navigator.platform): boolean {
+  return MAC_PLATFORM.test(platform);
+}
+export const MOD: string = isMac() ? "⌘" : "Ctrl";
+
+export const KEYS: readonly (readonly [key: string, action: string])[] = [
   ["j / ↓", "next (marks read)"],
   ["n", "skip (keeps unread)"],
   ["k / ↑", "previous"],

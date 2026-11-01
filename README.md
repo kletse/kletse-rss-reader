@@ -26,7 +26,7 @@
 
 Most feed readers give you three panes and a wall of headlines. Kletse RSS shows **just the article**.
 
-You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, you get *“All caught up”* and you're back at the feed picker.
+You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, you get _“All caught up”_ and you're back at the feed picker.
 
 <p align="center">
   <img src="docs/screenshots/article.png" alt="Reading an article" width="900">
@@ -40,33 +40,33 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ## Screenshots
 
-| Feeds picker | Code, highlighted in theme colours | Keys (<kbd>?</kbd>) |
-| --- | --- | --- |
-| <img src="docs/screenshots/picker.png" alt="Feeds and categories picker"> | <img src="docs/screenshots/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/help.png" alt="Keyboard shortcut overlay"> |
-| **First-run setup** | | |
-| <img src="docs/screenshots/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> | | |
+| Feeds picker                                                                                             | Code, highlighted in theme colours                                                       | Keys (<kbd>?</kbd>)                                                   |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| <img src="docs/screenshots/picker.png" alt="Feeds and categories picker">                                | <img src="docs/screenshots/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/help.png" alt="Keyboard shortcut overlay"> |
+| **First-run setup**                                                                                      |                                                                                          |                                                                       |
+| <img src="docs/screenshots/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> |                                                                                          |                                                                       |
 
 <sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active; on macOS they follow the system appearance.</sub>
 
 ## Keys
 
-| Key | Action |
-| --- | --- |
-| <kbd>j</kbd> / <kbd>↓</kbd> | Next article (**marks read**) |
-| <kbd>n</kbd> | Skip: next article, **keep unread** |
-| <kbd>k</kbd> / <kbd>↑</kbd> | Previous article |
-| <kbd>m</kbd> | Toggle read / unread |
-| <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd> | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one |
-| <kbd>o</kbd> | Open the original in your browser |
-| <kbd>b</kbd> | Save to Readeck, mark read, go to the next article |
-| <kbd>f</kbd> | Fetch the full article (Miniflux's readability scraper) |
-| <kbd>Shift</kbd>+<kbd>A</kbd> | Mark everything in the current list read (asks first) |
-| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> | Feeds & categories picker (also closes it) |
-| <kbd>r</kbd> | Refresh all feeds (in the picker) |
-| <kbd>h</kbd> | Switch between unread and history (read items, newest first) |
-| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd> | Article font size; the column width scales with it (remembered) |
-| <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider column (remembered) |
-| <kbd>Ctrl</kbd> <kbd>0</kbd> | Reset font size and width |
+| Key                                                           | Action                                                                           |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| <kbd>j</kbd> / <kbd>↓</kbd>                                   | Next article (**marks read**)                                                    |
+| <kbd>n</kbd>                                                  | Skip: next article, **keep unread**                                              |
+| <kbd>k</kbd> / <kbd>↑</kbd>                                   | Previous article                                                                 |
+| <kbd>m</kbd>                                                  | Toggle read / unread                                                             |
+| <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>          | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one |
+| <kbd>o</kbd>                                                  | Open the original in your browser                                                |
+| <kbd>b</kbd>                                                  | Save to Readeck, mark read, go to the next article                               |
+| <kbd>f</kbd>                                                  | Fetch the full article (Miniflux's readability scraper)                          |
+| <kbd>Shift</kbd>+<kbd>A</kbd>                                 | Mark everything in the current list read (asks first)                            |
+| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> | Feeds & categories picker (also closes it)                                       |
+| <kbd>r</kbd>                                                  | Refresh all feeds (in the picker)                                                |
+| <kbd>h</kbd>                                                  | Switch between unread and history (read items, newest first)                     |
+| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                   | Article font size; the column width scales with it (remembered)                  |
+| <kbd>[</kbd> / <kbd>]</kbd>                                   | Narrower / wider column (remembered)                                             |
+| <kbd>Ctrl</kbd> <kbd>0</kbd>                                  | Reset font size and width                                                        |
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | <kbd>,</kbd> | Settings |
@@ -95,7 +95,7 @@ cd kletse-rss-reader/packaging
 makepkg -si
 ```
 
-This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → *Kletse RSS*) and the icon. To uninstall, run `sudo pacman -R kletse-rss`.
+This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → _Kletse RSS_) and the icon. To uninstall, run `sudo pacman -R kletse-rss`.
 
 ### macOS
 
@@ -135,10 +135,10 @@ Your settings live outside the app bundle (see [Set up](#set-up)), so replacing 
 
 The first time you start Kletse RSS, a welcome screen asks for:
 
-| | |
-| --- | --- |
-| **Miniflux URL + API key** | *Required.* In Miniflux: Settings → API Keys → Create a new API key. |
-| **Readeck URL + API token** | *Optional.* In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden. |
+|                             |                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Miniflux URL + API key**  | _Required._ In Miniflux: Settings → API Keys → Create a new API key.                                                                        |
+| **Readeck URL + API token** | _Optional._ In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden. |
 
 **Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
 
@@ -161,10 +161,13 @@ npm install
 npm run dev        # Tauri dev window with hot reload
 npm run check      # type-check the UI
 npm test           # UI unit and component tests (vitest + jsdom)
-npm run lint       # rustfmt --check and clippy on the backend
+npm run lint       # Biome (UI lint + format check), then rustfmt --check and clippy on the backend
+npm run format     # Biome and rustfmt: format and apply safe fixes
 npm run build      # release binary → src-tauri/target/release/kletse-rss (macOS: also …/bundle/macos/Kletse RSS.app)
 (cd src-tauri && cargo test)   # backend tests, with a mock Miniflux/Readeck
 ```
+
+[Biome](https://biomejs.dev) lints and formats the UI code, CSS, JSON and Markdown: every stable rule plus the nursery ones, with the few that don't fit this stack switched off, each with its reason in `biome.jsonc`. TypeScript runs with `strict` and the extra checks in `tsconfig.json` (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, …). Editors: `.zed/settings.json` formats and fixes with Biome on save and runs clippy through rust-analyzer (install Zed's Biome extension); `.vscode/` does the same for VS Code.
 
 CI runs the same checks plus `npm audit` and `cargo audit` on every push, with clippy and the Rust tests on both Linux and macOS.
 
@@ -176,10 +179,17 @@ CI runs the same checks plus `npm audit` and `cargo audit` on every push, with c
 KLETSE_RSS_DEMO=1 npm run dev
 ```
 
-```
+```text
 src/                 TypeScript UI (SolidJS)
-  state.ts           app state (signals) and actions: queue, picker, overlays, settings
-  App.tsx            layout, the single keyboard handler, link clicks
+  state/             app state (signals) and actions
+    queue.ts         the reading queue, history paging, article actions
+    picker.ts        the feeds picker
+    settings.ts      settings, onboarding, start-up
+    prefs.ts         font size and column width
+    ui.ts            overlays, toast, confirm, scrolling
+    server.ts        what the backend reported (Readeck set up)
+  App.tsx            layout and link clicks
+  keyboard.ts        the single keyboard handler: a keymap per mode
   components/        top bar, article, picker, settings form, help/confirm/toast
   picker-items.ts    feed counts → picker rows
   keys.ts            key reference and platform modifier
@@ -201,7 +211,7 @@ packaging/           PKGBUILD, .desktop entry, icon
 
 ### How it handles articles
 
-- Article HTML is sanitised with DOMPurify. Scripts, styles and forms are dropped, and iframes and videos become a plain *▶ Embedded media* link.
+- Article HTML is sanitised with DOMPurify. Scripts, styles and forms are dropped, and iframes and videos become a plain _▶ Embedded media_ link.
 - Images load (through Miniflux's media proxy if you have it enabled).
 - Every link opens in your default browser, never inside the app.
 - Code blocks are highlighted with highlight.js using the theme's own colours.

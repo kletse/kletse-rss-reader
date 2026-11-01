@@ -10,7 +10,9 @@
     "vite:dev": "vite",
     "vite:build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "lint": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
+    "lint": "biome check && npm run lint:rust",
+    "lint:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "format": "biome check --write && cargo fmt --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
@@ -20,6 +22,7 @@
     "solid-js": "1.9.18"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.4",
     "@solidjs/testing-library": "0.8.10",
     "@tauri-apps/cli": "2.12.4",
     "jsdom": "30.1.3",

@@ -1,0 +1,113 @@
+/* The top bar, buttons and the reader around the article. */
+@layer app {
+  /* ---- Top bar -------------------------------------------------------- */
+  #bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-block: 6px;
+    padding-inline: 10px;
+    border-block-end: 1px solid var(--bg-light);
+    flex: none;
+  }
+  /* macOS: the window controls float over the bar's start (overlay title bar). */
+  html[data-platform="mac"] #bar {
+    padding-inline-start: 84px;
+  }
+  #bar[data-settings="true"] > * {
+    visibility: hidden;
+  }
+  #position {
+    color: var(--fg-dim);
+    flex: 1;
+    text-align: center;
+  }
+  .bar-actions {
+    display: flex;
+    gap: 6px;
+  }
+  #picker-btn {
+    max-inline-size: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #picker-btn .icon {
+    color: var(--accent);
+  }
+  #mode-badge {
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding-block: 1px;
+    padding-inline: 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  #readeck-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-icon {
+    inline-size: 14px;
+    block-size: 14px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+  }
+  button.primary:hover {
+    color: var(--bg);
+    filter: brightness(1.1);
+  }
+  .hint {
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+
+  /* ---- Reader --------------------------------------------------------- */
+  #reader {
+    flex: 1;
+    overflow-y: auto;
+    outline: none;
+    padding-block: 40px 30vh;
+    padding-inline: 24px;
+  }
+  #reader::-webkit-scrollbar {
+    inline-size: 8px;
+  }
+  #reader::-webkit-scrollbar-thumb {
+    background: var(--bg-light);
+    border-radius: var(--radius);
+  }
+  .message {
+    max-inline-size: var(--measure);
+    margin-inline: auto;
+    padding-block-start: 20vh;
+    text-align: center;
+    color: var(--fg-dim);
+  }
+  .message h1 {
+    color: var(--fg);
+    font-family: var(--article-font);
+  }
+
+  @media (max-width: 560px) {
+    #reader {
+      padding-block: 24px 30vh;
+      padding-inline: 16px;
+    }
+    #readeck-btn {
+      display: none;
+    }
+  }
+}

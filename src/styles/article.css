@@ -1,0 +1,140 @@
+/* The article: its own header, then the sanitized feed HTML (content.ts), styled by element. */
+@layer article {
+  article {
+    max-inline-size: var(--measure);
+    margin-inline: auto;
+  }
+  .meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--fg-dim);
+    font-size: 13px;
+  }
+  .status {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+  .status[data-status="unread"] {
+    color: var(--accent);
+  }
+  .status[data-status="read"] {
+    color: var(--muted);
+  }
+  article h1 {
+    font-family: var(--article-font);
+    font-size: calc(var(--article-size) * 1.75);
+    line-height: 1.2;
+    font-weight: 700;
+    margin-block: 12px 4px;
+    margin-inline: 0;
+  }
+  .title-link {
+    color: var(--fg-bright);
+    text-decoration: none;
+  }
+  .title-link:hover {
+    color: var(--accent);
+  }
+  .source {
+    color: var(--muted);
+    font-size: 13px;
+    margin-block-end: 32px;
+  }
+
+  .content {
+    font-family: var(--article-font);
+    font-size: var(--article-size);
+    line-height: 1.65;
+    overflow-wrap: break-word;
+  }
+  .content a {
+    color: var(--accent);
+    text-underline-offset: 3px;
+  }
+  .content img,
+  .content picture,
+  .content svg {
+    max-inline-size: 100%;
+    block-size: auto;
+    border-radius: var(--radius);
+    display: block;
+    margin-block: 1em;
+    margin-inline: auto;
+  }
+  .content figure {
+    margin-block: 1.5em;
+    margin-inline: 0;
+  }
+  .content figcaption {
+    color: var(--fg-dim);
+    font-size: 0.85em;
+    text-align: center;
+  }
+  .content h1,
+  .content h2,
+  .content h3,
+  .content h4 {
+    color: var(--fg-bright);
+    line-height: 1.3;
+    margin-block-start: 1.6em;
+  }
+  .content blockquote {
+    margin-block: 1em;
+    margin-inline: 0;
+    padding-inline-start: 1em;
+    border-inline-start: 3px solid var(--accent);
+    color: var(--fg-dim);
+  }
+  .content hr {
+    border: none;
+    border-block-start: 1px solid var(--bg-light);
+    margin-block: 2em;
+    margin-inline: 0;
+  }
+  .content table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+    font-size: 0.9em;
+  }
+  .content th,
+  .content td {
+    border: 1px solid var(--bg-light);
+    padding-block: 4px;
+    padding-inline: 8px;
+  }
+  .content code {
+    font-family: var(--ui-font);
+    font-size: 0.85em;
+    background: var(--bg-light);
+    padding-block: 1px;
+    padding-inline: 4px;
+    border-radius: var(--radius);
+  }
+  .content pre {
+    background: var(--bg-dark);
+    padding-block: 14px;
+    padding-inline: 16px;
+    overflow-x: auto;
+    border-radius: var(--radius);
+    line-height: 1.45;
+  }
+  .content pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.8em;
+  }
+  /* Embeds become a link in a paragraph of its own (content.ts marks it). */
+  .content p[data-embed] a {
+    display: inline-block;
+    padding-block: 8px;
+    padding-inline: 12px;
+    border: 1px solid var(--bg-light);
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-family: var(--ui-font);
+    font-size: 0.8em;
+  }
+}

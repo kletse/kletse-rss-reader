@@ -21,7 +21,8 @@ pub struct Theme {
     pub colors: HashMap<String, String>,
     /// Corner radius in px.
     pub rounding: i64,
-    /// UI (monospace) font family, if the desktop has a preference.
+    /// UI (monospace) font family, if the desktop has a preference. Left out of the JSON when there's none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font: Option<String>,
 }
 
@@ -36,4 +37,16 @@ pub fn load() -> Theme {
 /// Starts following theme changes; emits `theme-changed` with the new `Theme`.
 pub fn watch(app: tauri::AppHandle) {
     provider::watch(app)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_font_is_left_out_of_the_json() {
+        let theme = Theme { colors: HashMap::new(), rounding: 0, font: None };
+        assert_eq!(serde_json::to_string(&theme).unwrap(), r#"{"colors":{},"rounding":0}"#);
+    }
 }

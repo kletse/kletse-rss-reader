@@ -1,0 +1,31 @@
+/* Later layers win over earlier ones, whatever the selector specificity. */
+@layer tokens, base, app, article, syntax, state;
+
+/* Colours come from the desktop theme (Omarchy / macOS appearance, see theme.ts); these are fallbacks. */
+@layer tokens {
+  :root {
+    --bg: #1a1b26;
+    --bg-light: #24283b;
+    --bg-dark: #16161e;
+    --fg: #c0caf5;
+    --fg-dim: #787c99;
+    --fg-bright: #ffffff;
+    --accent: #7aa2f7;
+    --muted: #565f89;
+    --selection: #33467c;
+    --red: #f7768e;
+    --yellow: #e0af68;
+    --green: #9ece6a;
+    --cyan: #7dcfff;
+    --blue: #7aa2f7;
+    --magenta: #bb9af7;
+    --orange: #ff9e64;
+    --bright-red: var(--red);
+    --radius: 0;
+    --ui-font: monospace;
+    --article-font: "Inter Variable", "Inter", system-ui, sans-serif;
+    --article-size: 18px; /* Ctrl +/- change it (prefs.ts) */
+    --width-factor: 40; /* [ and ] change it */
+    --measure: calc(var(--article-size) * var(--width-factor)); /* scales with the font size */
+  }
+}

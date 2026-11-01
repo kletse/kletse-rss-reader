@@ -1,52 +1,114 @@
-import { createEffect, For, Match, Switch } from "solid-js";
-import { choose, closePicker, openSettings, pickerCursor, pickerItems, pickerList, pickerMode, queue, toggleMode } from "../state";
+import { type Accessor, createEffect, For, type JSX, Match, Switch } from "solid-js";
+import type { PickerItem } from "../picker-items";
+import {
+  choose,
+  closePicker,
+  pickerCanClose,
+  pickerCursor,
+  pickerItems,
+  pickerList,
+  pickerMode,
+  toggleMode,
+} from "../state/picker";
+import { openSettings } from "../state/settings";
+import { openHelp } from "../state/ui";
+
+function Row(props: { item: PickerItem; active: boolean }): JSX.Element {
+  return (
+    <li>
+      <button
+        type="button"
+        aria-current={props.active}
+        data-depth={props.item.depth}
+        tabindex="-1"
+        onClick={(): void => choose(props.item)}
+      >
+        <span class="label">{props.item.label}</span>
+        <span class="count">{props.item.count}</span>
+      </button>
+    </li>
+  );
+}
+
+function Rows(props: { history: boolean }): JSX.Element {
+  return (
+    <For
+      each={pickerItems()}
+      fallback={
+        <li class="empty">
+          {props.history
+            ? "Nothing read yet. Press h for unread items."
+            : "Nothing unread. Press r to refresh, or h for history."}
+        </li>
+      }
+    >
+      {(item: PickerItem, i: Accessor<number>): JSX.Element => <Row item={item} active={i() === pickerCursor()} />}
+    </For>
+  );
+}
 
 /**
  * The feeds/categories overlay: "All unread", categories, and their feeds with unread counts.
  * In history mode the same, with read counts.
  */
-export function Picker() {
-  let list!: HTMLUListElement;
-  const error = () => { const l = pickerList(); return l.kind === "error" ? l.message : undefined; };
-  const items = () => (pickerList().kind === "ready" ? pickerItems() : undefined);
-  const history = () => pickerMode() === "history";
+export function Picker(): JSX.Element {
+  let list: HTMLUListElement | undefined;
+  const history = (): boolean => pickerMode() === "history";
+  const error = (): string | undefined => {
+    const l = pickerList();
+    return l.kind === "error" ? l.message : undefined;
+  };
   createEffect(() => {
     pickerCursor();
     pickerList();
-    list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+    list?.querySelector("[aria-current='true']")?.scrollIntoView({ block: "nearest" });
   });
+  const closeOnBackdrop = (e: MouseEvent): void => {
+    if (e.target === e.currentTarget && pickerCanClose()) {
+      closePicker();
+    }
+  };
 
   return (
-    <div id="picker" class="overlay" onClick={(e) => e.target === e.currentTarget && queue().length && closePicker()}>
-      <div class="panel">
+    // biome-ignore lint/a11y/noStaticElementInteractions: a backdrop click closes the picker for the mouse; Esc does it for the keyboard (keyboard.ts)
+    <div id="picker" class="overlay" role="presentation" onClick={closeOnBackdrop}>
+      <div class="panel" role="dialog" aria-label={history() ? "History" : "Feeds"}>
         <div class="panel-title">
           <span>{history() ? "History" : "Feeds"}</span>
-          <span class="hint">j/k · Enter · r refresh · h {history() ? "unread" : "history"} · Esc</span>
-          <button id="mode-btn" title={history() ? "Unread items (h)" : "Read items, newest first (h)"} onClick={toggleMode}>
+          <button type="button" id="help-btn" title="Keys (?)" onClick={openHelp}>
+            ?
+          </button>
+          <button
+            type="button"
+            id="mode-btn"
+            title={history() ? "Unread items (h)" : "Read items, newest first (h)"}
+            onClick={toggleMode}
+          >
             {history() ? "Unread" : "History"}
           </button>
-          <button id="settings-btn" title="Settings (,)" onClick={() => openSettings()}>
-            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></svg>
+          <button type="button" id="settings-btn" title="Settings (,)" onClick={(): void => openSettings()}>
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
+            </svg>
             Settings
           </button>
         </div>
-        <ul id="picker-list" ref={list}>
+        <ul
+          id="picker-list"
+          ref={(el: HTMLUListElement): void => {
+            list = el;
+          }}
+        >
           <Switch>
-            <Match when={pickerList().kind === "loading"}><li class="empty">Loading…</li></Match>
-            <Match when={error() !== undefined}>
-              <li class="empty error">{error()}</li>
+            <Match when={pickerList().kind === "loading"}>
+              <li class="empty">Loading…</li>
             </Match>
-            <Match when={items()}>
-              {(items) => (
-                <For each={items()} fallback={<li class="empty">{history() ? "Nothing read yet. Press h for unread items." : "Nothing unread. Press r to refresh, or h for history."}</li>}>
-                  {(item, i) => (
-                    <li class={`depth-${item.depth}`} classList={{ active: i() === pickerCursor() }} onClick={() => choose(item)}>
-                      <span class="label">{item.label}</span>
-                      <span class="count">{item.count}</span>
-                    </li>
-                  )}
-                </For>
-              )}
+            <Match when={error()}>
+              {(message: Accessor<string>): JSX.Element => <li class="empty error">{message()}</li>}
+            </Match>
+            <Match when={pickerList().kind === "ready"}>
+              <Rows history={history()} />
             </Match>
           </Switch>
         </ul>

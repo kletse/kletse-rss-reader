@@ -3,56 +3,101 @@ import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 
 const EMBEDS = "iframe, embed, object, video, audio";
+const LEADING_WWW = /^www\./u;
+
+/** Embeds become plain links to their source; embeds without one are dropped. */
+function replaceEmbeds(doc: Document, baseUrl: string): void {
+  const embeds = Array.from(doc.querySelectorAll(EMBEDS));
+  for (const el of embeds) {
+    const src = el.getAttribute("src") ?? el.getAttribute("data") ?? el.querySelector("source")?.getAttribute("src");
+    if (src === undefined || src === null || src === "") {
+      el.remove();
+    } else {
+      const a = doc.createElement("a");
+      a.href = absolute(src, baseUrl);
+      a.textContent = `▶ Embedded media · ${hostOf(a.href)}`;
+      // The sanitizer keeps data attributes; wrapEmbeds() uses this one to find the link again.
+      a.setAttribute("data-embed", "");
+      el.replaceWith(a);
+    }
+  }
+}
+
+/** Images load lazily from absolute URLs; one without a source would load the base URL itself. */
+function fixImages(root: DocumentFragment, baseUrl: string): void {
+  const images = Array.from(root.querySelectorAll("img"));
+  for (const img of images) {
+    const src = img.getAttribute("src");
+    if (src === null || src === "") {
+      img.remove();
+    } else {
+      img.setAttribute("loading", "lazy");
+      img.src = absolute(src, baseUrl);
+    }
+  }
+}
+
+function fixLinks(root: DocumentFragment, baseUrl: string): void {
+  const links = Array.from(root.querySelectorAll("a[href]"));
+  for (const a of links) {
+    const href = a.getAttribute("href");
+    if (href !== null) {
+      a.setAttribute("href", absolute(href, baseUrl));
+    }
+  }
+}
+
+/** Each embed link gets its own paragraph, marked so styles/article.css can set it apart. */
+function wrapEmbeds(root: DocumentFragment): void {
+  const links = Array.from(root.querySelectorAll("a[data-embed]"));
+  for (const a of links) {
+    a.removeAttribute("data-embed");
+    const p = root.ownerDocument.createElement("p");
+    p.setAttribute("data-embed", "");
+    a.replaceWith(p);
+    p.append(a);
+  }
+}
+
+/** Highlights `<pre><code>`, and bare `<pre>` blocks; inline code is left alone. */
+function highlight(root: DocumentFragment): void {
+  const blocks = Array.from(root.querySelectorAll("pre code, pre"));
+  for (const block of blocks) {
+    const wrapsCode = block.tagName === "PRE" && block.querySelector("code") !== null;
+    if (!wrapsCode && block instanceof HTMLElement) {
+      hljs.highlightElement(block);
+    }
+  }
+}
 
 /** Sanitizes article HTML: embeds become links, scripts/styles go, code gets highlighted. */
 export function renderContent(html: string, baseUrl: string): DocumentFragment {
   const doc = new DOMParser().parseFromString(html, "text/html");
-
-  for (const el of Array.from(doc.querySelectorAll(EMBEDS))) {
-    const src = el.getAttribute("src") ?? el.getAttribute("data") ?? el.querySelector("source")?.getAttribute("src");
-    if (!src) { el.remove(); continue; }
-    const a = doc.createElement("a");
-    a.href = absolute(src, baseUrl);
-    a.textContent = `▶ Embedded media · ${hostOf(a.href)}`;
-    // Classes are stripped by the sanitizer below; the data attribute survives and is turned into one after.
-    a.dataset.embed = "";
-    el.replaceWith(a);
-  }
-
+  replaceEmbeds(doc, baseUrl);
   const clean = DOMPurify.sanitize(doc.body.innerHTML, {
     RETURN_DOM_FRAGMENT: true,
     FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "source"],
     FORBID_ATTR: ["style", "width", "height", "class", "id", "srcset", "sizes"],
   });
-
-  for (const img of Array.from(clean.querySelectorAll("img"))) {
-    const src = img.getAttribute("src");
-    // Without a source the browser would try to load the base URL itself as an image.
-    if (!src) { img.remove(); continue; }
-    img.setAttribute("loading", "lazy");
-    img.src = absolute(src, baseUrl);
-  }
-  for (const a of Array.from(clean.querySelectorAll("a[href]"))) {
-    a.setAttribute("href", absolute(a.getAttribute("href")!, baseUrl));
-  }
-  for (const a of Array.from(clean.querySelectorAll("a[data-embed]"))) {
-    a.removeAttribute("data-embed");
-    const p = clean.ownerDocument.createElement("p");
-    p.className = "embed-link";
-    a.replaceWith(p);
-    p.append(a);
-  }
-  for (const code of Array.from(clean.querySelectorAll("pre code, pre"))) {
-    if (code.tagName === "PRE" && code.querySelector("code")) continue;
-    hljs.highlightElement(code as HTMLElement);
-  }
+  fixImages(clean, baseUrl);
+  fixLinks(clean, baseUrl);
+  wrapEmbeds(clean);
+  highlight(clean);
   return clean;
 }
 
 function absolute(url: string, base: string): string {
-  try { return new URL(url, base).href; } catch { return url; }
+  try {
+    return new URL(url, base).href;
+  } catch {
+    return url;
+  }
 }
 
 export function hostOf(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+  try {
+    return new URL(url).hostname.replace(LEADING_WWW, "");
+  } catch {
+    return url;
+  }
 }

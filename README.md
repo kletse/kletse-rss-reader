@@ -29,7 +29,7 @@ Most feed readers give you three panes and a wall of headlines. Kletse RSS shows
 You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, you get _“All caught up”_ and you're back at the feed picker.
 
 <p align="center">
-  <img src="docs/screenshots/article.png" alt="Reading an article" width="900">
+  <img src="docs/screenshots/macos/article.png" alt="Reading an article" width="900">
 </p>
 
 - **Unread first.** Read items don't appear, except ones you passed during this session, so **k** can take you back to undo.
@@ -40,13 +40,13 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ## Screenshots
 
-| Feeds picker                                                                                             | Code, highlighted in theme colours                                                       | Keys (<kbd>?</kbd>)                                                   |
-| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| <img src="docs/screenshots/picker.png" alt="Feeds and categories picker">                                | <img src="docs/screenshots/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/help.png" alt="Keyboard shortcut overlay"> |
-| **First-run setup**                                                                                      |                                                                                          |                                                                       |
-| <img src="docs/screenshots/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> |                                                                                          |                                                                       |
+| Feeds picker                                                                                                   | Code, highlighted in theme colours                                                             | Keys (<kbd>?</kbd>)                                                         |
+| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| <img src="docs/screenshots/macos/picker.png" alt="Feeds and categories picker">                                | <img src="docs/screenshots/macos/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/macos/help.png" alt="Keyboard shortcut overlay"> |
+| **First-run setup**                                                                                            |                                                                                                |                                                                             |
+| <img src="docs/screenshots/macos/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> |                                                                                                |                                                                             |
 
-<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`) with an Omarchy theme. The colours follow whichever theme you have active; on macOS they follow the system appearance.</sub>
+<sub>Screenshots are from macOS in dark mode, with the built-in demo data (`KLETSE_RSS_DEMO=1`). The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
 
 ## Keys
 

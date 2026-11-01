@@ -1,13 +1,13 @@
 //! Follows the macOS appearance: light or dark mode and the accent colour from System Settings.
 //! Two hand-picked palettes carry the rest; the accent is the system one.
 
-use super::{Theme, CHANGED_EVENT};
+use super::{CHANGED_EVENT, Theme};
 use std::{
     collections::HashMap,
     process::Command,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
 };

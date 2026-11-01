@@ -10,6 +10,7 @@ type MockedApi = { [K in keyof Api]: Mock<Api[K]> };
 export const api: MockedApi = {
   status: vi.fn(),
   getSettings: vi.fn(),
+  configProblem: vi.fn(),
   saveSettings: vi.fn(),
   theme: vi.fn(),
   feedCounts: vi.fn(),

@@ -110,27 +110,45 @@ pub fn validate_url(url: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Reads the config file as far as it goes; missing or unreadable means "empty".
-pub fn read() -> Config {
-    path().map(|p| read_from(&p)).unwrap_or_default()
+/// Reads the config file. No file (or no home directory) is an empty config; a file that can't be read or
+/// parsed is an error that says where, so the settings form can show it instead of quietly starting over.
+pub fn read() -> Result<Config, Error> {
+    path().map_or(Ok(Config::default()), |p| read_from(&p))
 }
 
-fn read_from(path: &Path) -> Config {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Config::default(),
-        Err(e) => {
-            eprintln!("kletse-rss: could not read {}: {e}", path.display());
-            return Config::default();
-        }
+fn read_from(path: &Path) -> Result<Config, Error> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(source) => return Err(Error::Io { context: format!("Could not read {}", path.display()), source }),
     };
-    match toml::from_str::<Config>(&text) {
-        Ok(config) => config.normalized(),
-        Err(e) => {
-            eprintln!("kletse-rss: ignoring {}: {e}", path.display());
-            Config::default()
+    parse(&bytes).map(Config::normalized).map_err(|problem| {
+        Error::Setup(format!(
+            "Couldn't use {}. {problem}. Fix the file and restart the app, or save this form; the old file is then \
+             kept as {}.",
+            path.display(),
+            broken_name(path).display(),
+        ))
+    })
+}
+
+/// A config file's contents, or what is wrong with them ("Line 3: string values must be quoted").
+fn parse(bytes: &[u8]) -> Result<Config, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "It is not a text file".to_string())?;
+    toml::from_str(text).map_err(|e| match e.span() {
+        Some(span) => {
+            let line = text[..span.start.min(text.len())].matches('\n').count() + 1;
+            format!("Line {line}: {}", e.message().trim_end_matches('.'))
         }
-    }
+        None => e.message().trim_end_matches('.').to_string(),
+    })
+}
+
+/// Where a config file that doesn't parse is kept when a save replaces it: `config.toml.broken`.
+fn broken_name(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".broken");
+    path.with_file_name(name)
 }
 
 /// Writes the config (mode 600: it holds API keys).
@@ -146,8 +164,29 @@ fn save_to(config: &Config, path: &Path) -> Result<(), Error> {
     let text = format!(
         "# kletse-rss configuration. Also editable from the app: press , or use Settings in the feeds picker.\n\n{body}"
     );
-    write_private(path, &text)
+    keep_if_broken(path)?;
+    write_private(path, text.as_bytes())
         .map_err(|source| Error::Io { context: format!("Could not write {}", path.display()), source })
+}
+
+/// Before a save replaces a config that doesn't parse, copies it to `<name>.broken`: it may hold changes made
+/// by hand with a typo in them. One that can't even be read is left alone, and the save refused.
+fn keep_if_broken(path: &Path) -> Result<(), Error> {
+    let path = resolve_symlinks(path);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            let context = format!("Could not read {} to keep a copy before replacing it", path.display());
+            return Err(Error::Io { context, source });
+        }
+    };
+    if parse(&bytes).is_ok() {
+        return Ok(());
+    }
+    let broken = broken_name(&path);
+    write_private(&broken, &bytes)
+        .map_err(|source| Error::Io { context: format!("Could not keep a copy as {}", broken.display()), source })
 }
 
 /// Writes the file readable by the owner only, creating its directory. The text goes to a new temporary file
@@ -156,7 +195,7 @@ fn save_to(config: &Config, path: &Path) -> Result<(), Error> {
 ///
 /// The price of replacing rather than overwriting: the directory must be writable, not just the file, and the
 /// new file is a new inode (hard links to the old one keep the old contents).
-fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let path = resolve_symlinks(path);
     let dir = path.parent().unwrap_or(Path::new(""));
@@ -165,7 +204,7 @@ fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     prefix.push(path.file_name().unwrap_or_default());
     prefix.push(".");
     let mut tmp = tempfile::Builder::new().prefix(&prefix).suffix(".tmp").tempfile_in(dir)?;
-    tmp.write_all(text.as_bytes())?;
+    tmp.write_all(contents)?;
     tmp.as_file().sync_all()?;
     tmp.persist(&path).map_err(|e| e.error)?; // on failure, dropping the temporary file deletes it
     sync_dir(dir);
@@ -283,12 +322,62 @@ mod tests {
     }
 
     #[test]
-    fn read_from_missing_or_broken_file_is_empty() {
+    fn a_missing_file_is_an_empty_config() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_from(&dir.path().join("config.toml")).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn a_broken_file_is_an_error_that_says_where_and_what_saving_does() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        assert_eq!(read_from(&path), Config::default());
-        fs::write(&path, "this is = not [toml").unwrap();
-        assert_eq!(read_from(&path), Config::default());
+        fs::write(&path, "[miniflux]\nurl = \"https://m.example.com\"\napi_key = oops\n").unwrap();
+        let err = read_from(&path).unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::Setup);
+        let message = err.message();
+        assert!(message.starts_with(&format!("Couldn't use {}. Line 3: ", path.display())), "{message}");
+        assert!(message.ends_with(&format!("the old file is then kept as {}.broken.", path.display())), "{message}");
+
+        fs::write(&path, "[miniflux]\nurl = 5\n").unwrap();
+        assert!(read_from(&path).unwrap_err().message().contains(". Line 2: invalid type"));
+        fs::write(&path, b"\xff\xfe").unwrap();
+        assert!(read_from(&path).unwrap_err().message().contains(". It is not a text file. "));
+    }
+
+    #[test]
+    fn saving_over_a_broken_file_keeps_it_as_broken() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let typo = "[miniflux]\nurl = \"https://m.example.com\"\napi_key = oops\n# notes I want to keep\n";
+        fs::write(&path, typo).unwrap();
+        save_to(&full(), &path).unwrap();
+        assert_eq!(read_from(&path).unwrap(), full());
+        let broken = dir.path().join("config.toml.broken");
+        assert_eq!(fs::read_to_string(&broken).unwrap(), typo);
+        #[cfg(unix)]
+        assert_eq!(fs::metadata(&broken).unwrap().permissions().mode() & 0o777, 0o600);
+
+        // A good file is simply replaced; the copy from before stays as it was.
+        let mut changed = full();
+        changed.readeck = None;
+        save_to(&changed, &path).unwrap();
+        assert_eq!(read_from(&path).unwrap(), changed);
+        assert_eq!(fs::read_to_string(&broken).unwrap(), typo);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cant_be_read_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "whatever is in here").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let saved = save_to(&full(), &path);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let Err(err) = saved else { return }; // running as root, which ignores the mode
+        assert!(err.message().starts_with(&format!("Could not read {} to keep a copy", path.display())));
+        assert!(read_from(&path).is_err(), "the original is still there, unparsed");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "whatever is in here");
     }
 
     #[test]
@@ -296,7 +385,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("config.toml");
         save_to(&full(), &path).unwrap();
-        assert_eq!(read_from(&path), full());
+        assert_eq!(read_from(&path).unwrap(), full());
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# kletse-rss configuration"));
         #[cfg(unix)]
@@ -322,7 +411,7 @@ mod tests {
         // What an earlier version left after a crash; a directory, so that writing into it would fail.
         fs::create_dir(dir.path().join(".config.toml.tmp")).unwrap();
         save_to(&full(), &path).unwrap();
-        assert_eq!(read_from(&path), full());
+        assert_eq!(read_from(&path).unwrap(), full());
     }
 
     #[cfg(unix)]
@@ -339,7 +428,7 @@ mod tests {
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let Err(err) = saved else { return }; // running as root, which ignores the mode
         assert!(err.message().starts_with(&format!("Could not write {}: ", path.display())), "{}", err.message());
-        assert_eq!(read_from(&path), full());
+        assert_eq!(read_from(&path).unwrap(), full());
         let names: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["config.toml"]);
     }
@@ -355,7 +444,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         save_to(&full(), &link).unwrap();
         assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(read_from(&target), full());
+        assert_eq!(read_from(&target).unwrap(), full());
         assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
@@ -368,7 +457,7 @@ mod tests {
         std::os::unix::fs::symlink("dotfiles/kletse-rss.toml", &link).unwrap();
         save_to(&full(), &link).unwrap();
         assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(read_from(&dir.path().join("dotfiles").join("kletse-rss.toml")), full());
+        assert_eq!(read_from(&dir.path().join("dotfiles").join("kletse-rss.toml")).unwrap(), full());
     }
 
     #[test]

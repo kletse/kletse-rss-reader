@@ -165,10 +165,10 @@ fn command(f: &syn::ItemFn, known: &BTreeMap<&str, &str>) -> Command {
         .iter()
         .filter_map(|input| {
             let syn::FnArg::Typed(arg) = input else { panic!("commands are free functions") };
-            if let syn::Type::Path(p) = &*arg.ty {
-                if INJECTED.contains(&last_segment(&p.path).ident.to_string().as_str()) {
-                    return None;
-                }
+            if let syn::Type::Path(p) = &*arg.ty
+                && INJECTED.contains(&last_segment(&p.path).ident.to_string().as_str())
+            {
+                return None;
             }
             let syn::Pat::Ident(name) = &*arg.pat else { panic!("command arguments need plain names") };
             Some((camel_case(&name.ident.to_string()), ts_type(&arg.ty, known)))

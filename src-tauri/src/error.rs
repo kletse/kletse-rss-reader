@@ -56,11 +56,7 @@ pub enum Error {
 }
 
 fn body_suffix(body: &str) -> String {
-    if body.is_empty() {
-        String::new()
-    } else {
-        format!(": {body}")
-    }
+    if body.is_empty() { String::new() } else { format!(": {body}") }
 }
 
 /// What kind of problem a `CommandError` is.

@@ -278,9 +278,8 @@ mod tests {
         for e in ENTRIES {
             assert!(FEEDS.iter().any(|f| f.id == e.feed), "entry {:?} has no feed", e.title);
         }
-        let mut ids: Vec<_> = FEEDS.iter().map(|f| f.id).collect();
-        ids.dedup();
-        assert_eq!(ids.len(), FEEDS.len());
+        let ids: std::collections::BTreeSet<_> = FEEDS.iter().map(|f| f.id).collect();
+        assert_eq!(ids.len(), FEEDS.len(), "demo feed ids are unique");
     }
 
     #[test]

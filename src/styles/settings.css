@@ -58,6 +58,17 @@
   .settings input::placeholder {
     color: var(--muted);
   }
+  /* What was wrong with the config file, above the fields it is about. */
+  .settings .form-notice {
+    color: var(--fg);
+    border-inline-start: 3px solid var(--yellow);
+    margin-block: -12px 22px;
+    margin-inline: 0;
+    padding-block: 2px;
+    padding-inline: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
   .settings .form-error {
     color: var(--bright-red);
     min-block-size: 1.2em;

@@ -7,7 +7,7 @@ import { Picker } from "./components/Picker";
 import { Settings } from "./components/Settings";
 import { TopBar } from "./components/TopBar";
 import { onKey } from "./keyboard";
-import { current, hasMore, index, loading, openLink, queue, queueMode } from "./state/queue";
+import { checking, current, hasMore, index, loading, openLink, queue, queueMode } from "./state/queue";
 import { inSettings, overlay, scrollToTop, setReader } from "./state/ui";
 import { followWindowTitle } from "./title";
 
@@ -44,7 +44,8 @@ function Reader(): JSX.Element {
       <Match when={hasMore()}>
         <Message text="Loading…" />
       </Match>
-      <Match when={queue().length > 0}>
+      {/* While it looks for new arrivals, nothing: no "Loading…" if there are none, no "All caught up" if there are. */}
+      <Match when={queue().length > 0 && !checking()}>
         <Message
           title={queueMode() === "history" ? "End of history" : "All caught up"}
           text="Press j or Enter for the feeds, k to go back."

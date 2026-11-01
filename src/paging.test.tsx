@@ -6,7 +6,19 @@ import { mergePage, nextPage, PAGE } from "./paging";
 import { current, hasMore, loading, queue } from "./state/queue";
 import { start } from "./state/settings";
 import { setOverlay } from "./state/ui";
-import { api, entry, fakeMiniflux, isUnread, items, key, miniflux, pickerLoaded, range, serve } from "./testing";
+import {
+  api,
+  element,
+  entry,
+  fakeMiniflux,
+  isUnread,
+  items,
+  key,
+  miniflux,
+  pickerLoaded,
+  range,
+  serve,
+} from "./testing";
 
 vi.mock("./api", () => import("./testing"));
 vi.mock("./theme", () => ({ initTheme: (): Promise<void> => Promise.resolve() }));
@@ -168,6 +180,131 @@ describe("unread paging", () => {
     await screen.findByText("All caught up");
     expect(api.setStatus).toHaveBeenCalledWith([PAGE + 6], "read");
     expect(miniflux.entries.filter(isUnread)).toHaveLength(0);
+  });
+});
+
+describe("new arrivals at the end of the unread list", () => {
+  /** Holds back the next entries request until the returned function lets the fake Miniflux answer it. */
+  function holdNextRequest(): () => Promise<void> {
+    const serveNow = api.entries.getMockImplementation();
+    let answer = (): void => undefined;
+    api.entries.mockImplementationOnce(
+      (...args) =>
+        new Promise((resolve, reject) => {
+          answer = (): void => {
+            serveNow?.(...args).then(resolve, reject);
+          };
+        }),
+    );
+    return async (): Promise<void> => {
+      answer();
+      await new Promise((settled) => {
+        setTimeout(settled, 0);
+      });
+    };
+  }
+
+  it("shows items that arrived while you were reading, instead of all caught up", async () => {
+    serve(items(3));
+    await open();
+    key("j");
+    key("j");
+    await screen.findByText("Item 3");
+    miniflux.entries.push(entry(4, "Arrived later"), entry(5, "Also later"));
+    key("j");
+    expect(screen.queryByText("All caught up")).toBeNull(); // no flash of it, nor of "Loading…"
+    expect(screen.queryByText("Loading…")).toBeNull();
+    await screen.findByText("Arrived later");
+    expect(screen.getByText("4 / 5")).toBeTruthy();
+    // It asked for what came after the newest item loaded.
+    const past = Date.parse(entry(3, "").published_at) / 1000 - 1;
+    expect(api.entries).toHaveBeenLastCalledWith({ kind: "all" }, "unread", past, PAGE + 1);
+    expect(await pressThrough("j")).toEqual([4, 5]);
+    await screen.findByText("All caught up");
+    expect(miniflux.entries.filter(isUnread)).toHaveLength(0);
+  });
+
+  it("with nothing new, says all caught up and then goes to the feeds, as before", async () => {
+    serve(items(2));
+    await open();
+    key("j");
+    await screen.findByText("Item 2");
+    key("j");
+    expect(screen.queryByText("Loading…")).toBeNull();
+    await screen.findByText("All caught up");
+    expect(api.entries).toHaveBeenCalledTimes(2); // the first page, and the one look for new arrivals
+    key("j");
+    await pickerLoaded();
+    expect(api.entries).toHaveBeenCalledTimes(2);
+  });
+
+  it("a quick second j while it looks neither loads twice nor skips the new item", async () => {
+    serve(items(2));
+    await open();
+    key("j");
+    await screen.findByText("Item 2");
+    miniflux.entries.push(entry(3, "Arrived later"));
+    const answer = holdNextRequest();
+    key("j");
+    key("j");
+    key("Enter");
+    expect(element("#picker-list")).toBeNull();
+    await answer();
+    await screen.findByText("Arrived later");
+    expect(api.entries).toHaveBeenCalledTimes(2);
+    expect(miniflux.entries.find((e) => e.id === 3)?.status).toBe("unread");
+  });
+
+  it("if looking fails, it says so and is all caught up", async () => {
+    serve(items(1));
+    await open();
+    api.entries.mockRejectedValueOnce("Miniflux is down");
+    key("j");
+    await screen.findByText("All caught up");
+    expect(screen.getByText("Miniflux is down")).toBeTruthy();
+    key("j");
+    await pickerLoaded();
+  });
+
+  it("ignores what it finds once another selection is opened", async () => {
+    serve(items(2));
+    await open();
+    key("n");
+    await screen.findByText("Item 2");
+    const answer = holdNextRequest();
+    key("n");
+    key("g");
+    await pickerLoaded();
+    key("Enter");
+    await waitFor(() => expect(current()?.id).toBe(1));
+    miniflux.entries.push(entry(3, "Arrived later"));
+    await answer();
+    expect(api.entries).toHaveBeenCalledTimes(3);
+    expect(queue().map((e) => e.id)).toEqual([1, 2]);
+  });
+
+  it("marking all read also marks a new arrival it loaded", async () => {
+    serve(items(2));
+    await open();
+    miniflux.entries.push(entry(3, "Arrived later"));
+    key("n");
+    key("n");
+    await screen.findByText("Arrived later");
+    key("A", { shiftKey: true });
+    await screen.findByText("Mark all 3 unread items in “All unread” as read?");
+    key("y");
+    await screen.findByText("All caught up");
+    expect(api.setStatus).toHaveBeenCalledWith([3], "read");
+    expect(miniflux.entries.filter(isUnread)).toHaveLength(0);
+  });
+
+  it("history doesn't look: the end is the end", async () => {
+    serve([entry(1, "Read 1", "read")]);
+    await open(true);
+    miniflux.entries.push(entry(2, "Read 2", "read"));
+    key("j");
+    await screen.findByText("End of history");
+    expect(api.entries).toHaveBeenCalledTimes(1);
   });
 });
 

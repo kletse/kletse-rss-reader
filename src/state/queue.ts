@@ -1,7 +1,8 @@
 // The reading queue and everything you can do to the current article.
 // Unread mode: unread items, oldest first; going back shows items read this session.
 // History mode: read items, newest first.
-// Both load a page at a time as you get near the end.
+// Both load a page at a time as you get near the end. At the end of the unread list, it looks once more for items that
+// arrived meanwhile.
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { api, type Entry, type EntryPage, type EntryStatus, type Selection } from "../api";
@@ -17,8 +18,9 @@ const [loading, setLoading] = createSignal(false);
 const [queueMode, setQueueMode] = createSignal<Mode>("unread");
 const [total, setTotal] = createSignal(0); // the whole selection, including pages not loaded yet
 const [hasMore, setHasMore] = createSignal(false); // more pages on the server
+const [checking, setChecking] = createSignal(false); // past the end of the unread list, looking for new arrivals
 
-export { hasMore, index, loading, queueMode, selectionLabel, total };
+export { checking, hasMore, index, loading, queueMode, selectionLabel, total };
 
 export function queue(): Entry[] {
   return store.queue;
@@ -45,6 +47,7 @@ function resetQueue(label: string): void {
   setSelectionLabel(label);
   setTotal(0);
   setHasMore(false);
+  setChecking(false);
 }
 
 /** Empties the queue and cancels a selection that is still loading (after the server changed). */
@@ -87,9 +90,10 @@ async function fetchPage(selection: Selection, mode: Mode, load: number): Promis
   return load === loads.latest ? page : undefined;
 }
 
-async function loadMore(): Promise<void> {
+/** Appends the page after what's loaded; one at a time. */
+async function loadPage(): Promise<void> {
   const selection = openedSelection;
-  if (!hasMore() || loadingMore || selection === undefined) {
+  if (loadingMore || selection === undefined) {
     return;
   }
   loadingMore = true;
@@ -98,6 +102,23 @@ async function loadMore(): Promise<void> {
   if (page !== undefined) {
     appendPage(page);
   }
+}
+
+async function loadMore(): Promise<void> {
+  if (hasMore()) {
+    await loadPage();
+  }
+}
+
+/**
+ * Just past the last unread item: the page after it is whatever arrived since, so those follow on as if they'd been
+ * there all along, instead of "All caught up". (It starts at the newest loaded item's publication time, so an item a
+ * feed backdates before that shows up only when the selection is opened again.)
+ */
+async function checkForArrivals(): Promise<void> {
+  setChecking(true);
+  await loadPage();
+  setChecking(false);
 }
 
 function prefetch(): void {
@@ -151,6 +172,15 @@ async function setStatus(i: number, status: EntryStatus): Promise<void> {
   }
 }
 
+/** After moving on: the next page when it's near, or, just past the end of the unread list, new arrivals. */
+function loadAhead(): void {
+  if (current() === undefined && !hasMore() && queueMode() === "unread") {
+    void checkForArrivals();
+  } else {
+    prefetch();
+  }
+}
+
 /**
  * Moves past the current article, marking it read if asked.
  * Returns false at the end of the queue, when there is nothing more to load.
@@ -160,13 +190,13 @@ export function next(markRead: boolean): boolean {
     if (hasMore()) {
       void loadMore(); // the next page is still loading, or failed: try (again)
     }
-    return hasMore();
+    return hasMore() || checking();
   }
   if (markRead) {
     void setStatus(index(), "read");
   }
   setIndex(index() + 1);
-  prefetch();
+  loadAhead();
   return true;
 }
 

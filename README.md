@@ -26,7 +26,7 @@
 
 Most feed readers give you three panes and a wall of headlines. Kletse RSS shows **just the article**.
 
-You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, you get _“All caught up”_ and you're back at the feed picker.
+You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks Miniflux once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_ and you're back at the feed picker.
 
 <p align="center">
   <img src="docs/screenshots/macos/article.png" alt="Reading an article" width="900">

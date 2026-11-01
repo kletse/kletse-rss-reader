@@ -12,7 +12,17 @@ import {
   toggleMode,
 } from "./state/picker";
 import { biggerFont, narrower, resetSize, smallerFont, wider } from "./state/prefs";
-import { current, fetchFull, markAllRead, openOriginal, prev, queue, saveToReadeck, toggleRead } from "./state/queue";
+import {
+  checking,
+  current,
+  fetchFull,
+  markAllRead,
+  openOriginal,
+  prev,
+  queue,
+  saveToReadeck,
+  toggleRead,
+} from "./state/queue";
 import { closeSettings, openSettings } from "./state/settings";
 import { answerConfirm, atBottom, closeHelp, openHelp, overlay, scrollPage } from "./state/ui";
 
@@ -69,7 +79,7 @@ function space(e: KeyboardEvent): boolean {
 
 /** Enter only means something on the "all caught up" screen: back to the feeds. */
 function enter(): boolean {
-  const caughtUp = current() === undefined && queue().length > 0;
+  const caughtUp = current() === undefined && queue().length > 0 && !checking();
   if (caughtUp) {
     openPicker();
   }

@@ -70,7 +70,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>o</kbd>                                                                 | Open the original in your browser                                                |
 | <kbd>b</kbd>                                                                 | Save to Readeck, mark read, go to the next article                               |
 | <kbd>f</kbd>                                                                 | Fetch the full article (Miniflux's scraper); again for the feed's version        |
-| <kbd>Shift</kbd>+<kbd>A</kbd>                                                | Mark everything in the current list read (asks first)                            |
+| <kbd>Shift</kbd>+<kbd>A</kbd>                                                | Mark the whole list read, but not what arrived since you opened it (asks first)  |
 | <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> / <kbd>←</kbd> | Feeds & categories picker (all but <kbd>←</kbd> also close it)                   |
 | <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                |
 | <kbd>h</kbd>                                                                 | Switch between unread and history (read items, newest first)                     |
@@ -83,7 +83,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
-The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>.
+The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
 Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: **All read**, categories and feeds with read counts. What you open there shows read items newest first, loaded a page at a time as you go, and a **History** badge appears in the top bar. Every key works the same: <kbd>m</kbd> marks an item unread again, <kbd>b</kbd> saves it to Readeck, and so on. <kbd>Esc</kbd> closes the picker without switching, so you're back where you were.
 
@@ -193,7 +193,7 @@ KLETSE_RSS_DEMO=1 npm run dev
 ```text
 src/                 TypeScript UI (SolidJS)
   state/             app state (signals) and actions
-    queue.ts         the reading queue, history paging, article actions
+    queue.ts         the reading queue, paging, article actions
     picker.ts        the feeds picker
     settings.ts      settings, onboarding, start-up
     prefs.ts         font size and column width
@@ -203,12 +203,14 @@ src/                 TypeScript UI (SolidJS)
   keyboard.ts        the single keyboard handler: a keymap per mode
   components/        top bar, article, picker, settings form, help/confirm/toast
   picker-items.ts    feed counts → picker rows
+  paging.ts          where the next page starts (a publication time, not an offset)
   keys.ts            key reference and platform modifier
   content.ts         sanitising article HTML, embeds → links, code highlighting
   theme.ts           theme palette → CSS variables, live
   title.ts           the window title follows the article on screen
   api.ts             typed wrappers for the Rust commands
   *.test.ts(x)       vitest unit and UI tests
+  testing.ts         for the tests: mocked Rust commands served by a fake Miniflux
 src-tauri/src/
   lib.rs             Tauri commands
   miniflux.rs        Miniflux API client

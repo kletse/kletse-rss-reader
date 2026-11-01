@@ -4,7 +4,7 @@ import { hasMore, index, prev, queue, queueMode, saveToReadeck, selectionLabel, 
 import { readeckEnabled } from "../state/server";
 import { inSettings } from "../state/ui";
 
-/** "3 / 120" while reading; history counts the pages not loaded yet. */
+/** "3 / 120" while reading, counting the pages not loaded yet. */
 function position(): string {
   const n = queue().length;
   if (n === 0) {

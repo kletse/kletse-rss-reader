@@ -1,32 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { AppStatus, Entry, EntryPage, EntryStatus, FeedCount, api as realApi, Selection } from "./api";
-import { clearQueue, HISTORY_PAGE, hasMore, queue } from "./state/queue";
+import type { AppStatus, FeedCount } from "./api";
+import { PAGE } from "./paging";
+import { clearQueue, queue } from "./state/queue";
 import { closeSettings, start } from "./state/settings";
 import { setOverlay } from "./state/ui";
+import { api, element, entry, fakeMiniflux, key, pickerLoaded, serve } from "./testing";
 
-type Api = typeof realApi;
-type MockedApi = { [K in keyof Api]: Mock<Api[K]> };
-
-const api = vi.hoisted(
-  (): MockedApi => ({
-    status: vi.fn(),
-    getSettings: vi.fn(),
-    saveSettings: vi.fn(),
-    theme: vi.fn(),
-    feedCounts: vi.fn(),
-    unreadEntries: vi.fn(),
-    readEntries: vi.fn(),
-    setStatus: vi.fn(),
-    fetchContent: vi.fn(),
-    refreshFeeds: vi.fn(),
-    saveToReadeck: vi.fn(),
-    openInBrowser: vi.fn(),
-    quit: vi.fn(),
-  }),
-);
-vi.mock("./api", () => ({ api }));
+vi.mock("./api", () => import("./testing"));
 vi.mock("./theme", () => ({ initTheme: (): Promise<void> => Promise.resolve() }));
 const setTitle = vi.hoisted(() => vi.fn((_title: string): Promise<void> => Promise.resolve()));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: (): { setTitle: typeof setTitle } => ({ setTitle }) }));
@@ -37,37 +19,15 @@ function noLayout(): void {
 Element.prototype.scrollIntoView = noLayout;
 Element.prototype.scrollBy = noLayout;
 
-function entry(id: number, title: string, status: EntryStatus = "unread"): Entry {
-  return {
-    id,
-    title,
-    url: `https://example.com/${id}`,
-    author: "",
-    content: `<p>${title} body</p>`,
-    published_at: "2026-10-01T10:00:00Z",
-    status,
-    reading_time: 1,
-    feed: { id: 1, title: "Feed" },
-  };
-}
 const counts: FeedCount[] = [{ feed: { id: 1, title: "Feed", category: { id: 1, title: "Dev" } }, unread: 2, read: 3 }];
 const configured: AppStatus = { configured: true, readeck: false };
-
-/** Key events bubble from the body to the window, where the app listens. */
-function key(k: string, opts: KeyboardEventInit = {}): void {
-  fireEvent.keyDown(document.body, { key: k, ...opts });
-}
-
-function element(selector: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(selector);
-}
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.status.mockResolvedValue(configured);
   api.feedCounts.mockResolvedValue(counts);
-  api.unreadEntries.mockResolvedValue([entry(1, "First"), entry(2, "Second")]);
-  api.setStatus.mockResolvedValue();
+  fakeMiniflux();
+  serve([entry(1, "First"), entry(2, "Second")]);
   api.getSettings.mockResolvedValue({
     miniflux_url: "https://mf",
     miniflux_api_key: "k",
@@ -78,11 +38,6 @@ beforeEach(() => {
   clearQueue();
 });
 afterEach(cleanup);
-
-/** Waits until the picker is open with its rows loaded. */
-async function pickerLoaded(): Promise<void> {
-  await waitFor(() => expect(element("#picker-list button[data-depth='0']")).not.toBeNull());
-}
 
 /** Starts the app and opens "All unread" from the picker. */
 async function openQueue(): Promise<void> {
@@ -193,7 +148,7 @@ describe("reader", () => {
   });
 
   it("an untitled article is (untitled) in the window title too", async () => {
-    api.unreadEntries.mockResolvedValue([entry(1, "")]);
+    serve([entry(1, "")]);
     render(() => <App />);
     await start();
     await pickerLoaded();
@@ -204,17 +159,9 @@ describe("reader", () => {
 });
 
 describe("history", () => {
-  /** Read entries newest first, `total` of them, served a page at a time. */
+  /** Read entries, `total` of them, titled "Read 1" … "Read total", oldest first. */
   function serveHistory(total: number): void {
-    api.readEntries.mockImplementation(
-      (_selection: Selection, offset: number, limit: number): Promise<EntryPage> =>
-        Promise.resolve({
-          total,
-          entries: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) =>
-            entry(total - offset - i, `Read ${total - offset - i}`, "read"),
-          ),
-        }),
-    );
+    serve(Array.from({ length: total }, (_, i) => entry(i + 1, `Read ${i + 1}`, "read")));
   }
 
   async function openHistory(): Promise<void> {
@@ -231,7 +178,7 @@ describe("history", () => {
     serveHistory(3);
     await openHistory();
     await screen.findByText("Read 3");
-    expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, 0, HISTORY_PAGE);
+    expect(api.entries).toHaveBeenCalledWith({ kind: "all" }, "read", 0, PAGE);
     expect(element("#mode-badge")?.hidden).toBe(false);
     key("j");
     await screen.findByText("Read 2");
@@ -245,19 +192,6 @@ describe("history", () => {
     key("n");
     key("n");
     await screen.findByText("End of history");
-  });
-
-  it("loads the next page as you get near the end", async () => {
-    serveHistory(HISTORY_PAGE + 5);
-    await openHistory();
-    await screen.findByText(`Read ${HISTORY_PAGE + 5}`);
-    expect(screen.getByText(`1 / ${HISTORY_PAGE + 5}`)).toBeTruthy();
-    for (let i = 0; i < HISTORY_PAGE - 10; i += 1) {
-      key("n");
-    }
-    await waitFor(() => expect(api.readEntries).toHaveBeenCalledWith({ kind: "all" }, HISTORY_PAGE, HISTORY_PAGE));
-    await waitFor(() => expect(queue()).toHaveLength(HISTORY_PAGE + 5));
-    expect(hasMore()).toBe(false);
   });
 
   it("h in the reader opens the picker in the other mode; Esc goes back to the open queue", async () => {

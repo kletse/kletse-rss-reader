@@ -45,6 +45,15 @@ pub enum EntryStatus {
     Unread,
 }
 
+impl EntryStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            EntryStatus::Read => "read",
+            EntryStatus::Unread => "unread",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Entry {
@@ -68,6 +77,18 @@ pub struct Entry {
 pub struct EntryPage {
     pub total: i64,
     pub entries: Vec<Entry>,
+}
+
+/// A page of entries when only their ids matter; serde skips the rest (content included).
+#[derive(Deserialize)]
+struct IdPage {
+    total: i64,
+    entries: Vec<EntryId>,
+}
+
+#[derive(Deserialize)]
+struct EntryId {
+    id: i64,
 }
 
 #[derive(Deserialize)]
@@ -113,12 +134,10 @@ impl Selection {
     }
 }
 
-/// Entries per request when paging through a selection.
-const PAGE: usize = 250;
-/// Upper bound on one page of read history requested by the UI.
-const MAX_HISTORY_PAGE: usize = 250;
-/// Upper bound on entries loaded for one selection; keeps a confused server from making us loop forever.
-const MAX_ENTRIES: usize = 10_000;
+/// Upper bound on one page requested by the UI; Miniflux's own maximum for `limit`.
+const MAX_PAGE: usize = 1000;
+/// Entries per request when walking a selection by id to mark it read.
+const ID_PAGE: usize = 250;
 /// How much of an error response body to echo in a message.
 const MAX_ERROR_BODY: usize = 300;
 
@@ -176,34 +195,78 @@ impl Client {
         Ok(merge_counts(feeds, &counters))
     }
 
-    /// All unread entries of the selection, oldest first.
-    pub async fn unread_entries(&self, sel: Selection) -> Result<Vec<Entry>, String> {
-        let prefix = sel.path_prefix();
-        let mut all: Vec<Entry> = Vec::new();
-        loop {
-            let path = format!(
-                "{prefix}/entries?status=unread&order=published_at&direction=asc&limit={PAGE}&offset={}",
-                all.len()
-            );
-            let page: EntryPage = self.get_json(&path).await?;
-            let got = page.entries.len();
-            all.extend(page.entries);
-            let total = usize::try_from(page.total).unwrap_or(0);
-            if got == 0 || all.len() >= total || all.len() >= MAX_ENTRIES {
-                return Ok(all);
-            }
+    /// One page of the selection's entries: unread ones oldest first, or read ones (the history) newest first.
+    /// Both are loaded as you go. `past` is where the page starts, in unix seconds: entries published after it
+    /// (unread) or before it (read); 0 starts at the beginning. See `nextPage` in src/paging.ts for why that and
+    /// not an offset. `after` / `before` compare `published_at` strictly and exist since Miniflux 2.0.9;
+    /// `published_after` / `published_before` mean the same but need 2.0.49, and an older server would silently
+    /// ignore them.
+    pub async fn entries(
+        &self,
+        sel: Selection,
+        status: EntryStatus,
+        past: i64,
+        limit: usize,
+    ) -> Result<EntryPage, String> {
+        let limit = limit.clamp(1, MAX_PAGE);
+        let (direction, bound) = match status {
+            EntryStatus::Unread => ("asc", "after"),
+            EntryStatus::Read => ("desc", "before"),
+        };
+        let mut path = format!(
+            "{}/entries?status={}&order=published_at&direction={direction}&limit={limit}",
+            sel.path_prefix(),
+            status.as_str()
+        );
+        if past > 0 {
+            path.push_str(&format!("&{bound}={past}"));
         }
+        self.get_json(&path).await
     }
 
-    /// One page of the selection's read entries, newest first. The history is loaded as you go,
-    /// since it can be far longer than the unread list.
-    pub async fn read_entries(&self, sel: Selection, offset: usize, limit: usize) -> Result<EntryPage, String> {
-        let limit = limit.clamp(1, MAX_HISTORY_PAGE);
-        let path = format!(
-            "{}/entries?status=read&order=published_at&direction=desc&limit={limit}&offset={offset}",
-            sel.path_prefix()
-        );
-        self.get_json(&path).await
+    /// The id of the selection's newest unread entry, 0 if there is none. Entry ids only grow, so anything with
+    /// a higher id arrived later: that is how "mark all read" leaves alone what you haven't been shown.
+    pub async fn newest_unread_id(&self, sel: Selection) -> Result<i64, String> {
+        let path = format!("{}/entries?status=unread&order=id&direction=desc&limit=1", sel.path_prefix());
+        let page: IdPage = self.get_json(&path).await?;
+        Ok(page.entries.first().map_or(0, |e| e.id))
+    }
+
+    /// How many of the selection's entries with an id up to `up_to` are unread.
+    pub async fn unread_count(&self, sel: Selection, up_to: i64) -> Result<i64, String> {
+        if up_to < 1 {
+            return Ok(0); // Miniflux ignores before_entry_id=0 and would count everything
+        }
+        let path = format!("{}/entries?status=unread&before_entry_id={}&limit=1", sel.path_prefix(), up_to + 1);
+        let page: IdPage = self.get_json(&path).await?;
+        Ok(page.total)
+    }
+
+    /// Marks the selection's unread entries with an id up to `up_to` read; returns how many.
+    /// Walks them by id, which no status change can shift, a page at a time.
+    pub async fn mark_read_up_to(&self, sel: Selection, up_to: i64) -> Result<usize, String> {
+        let mut marked = 0;
+        if up_to < 1 {
+            return Ok(marked);
+        }
+        let mut after = 0; // after_entry_id=0 means no lower bound
+        loop {
+            let path = format!(
+                "{}/entries?status=unread&order=id&direction=asc&limit={ID_PAGE}&before_entry_id={}&after_entry_id={after}",
+                sel.path_prefix(),
+                up_to + 1
+            );
+            let page: IdPage = self.get_json(&path).await?;
+            let ids: Vec<i64> = page.entries.iter().map(|e| e.id).collect();
+            // A server that ignored after_entry_id would hand out the same page forever.
+            let Some(&last) = ids.last().filter(|&&last| last > after) else { return Ok(marked) };
+            self.set_status(&ids, EntryStatus::Read).await?;
+            marked += ids.len();
+            if ids.len() < ID_PAGE {
+                return Ok(marked);
+            }
+            after = last;
+        }
     }
 
     pub async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), String> {
@@ -254,7 +317,7 @@ pub fn truncate(text: &str, max: usize) -> String {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_json, header, method, path, query_param};
+    use wiremock::matchers::{body_json, header, method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn client(server: &MockServer) -> Client {
@@ -404,69 +467,158 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unread_entries_pages_until_total() {
+    async fn unread_entries_are_a_page_oldest_first_published_after_past() {
         let server = MockServer::start().await;
-        let page1: Vec<_> = (1..=PAGE as i64).map(entry_json).collect();
-        let page2: Vec<_> = (PAGE as i64 + 1..=PAGE as i64 + 2).map(entry_json).collect();
         Mock::given(method("GET"))
             .and(path("/v1/categories/10/entries"))
             .and(query_param("status", "unread"))
             .and(query_param("order", "published_at"))
             .and(query_param("direction", "asc"))
-            .and(query_param("offset", "0"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": PAGE + 2, "entries": page1 })))
+            .and(query_param("limit", "60"))
+            .and(query_param("after", "1761286319"))
+            .and(query_param_is_missing("offset"))
+            .and(query_param_is_missing("before"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 70, "entries": [entry_json(4)] })))
             .expect(1)
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/v1/categories/10/entries"))
-            .and(query_param("offset", PAGE.to_string()))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": PAGE + 2, "entries": page2 })))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let entries = client(&server).unread_entries(Selection::Category { id: 10 }).await.unwrap();
-        assert_eq!(entries.len(), PAGE + 2);
-        assert_eq!(entries.last().unwrap().id, PAGE as i64 + 2);
+        let c = client(&server);
+        let page = c.entries(Selection::Category { id: 10 }, EntryStatus::Unread, 1_761_286_319, 60).await;
+        let page = page.unwrap();
+        assert_eq!(page.total, 70);
+        assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![4]);
     }
 
     #[tokio::test]
-    async fn unread_entries_stops_on_empty_page_even_if_total_lies() {
+    async fn the_first_page_has_no_bound() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/entries"))
-            .and(query_param("offset", "0"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 999, "entries": [entry_json(1)] })))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/v1/entries"))
-            .and(query_param("offset", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 999, "entries": [] })))
+            .and(query_param("status", "unread"))
+            .and(query_param_is_missing("after"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 1, "entries": [entry_json(1)] })))
             .expect(1)
             .mount(&server)
             .await;
-        let entries = client(&server).unread_entries(Selection::All).await.unwrap();
-        assert_eq!(entries.len(), 1);
+        let page = client(&server).entries(Selection::All, EntryStatus::Unread, 0, 50).await.unwrap();
+        assert_eq!(page.entries.len(), 1);
     }
 
     #[tokio::test]
-    async fn read_entries_asks_for_one_page_newest_first() {
+    async fn read_entries_are_a_page_newest_first_published_before_past() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/feeds/7/entries"))
             .and(query_param("status", "read"))
             .and(query_param("order", "published_at"))
             .and(query_param("direction", "desc"))
-            .and(query_param("limit", MAX_HISTORY_PAGE.to_string()))
-            .and(query_param("offset", "40"))
+            .and(query_param("limit", MAX_PAGE.to_string()))
+            .and(query_param("before", "1761286321"))
+            .and(query_param_is_missing("after"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 41, "entries": [entry_json(3)] })))
             .expect(1)
             .mount(&server)
             .await;
-        let page = client(&server).read_entries(Selection::Feed { id: 7 }, 40, 10_000).await.unwrap();
-        assert_eq!(page.total, 41);
-        assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![3]);
+        let c = client(&server);
+        let page = c.entries(Selection::Feed { id: 7 }, EntryStatus::Read, 1_761_286_321, 100_000).await;
+        assert_eq!(page.unwrap().total, 41);
+    }
+
+    #[tokio::test]
+    async fn newest_unread_id_asks_for_the_highest_id() {
+        let server = MockServer::start().await;
+        let guard = Mock::given(method("GET"))
+            .and(path("/v1/feeds/7/entries"))
+            .and(query_param("status", "unread"))
+            .and(query_param("order", "id"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("limit", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 9, "entries": [entry_json(81)] })))
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+        let c = client(&server);
+        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await, Ok(81));
+        drop(guard);
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/7/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "entries": [] })))
+            .mount(&server)
+            .await;
+        assert_eq!(c.newest_unread_id(Selection::Feed { id: 7 }).await, Ok(0));
+    }
+
+    #[tokio::test]
+    async fn unread_count_counts_up_to_an_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/categories/3/entries"))
+            .and(query_param("status", "unread"))
+            .and(query_param("before_entry_id", "81"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 57, "entries": [entry_json(2)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 80).await, Ok(57));
+        assert_eq!(c.unread_count(Selection::Category { id: 3 }, 0).await, Ok(0));
+        // no request
+    }
+
+    /// Answers the id walk of `mark_read_up_to` with `ids`, for entries after `after`.
+    async fn unread_ids(server: &MockServer, after: i64, ids: &[i64]) {
+        let entries: Vec<_> = ids.iter().copied().map(entry_json).collect();
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("status", "unread"))
+            .and(query_param("order", "id"))
+            .and(query_param("direction", "asc"))
+            .and(query_param("before_entry_id", "1001"))
+            .and(query_param("after_entry_id", after.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "entries": entries })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn mark_read_up_to_walks_the_ids_and_marks_each_page() {
+        let server = MockServer::start().await;
+        let page1: Vec<i64> = (1..=ID_PAGE as i64).collect();
+        let page2 = [ID_PAGE as i64 + 1, 1000];
+        unread_ids(&server, 0, &page1).await;
+        unread_ids(&server, ID_PAGE as i64, &page2).await;
+        for ids in [&page1[..], &page2[..]] {
+            Mock::given(method("PUT"))
+                .and(path("/v1/entries"))
+                .and(body_json(json!({ "entry_ids": ids, "status": "read" })))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        assert_eq!(client(&server).mark_read_up_to(Selection::All, 1000).await, Ok(ID_PAGE + 2));
+    }
+
+    #[tokio::test]
+    async fn mark_read_up_to_stops_when_the_server_ignores_after_entry_id() {
+        let server = MockServer::start().await;
+        let page: Vec<_> = (1..=ID_PAGE as i64).map(entry_json).collect();
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "entries": page })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        assert_eq!(c.mark_read_up_to(Selection::All, 1000).await, Ok(ID_PAGE));
+        assert_eq!(c.mark_read_up_to(Selection::All, 0).await, Ok(0)); // no request
     }
 
     #[tokio::test]

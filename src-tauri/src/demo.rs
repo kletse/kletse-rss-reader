@@ -114,16 +114,54 @@ pub fn feed_counts() -> Vec<FeedCount> {
         .collect()
 }
 
-/// The same articles as `unread_entries`, marked read, newest first, one page at a time.
-pub fn read_entries(sel: Selection, offset: usize, limit: usize) -> EntryPage {
-    let mut all = unread_entries(sel);
-    all.reverse();
+/// A page, the way Miniflux pages: unread oldest first, published after `past`, or read newest first, published
+/// before it (0: from the start). History shows the same articles again, marked read.
+pub fn entries(sel: Selection, status: EntryStatus, past: i64, limit: usize) -> EntryPage {
+    let mut all = selection(sel);
+    if status == EntryStatus::Read {
+        all.reverse();
+    }
+    all.retain(|e| match status {
+        _ if past <= 0 => true,
+        EntryStatus::Unread => unix_seconds(&e.published_at) > past,
+        EntryStatus::Read => unix_seconds(&e.published_at) < past,
+    });
     let total = all.len() as i64;
-    let entries = all.into_iter().skip(offset).take(limit).map(|e| Entry { status: EntryStatus::Read, ..e }).collect();
+    let entries = all.into_iter().take(limit).map(|e| Entry { status, ..e }).collect();
     EntryPage { total, entries }
 }
 
-pub fn unread_entries(sel: Selection) -> Vec<Entry> {
+pub fn newest_unread_id(sel: Selection) -> i64 {
+    selection(sel).iter().map(|e| e.id).max().unwrap_or(0)
+}
+
+pub fn unread_count(sel: Selection, up_to: i64) -> i64 {
+    selection(sel).iter().filter(|e| e.id <= up_to).count() as i64
+}
+
+/// Pretends to: nothing is ever marked read in demo mode.
+pub fn mark_read_up_to(sel: Selection, up_to: i64) -> usize {
+    selection(sel).iter().filter(|e| e.id <= up_to).count()
+}
+
+/// Unix seconds of a demo date; they're all written as `YYYY-MM-DDTHH:MM:SS+HH:MM`.
+fn unix_seconds(date: &str) -> i64 {
+    let n = |at: std::ops::Range<usize>| -> i64 { date[at].parse().expect("demo dates are well-formed") };
+    let (month, day) = (n(5..7), n(8..10));
+    // Days since 1970-01-01, counting years from March so the leap day comes last (Howard Hinnant's days_from_civil).
+    let year = if month <= 2 { n(0..4) - 1 } else { n(0..4) };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let sign = if &date[19..20] == "-" { -1 } else { 1 };
+    let offset = sign * (n(20..22) * 3600 + n(23..25) * 60);
+    days * 86_400 + n(11..13) * 3600 + n(14..16) * 60 + n(17..19) - offset
+}
+
+/// The selection's articles, unread, oldest first.
+fn selection(sel: Selection) -> Vec<Entry> {
     ENTRIES
         .iter()
         .enumerate()
@@ -262,40 +300,63 @@ mod tests {
         assert!(counts.iter().all(|c| c.unread > 0), "every demo feed has something to read");
     }
 
+    fn ids(page: &EntryPage) -> Vec<i64> {
+        page.entries.iter().map(|e| e.id).collect()
+    }
+
     #[test]
     fn selections_filter_consistently() {
-        let all = unread_entries(Selection::All);
-        assert_eq!(all.len(), ENTRIES.len());
-        assert!(all.iter().all(|e| e.status == EntryStatus::Unread));
-        assert_eq!(all.iter().map(|e| e.id).collect::<Vec<_>>(), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
+        let all = entries(Selection::All, EntryStatus::Unread, 0, 100);
+        assert_eq!(all.total, ENTRIES.len() as i64);
+        assert!(all.entries.iter().all(|e| e.status == EntryStatus::Unread));
+        assert_eq!(ids(&all), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
+        assert_eq!(newest_unread_id(Selection::All), ENTRIES.len() as i64);
 
-        let dev = unread_entries(Selection::Category { id: 1 });
+        let dev = entries(Selection::Category { id: 1 }, EntryStatus::Unread, 0, 100).entries;
         assert!(dev.iter().all(|e| [1, 2].contains(&e.feed.id)));
-        assert_eq!(dev.len(), all.iter().filter(|e| [1, 2].contains(&e.feed.id)).count());
+        assert_eq!(dev.len(), all.entries.iter().filter(|e| [1, 2].contains(&e.feed.id)).count());
 
-        let watches = unread_entries(Selection::Feed { id: 5 });
+        let watches = entries(Selection::Feed { id: 5 }, EntryStatus::Unread, 0, 100).entries;
         assert_eq!(watches.len(), 2);
         assert!(watches.iter().all(|e| e.feed.title == "Escapement Journal"));
+        assert_eq!(unread_count(Selection::Feed { id: 5 }, watches[0].id), 1);
+        assert_eq!(mark_read_up_to(Selection::Feed { id: 5 }, watches[1].id), 2);
 
-        assert!(unread_entries(Selection::Feed { id: 99 }).is_empty());
+        assert!(entries(Selection::Feed { id: 99 }, EntryStatus::Unread, 0, 100).entries.is_empty());
+        assert_eq!(newest_unread_id(Selection::Feed { id: 99 }), 0);
+    }
+
+    #[test]
+    fn unread_pages_go_on_after_a_time() {
+        let first = entries(Selection::All, EntryStatus::Unread, 0, 3);
+        assert_eq!((ids(&first), first.total), (vec![1, 2, 3], ENTRIES.len() as i64));
+        let past = unix_seconds(&first.entries[2].published_at);
+        let next = entries(Selection::All, EntryStatus::Unread, past, 3);
+        assert_eq!((ids(&next), next.total), (vec![4, 5, 6], ENTRIES.len() as i64 - 3));
     }
 
     #[test]
     fn history_is_read_newest_first_and_paged() {
-        let all = read_entries(Selection::All, 0, 100);
-        assert_eq!(all.total, ENTRIES.len() as i64);
+        let n = ENTRIES.len() as i64;
+        let all = entries(Selection::All, EntryStatus::Read, 0, 100);
+        assert_eq!(all.total, n);
         assert!(all.entries.iter().all(|e| e.status == EntryStatus::Read));
-        assert_eq!(
-            all.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
-            (1..=ENTRIES.len() as i64).rev().collect::<Vec<_>>()
-        );
+        assert_eq!(ids(&all), (1..=n).rev().collect::<Vec<_>>());
 
-        let page = read_entries(Selection::All, 2, 3);
-        assert_eq!(
-            page.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
-            all.entries[2..5].iter().map(|e| e.id).collect::<Vec<_>>()
-        );
-        assert!(read_entries(Selection::All, 100, 3).entries.is_empty());
+        let page = entries(Selection::All, EntryStatus::Read, unix_seconds(&all.entries[1].published_at), 3);
+        assert_eq!(ids(&page), ids(&all)[2..5]);
+        assert_eq!(page.total, n - 2);
+        assert!(entries(Selection::All, EntryStatus::Read, 1, 3).entries.is_empty());
+    }
+
+    #[test]
+    fn unix_seconds_reads_the_demo_dates() {
+        assert_eq!(unix_seconds("1970-01-01T00:00:00+00:00"), 0);
+        assert_eq!(unix_seconds("2026-10-24T08:12:00+02:00"), 1_792_822_320);
+        assert_eq!(unix_seconds("2024-02-29T23:00:00-01:00"), 1_709_251_200);
+        for e in ENTRIES {
+            assert!(unix_seconds(e.published_at) > 0, "{}", e.published_at);
+        }
     }
 
     #[test]

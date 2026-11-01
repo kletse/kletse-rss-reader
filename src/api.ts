@@ -5,7 +5,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppStatus,
   Commands,
-  Entry,
   EntryPage,
   EntryStatus,
   FeedCount,
@@ -63,9 +62,11 @@ export const api = {
   saveSettings: (settings: Settings): Promise<AppStatus> => call("save_settings", { settings }),
   theme: (): Promise<Theme> => call("get_theme", {}),
   feedCounts: (): Promise<FeedCount[]> => call("feed_counts", {}),
-  unreadEntries: (selection: Selection): Promise<Entry[]> => call("unread_entries", { selection }),
-  readEntries: (selection: Selection, offset: number, limit: number): Promise<EntryPage> =>
-    call("read_entries", { selection, offset, limit }),
+  entries: (selection: Selection, status: EntryStatus, past: number, limit: number): Promise<EntryPage> =>
+    call("entries", { selection, status, past, limit }),
+  newestUnreadId: (selection: Selection): Promise<number> => call("newest_unread_id", { selection }),
+  unreadCount: (selection: Selection, upTo: number): Promise<number> => call("unread_count", { selection, upTo }),
+  markReadUpTo: (selection: Selection, upTo: number): Promise<number> => call("mark_read_up_to", { selection, upTo }),
   setStatus: (ids: number[], status: EntryStatus): Promise<void> => call("set_status", { ids, status }),
   fetchContent: (id: number): Promise<string> => call("fetch_content", { id }),
   refreshFeeds: (): Promise<void> => call("refresh_feeds", {}),

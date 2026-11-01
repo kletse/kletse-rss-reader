@@ -6,7 +6,7 @@ mod miniflux;
 mod readeck;
 mod theme;
 
-use miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
+use miniflux::{EntryPage, EntryStatus, FeedCount, Selection};
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tauri::State;
@@ -127,26 +127,45 @@ async fn feed_counts(app: State<'_, App>) -> Result<Vec<FeedCount>, String> {
     app.miniflux()?.feed_counts().await
 }
 
+/// One page: unread entries oldest first, published after `past`, or read ones newest first, published before it.
 #[tauri::command]
-async fn unread_entries(app: State<'_, App>, selection: Selection) -> Result<Vec<Entry>, String> {
-    if app.demo {
-        return Ok(demo::unread_entries(selection));
-    }
-    app.miniflux()?.unread_entries(selection).await
-}
-
-/// One page of read history, newest first.
-#[tauri::command]
-async fn read_entries(
+async fn entries(
     app: State<'_, App>,
     selection: Selection,
-    offset: usize,
+    status: EntryStatus,
+    past: i64,
     limit: usize,
 ) -> Result<EntryPage, String> {
     if app.demo {
-        return Ok(demo::read_entries(selection, offset, limit));
+        return Ok(demo::entries(selection, status, past, limit));
     }
-    app.miniflux()?.read_entries(selection, offset, limit).await
+    app.miniflux()?.entries(selection, status, past, limit).await
+}
+
+/// The selection's newest unread entry id when it's opened: "mark all read" goes up to there.
+#[tauri::command]
+async fn newest_unread_id(app: State<'_, App>, selection: Selection) -> Result<i64, String> {
+    if app.demo {
+        return Ok(demo::newest_unread_id(selection));
+    }
+    app.miniflux()?.newest_unread_id(selection).await
+}
+
+#[tauri::command]
+async fn unread_count(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<i64, String> {
+    if app.demo {
+        return Ok(demo::unread_count(selection, up_to));
+    }
+    app.miniflux()?.unread_count(selection, up_to).await
+}
+
+/// Marks the selection's unread entries up to an id read; returns how many.
+#[tauri::command]
+async fn mark_read_up_to(app: State<'_, App>, selection: Selection, up_to: i64) -> Result<usize, String> {
+    if app.demo {
+        return Ok(demo::mark_read_up_to(selection, up_to));
+    }
+    app.miniflux()?.mark_read_up_to(selection, up_to).await
 }
 
 #[tauri::command]
@@ -237,8 +256,10 @@ pub fn run() {
             save_settings,
             get_theme,
             feed_counts,
-            unread_entries,
-            read_entries,
+            entries,
+            newest_unread_id,
+            unread_count,
+            mark_read_up_to,
             set_status,
             fetch_content,
             refresh_feeds,

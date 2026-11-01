@@ -69,8 +69,10 @@ export type Commands = {
   save_settings: { args: { settings: Settings }; returns: AppStatus };
   get_theme: { args: Record<string, never>; returns: Theme };
   feed_counts: { args: Record<string, never>; returns: FeedCount[] };
-  unread_entries: { args: { selection: Selection }; returns: Entry[] };
-  read_entries: { args: { selection: Selection; offset: number; limit: number }; returns: EntryPage };
+  entries: { args: { selection: Selection; status: EntryStatus; past: number; limit: number }; returns: EntryPage };
+  newest_unread_id: { args: { selection: Selection }; returns: number };
+  unread_count: { args: { selection: Selection; upTo: number }; returns: number };
+  mark_read_up_to: { args: { selection: Selection; upTo: number }; returns: number };
   set_status: { args: { ids: number[]; status: EntryStatus }; returns: void };
   fetch_content: { args: { id: number }; returns: string };
   refresh_feeds: { args: Record<string, never>; returns: void };

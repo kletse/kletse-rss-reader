@@ -83,7 +83,7 @@ On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 | <kbd>?</kbd> | Show the keys |
 | <kbd>q</kbd> | Quit |
 
-The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd> or <kbd>→</kbd>.
+The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>.
 
 Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: **All read**, categories and feeds with read counts. What you open there shows read items newest first, loaded a page at a time as you go, and a **History** badge appears in the top bar. Every key works the same: <kbd>m</kbd> marks an item unread again, <kbd>b</kbd> saves it to Readeck, and so on. <kbd>Esc</kbd> closes the picker without switching, so you're back where you were.
 

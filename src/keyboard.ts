@@ -34,7 +34,7 @@ function keymap(entries: [keys: string[], handler: Handler][]): ReadonlyMap<stri
 const PICKER_KEYS = keymap([
   [["j", "ArrowDown"], always(() => movePicker(1))],
   [["k", "ArrowUp"], always(() => movePicker(-1))],
-  [["Enter", "ArrowRight"], always(() => choose())],
+  [["Enter", "ArrowRight", "o"], always(() => choose())],
   [["r"], always(() => void refreshFeeds())],
   [["h"], always(toggleMode)],
   [["?"], always(openHelp)],

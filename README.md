@@ -40,13 +40,23 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ## Screenshots
 
+### macOS
+
 | Feeds picker                                                                                                   | Code, highlighted in theme colours                                                             | Keys (<kbd>?</kbd>)                                                         |
 | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | <img src="docs/screenshots/macos/picker.png" alt="Feeds and categories picker">                                | <img src="docs/screenshots/macos/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/macos/help.png" alt="Keyboard shortcut overlay"> |
 | **First-run setup**                                                                                            |                                                                                                |                                                                             |
 | <img src="docs/screenshots/macos/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> |                                                                                                |                                                                             |
 
-<sub>Screenshots are from macOS in dark mode, with the built-in demo data (`KLETSE_RSS_DEMO=1`). The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
+### Omarchy
+
+| Reading an article                                                                       | Feeds picker                                                                                                                 | Code, highlighted in theme colours                                                                          |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| <img src="docs/screenshots/omarchy/article.png" alt="Reading an article on Omarchy">     | <img src="docs/screenshots/omarchy/picker.png" alt="Feeds and categories picker on Omarchy">                                 | <img src="docs/screenshots/omarchy/code.png" alt="Article with a syntax-highlighted code block on Omarchy"> |
+| **Keys (<kbd>?</kbd>)**                                                                  | **First-run setup**                                                                                                          |                                                                                                             |
+| <img src="docs/screenshots/omarchy/help.png" alt="Keyboard shortcut overlay on Omarchy"> | <img src="docs/screenshots/omarchy/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details, on Omarchy"> |                                                                                                             |
+
+<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`): macOS in dark mode, Omarchy with the Tokyo Night theme. The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
 
 ## Keys
 

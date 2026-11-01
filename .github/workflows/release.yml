@@ -1,0 +1,67 @@
+name: Release
+
+# Builds the Linux downloads (Arch package and standalone binary) on a native x86_64 runner and attaches
+# them to the GitHub release of the tag. packaging/release.sh pushes the tag, adds the macOS app and publishes.
+on:
+  push:
+    tags: ["v*"]
+  # Changes to the packaging get a test build, without uploading anything.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+  # Rebuild the Linux downloads of an existing release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, e.g. v3.1.2
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Arch package and Linux binary
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install git
+        run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Build with makepkg
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p /work
+          git archive --format=tar --prefix=kletse-rss-reader/ -o /work/src.tar HEAD
+          bash packaging/arch-build.sh /work
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: /work/out/*
+          if-no-files-found: error
+
+  upload:
+    name: Attach to the release
+    if: github.event_name != 'pull_request'
+    needs: linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: out
+      - name: Upload (as a new draft release if release.sh didn't create one)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --verify-tag --title "Kletse RSS ${TAG#v}" --notes ""
+          fi
+          gh release upload "$TAG" out/* --clobber

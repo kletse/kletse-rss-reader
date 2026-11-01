@@ -98,7 +98,7 @@
   }
   .message h1 {
     color: var(--fg);
-    font-family: var(--article-font);
+    font-family: var(--heading-font);
   }
 
   @media (max-width: 560px) {

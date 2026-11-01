@@ -23,7 +23,8 @@
     --bright-red: var(--red);
     --radius: 0;
     --ui-font: monospace;
-    --article-font: "Inter Variable", "Inter", system-ui, sans-serif;
+    --article-font: "Literata Variable", "Literata", Georgia, serif;
+    --heading-font: "Inter Variable", "Inter", system-ui, sans-serif;
     --article-size: 18px; /* Ctrl +/- change it (prefs.ts) */
     --width-factor: 40; /* [ and ] change it */
     --measure: calc(var(--article-size) * var(--width-factor)); /* scales with the font size */

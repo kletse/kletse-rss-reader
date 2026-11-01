@@ -1,4 +1,6 @@
 import "@fontsource-variable/inter";
+import "@fontsource-variable/literata/opsz.css";
+import "@fontsource-variable/literata/opsz-italic.css";
 // tokens.css declares the cascade layer order, so it comes first.
 import "./styles/tokens.css";
 import "./styles/base.css";

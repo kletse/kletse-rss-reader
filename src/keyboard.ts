@@ -132,6 +132,21 @@ function run(keys: ReadonlyMap<string, Handler>, e: KeyboardEvent): boolean {
 const GLOBAL_KEYS = keymap([[[","], always(() => openSettings())]]);
 const NO_KEYS: ReadonlyMap<string, Handler> = new Map();
 
+/** Where the keyboard is, as far as which keys mean something. */
+export type KeyMode = "reader" | "picker" | "modifier";
+
+/** The keymaps each mode answers from (see handle() and keysFor()). */
+const MODE_KEYS: Readonly<Record<KeyMode, readonly ReadonlyMap<string, Handler>[]>> = {
+  reader: [GLOBAL_KEYS, READER_KEYS],
+  picker: [GLOBAL_KEYS, PICKER_KEYS],
+  modifier: [MODIFIER_KEYS],
+};
+
+/** Every key a mode binds, so keys.test.ts can check the help overlay (keys.ts) names each one. */
+export function boundKeys(mode: KeyMode): ReadonlySet<string> {
+  return new Set(MODE_KEYS[mode].flatMap((keys: ReadonlyMap<string, Handler>): string[] => [...keys.keys()]));
+}
+
 /** The keymap for where the keyboard is: the picker, a Ctrl/⌘ combination, or the reader. */
 function keysFor(e: KeyboardEvent): ReadonlyMap<string, Handler> {
   if (overlay() === "picker") {

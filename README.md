@@ -77,11 +77,11 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                                  | Article font size; the column width scales with it (remembered)                  |
 | <kbd>[</kbd> / <kbd>]</kbd>                                                  | Narrower / wider column (remembered)                                             |
 | <kbd>Ctrl</kbd> <kbd>0</kbd>                                                 | Reset font size and width                                                        |
+| <kbd>,</kbd>                                                                 | Settings                                                                         |
+| <kbd>?</kbd>                                                                 | Show the keys                                                                    |
+| <kbd>q</kbd>                                                                 | Quit                                                                             |
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
-| <kbd>,</kbd> | Settings |
-| <kbd>?</kbd> | Show the keys |
-| <kbd>q</kbd> | Quit |
 
 The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>.
 

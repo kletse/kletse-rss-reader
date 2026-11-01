@@ -44,12 +44,15 @@ export function toast(message: string, kind: Toast["kind"] = "info"): void {
   toastTimer = setTimeout(() => setToastMessage(undefined), TOAST_MS[kind]);
 }
 
-/** The Rust commands reject with a plain string; anything else is unexpected but still shown. */
+/**
+ * The Rust commands reject with a `CommandError` (`{ kind, message }`); a JavaScript `Error` has a `message` too.
+ * Tauri itself may reject with a plain string. Anything else is unexpected but still shown.
+ */
 export function errorMessage(err: unknown): string {
   if (typeof err === "string") {
     return err;
   }
-  if (err instanceof Error) {
+  if (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") {
     return err.message;
   }
   return JSON.stringify(err);

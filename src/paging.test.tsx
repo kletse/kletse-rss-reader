@@ -258,7 +258,7 @@ describe("new arrivals at the end of the unread list", () => {
   it("if looking fails, it says so and is all caught up", async () => {
     serve(items(1));
     await open();
-    api.entries.mockRejectedValueOnce("Miniflux is down");
+    api.entries.mockRejectedValueOnce({ kind: "unreachable", message: "Miniflux is down" });
     key("j");
     await screen.findByText("All caught up");
     expect(screen.getByText("Miniflux is down")).toBeTruthy();

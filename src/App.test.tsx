@@ -69,7 +69,7 @@ describe("reader", () => {
   });
 
   it("rolls the status back when the server fails", async () => {
-    api.setStatus.mockRejectedValueOnce("offline");
+    api.setStatus.mockRejectedValueOnce({ kind: "unreachable", message: "offline" });
     await openQueue();
     key("m");
     await screen.findByText("offline");

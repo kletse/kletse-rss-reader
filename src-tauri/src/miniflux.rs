@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config;
-use crate::error::{ok_status, Error, Service};
+use crate::error::{Error, Service, ok_status};
 
 /// `Debug` leaves out the API key.
 #[derive(Clone)]

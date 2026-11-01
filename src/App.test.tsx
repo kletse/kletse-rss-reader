@@ -28,6 +28,7 @@ beforeEach(() => {
   api.feedCounts.mockResolvedValue(counts);
   fakeMiniflux();
   serve([entry(1, "First"), entry(2, "Second")]);
+  api.configProblem.mockResolvedValue(undefined);
   api.getSettings.mockResolvedValue({
     miniflux_url: "https://mf",
     miniflux_api_key: "k",
@@ -267,5 +268,22 @@ describe("settings", () => {
     fireEvent.click(screen.getByText("Connect"));
     await pickerLoaded();
     expect(element("#readeck-btn")?.hidden).toBe(false);
+  });
+
+  it("onboarding says why the config file wasn't used", async () => {
+    const problem = "Couldn't use /home/me/.config/kletse-rss/config.toml. Line 3: string values must be quoted.";
+    api.status.mockResolvedValue({ configured: false, readeck: false });
+    api.configProblem.mockResolvedValue(problem);
+    render(() => <App />);
+    await start();
+    expect((await screen.findByText(problem)).className).toBe("form-notice");
+  });
+
+  it("onboarding shows no notice when the config file is fine", async () => {
+    api.status.mockResolvedValue({ configured: false, readeck: false });
+    render(() => <App />);
+    await start();
+    await screen.findByText("Welcome to Kletse RSS");
+    expect(element(".form-notice")).toBeNull();
   });
 });

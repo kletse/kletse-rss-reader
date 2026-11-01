@@ -61,6 +61,8 @@ function call<C extends Command>(command: C, args: Commands[C]["args"]): Promise
 export const api = {
   status: (): Promise<AppStatus> => call("app_status", {}),
   getSettings: (): Promise<Settings> => call("get_settings", {}),
+  /** Why the config file wasn't used at startup (it didn't parse, say), if it wasn't. */
+  configProblem: async (): Promise<string | undefined> => (await call("config_problem", {})) ?? undefined,
   saveSettings: (settings: Settings): Promise<AppStatus> => call("save_settings", { settings }),
   theme: (): Promise<Theme> => call("get_theme", {}),
   feedCounts: (): Promise<FeedCount[]> => call("feed_counts", {}),

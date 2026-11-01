@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use crate::config;
-use crate::error::{ok_status, Error, Service};
+use crate::error::{Error, Service, ok_status};
 
 pub async fn save(http: &reqwest::Client, cfg: &config::Readeck, url: &str) -> Result<(), Error> {
     let resp = http
@@ -119,11 +119,9 @@ mod tests {
             .respond_with(ResponseTemplate::new(404))
             .mount_as_scoped(&server)
             .await;
-        assert!(check(&http, &cfg(&server))
-            .await
-            .unwrap_err()
-            .message()
-            .contains("doesn't look like a Readeck server"));
+        assert!(
+            check(&http, &cfg(&server)).await.unwrap_err().message().contains("doesn't look like a Readeck server")
+        );
         drop(guard);
         let _guard = Mock::given(method("GET"))
             .and(path("/api/profile"))

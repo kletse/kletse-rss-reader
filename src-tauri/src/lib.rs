@@ -16,6 +16,8 @@ use tauri::State;
 /// Shared state. The config can change at runtime (onboarding / settings), hence the lock.
 struct App {
     config: RwLock<config::Config>,
+    /// What was wrong with the config file at startup, until a save replaces it.
+    config_problem: RwLock<Option<String>>,
     http: reqwest::Client,
     /// `KLETSE_RSS_DEMO=1`: serve built-in sample data, never touch a server.
     demo: bool,
@@ -29,7 +31,14 @@ impl App {
             .build()
             .expect("the HTTP client only needs built-in TLS roots");
         let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
-        Self { config: RwLock::new(config::read()), http, demo }
+        let (config, problem) = match config::read() {
+            Ok(config) => (config, None),
+            Err(e) => {
+                eprintln!("kletse-rss: {}", e.message());
+                (config::Config::default(), Some(e.message()))
+            }
+        };
+        Self { config: RwLock::new(config), config_problem: RwLock::new(problem), http, demo }
     }
 
     fn config(&self) -> config::Config {
@@ -39,6 +48,7 @@ impl App {
 
     fn set_config(&self, cfg: config::Config) {
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = cfg;
+        *self.config_problem.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn miniflux(&self) -> Result<miniflux::Client, Error> {
@@ -87,6 +97,12 @@ fn get_settings(app: State<'_, App>) -> Settings {
         readeck_url: readeck.url,
         readeck_token: readeck.token,
     }
+}
+
+/// What was wrong with the config file at startup (it didn't parse, say), for the settings form to show.
+#[tauri::command]
+fn config_problem(app: State<'_, App>) -> Option<String> {
+    app.config_problem.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Validates the settings against the real servers, then saves and applies them.
@@ -264,6 +280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             get_settings,
+            config_problem,
             save_settings,
             get_theme,
             feed_counts,

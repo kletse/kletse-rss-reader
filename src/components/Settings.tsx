@@ -72,7 +72,7 @@ function Fieldset(props: {
   );
 }
 
-function Form(props: { firstRun: boolean; initial: Values }): JSX.Element {
+function Form(props: { firstRun: boolean; initial: Values; problem: string | undefined }): JSX.Element {
   // The form starts from the loaded values once.
   const [values, setValues] = createStore<Values>({ ...props.initial });
   const [error, setError] = createSignal("");
@@ -101,6 +101,13 @@ function Form(props: { firstRun: boolean; initial: Values }): JSX.Element {
           ? "Connect your Miniflux server to start reading. Readeck is optional: add it to save articles for later with b."
           : "Changes are checked against your servers before they are saved."}
       </p>
+      <Show when={props.problem}>
+        {(problem: Accessor<string>): JSX.Element => (
+          <p class="form-notice" role="status">
+            {problem()}
+          </p>
+        )}
+      </Show>
       <Fieldset
         title="Miniflux"
         note="required"
@@ -139,9 +146,10 @@ function Form(props: { firstRun: boolean; initial: Values }): JSX.Element {
 /** Shown in place of the article. Esc cancels (keyboard.ts), except on first run. */
 export function Settings(props: { firstRun: boolean }): JSX.Element {
   const [initial] = createResource(api.getSettings);
+  const [problem] = createResource(api.configProblem);
   return (
     <Show when={initial()}>
-      {(v: Accessor<Values>): JSX.Element => <Form firstRun={props.firstRun} initial={v()} />}
+      {(v: Accessor<Values>): JSX.Element => <Form firstRun={props.firstRun} initial={v()} problem={problem()} />}
     </Show>
   );
 }

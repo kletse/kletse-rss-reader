@@ -80,6 +80,7 @@ message: string, };
 export type Commands = {
   app_status: { args: Record<string, never>; returns: AppStatus };
   get_settings: { args: Record<string, never>; returns: Settings };
+  config_problem: { args: Record<string, never>; returns: string | null };
   save_settings: { args: { settings: Settings }; returns: AppStatus };
   get_theme: { args: Record<string, never>; returns: Theme };
   feed_counts: { args: Record<string, never>; returns: FeedCount[] };

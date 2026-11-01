@@ -1,7 +1,8 @@
 [package]
 name = "kletse-rss"
 version = "3.2.1"
-edition = "2021"
+edition = "2024"
+rust-version = "1.90" # what Tauri 2 needs; the code itself needs 1.85 (edition 2024)
 description = "A one-article-at-a-time Miniflux reader for Omarchy and macOS"
 license = "MIT"
 repository = "https://github.com/kletse/kletse-rss-reader"

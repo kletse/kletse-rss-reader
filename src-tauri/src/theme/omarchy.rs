@@ -1,7 +1,7 @@
 //! Follows the live Omarchy theme: colors.toml, Hyprland rounding and the Omarchy font.
 //! Emits `theme-changed` whenever the current theme is switched.
 
-use super::{Theme, CHANGED_EVENT};
+use super::{CHANGED_EVENT, Theme};
 use std::{collections::HashMap, path::PathBuf, process::Command, sync::mpsc, thread, time::Duration};
 use tauri::{AppHandle, Emitter};
 

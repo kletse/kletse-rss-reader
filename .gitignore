@@ -4,4 +4,5 @@ packaging/src/
 packaging/*.pkg.tar.*
 packaging/release/
 packaging/*.app/
-.qmlls.ini # written by the cxx-qt build for the QML language server, with this machine's paths
+# Written by the cxx-qt build for the QML language server, with this machine's paths.
+.qmlls.ini

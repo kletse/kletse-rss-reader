@@ -6,21 +6,20 @@ pkgrel=1
 pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
 arch=('x86_64')
 license=('MIT')
-depends=('webkit2gtk-4.1' 'gtk3')
-makedepends=('cargo' 'npm')
-options=('!lto' '!debug')
+depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-imageformats' 'qt6-wayland')
+makedepends=('cargo')
+options=('!lto' '!debug') # cargo does the LTO; makepkg's would also reach the C++ of the Qt bridge
 
 _root() { realpath "$startdir/.."; }
 
 build() {
   cd "$(_root)"
-  npm ci
-  npx tauri build --no-bundle # bundling is only on for macOS (tauri.macos.conf.json)
+  cargo build --release --locked
 }
 
 package() {
   local root; root="$(_root)"
-  install -Dm755 "$root/src-tauri/target/release/kletse-rss" "$pkgdir/usr/bin/kletse-rss"
+  install -Dm755 "$root/target/release/kletse-rss" "$pkgdir/usr/bin/kletse-rss"
   install -Dm644 "$root/packaging/kletse-rss.desktop" "$pkgdir/usr/share/applications/kletse-rss.desktop"
   install -Dm644 "$root/packaging/kletse-rss.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/kletse-rss.svg"
   install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

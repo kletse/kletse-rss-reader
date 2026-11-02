@@ -10,11 +10,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white">
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-backend-B7410E?logo=rust&logoColor=white">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-B7410E?logo=rust&logoColor=white">
+  <img alt="Qt Quick" src="https://img.shields.io/badge/Qt_Quick-6-41CD52?logo=qt&logoColor=white">
   <a href="https://github.com/kletse/kletse-rss-reader/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/kletse/kletse-rss-reader?color=7aa2f7"></a>
-  <img alt="SolidJS" src="https://img.shields.io/badge/SolidJS-UI-2C4F7C?logo=solid&logoColor=white">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
   <img alt="Arch package" src="https://img.shields.io/badge/Arch-PKGBUILD-1793D1?logo=archlinux&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-from_source-000000?logo=apple&logoColor=white">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-green">
@@ -37,6 +35,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 - **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes. On macOS: light or dark mode and your accent colour, the moment you change them.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
+- **Native, no web view.** The window is Qt Quick, driven from Rust: articles are laid out as native text and images, not in a browser engine.
 
 ## Screenshots
 
@@ -97,7 +96,7 @@ Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: 
 sudo pacman -U kletse-rss-*-x86_64.pkg.tar.zst
 ```
 
-**From source**, on Arch / Omarchy with `rust` (or `rustup`), `npm`, and `webkit2gtk-4.1`:
+**From source**, on Arch / Omarchy with `rust` (or `rustup`) and Qt 6 (`qt6-base qt6-declarative qt6-svg qt6-imageformats`):
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
@@ -111,26 +110,26 @@ This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</
 
 There's no macOS download: build it from source, it takes a few minutes.
 
-You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
+You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Qt 6 from [Homebrew](https://brew.sh) (`brew install qt`).
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
 cd kletse-rss-reader
-npm install
-npm run build
-cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
+packaging/macos/build-app.sh
+cp -r "packaging/Kletse RSS.app" /Applications/
 ```
 
-Open it from Spotlight or the Dock. The window has no title bar: drag it by the top bar, double-click the bar to zoom. The window title, shown in Mission Control and the Window menu, is the article you're reading. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
+The script copies the Qt it needs into the app (with Homebrew's `macdeployqt`), so later Homebrew updates don't break it.
+
+Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
 
 **Updating from source:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 
 ```bash
 git pull
-npm install
-npm run build
+packaging/macos/build-app.sh
 rm -rf "/Applications/Kletse RSS.app"
-cp -r "src-tauri/target/release/bundle/macos/Kletse RSS.app" /Applications/
+cp -r "packaging/Kletse RSS.app" /Applications/
 ```
 
 Your settings live outside the app bundle (see [Set up](#set-up)), so replacing it keeps them. To uninstall, delete `/Applications/Kletse RSS.app` and, if you want, `~/Library/Application Support/kletse-rss`.
@@ -161,68 +160,56 @@ token = "…"
 ## Develop
 
 ```bash
-npm install
-npm run dev        # Tauri dev window with hot reload
-npm run check      # type-check the UI
-npm test           # UI unit and component tests (vitest + jsdom)
-npm run bindings   # regenerate src/bindings.ts (IPC types and commands) from the Rust side; CI fails if it is stale
-npm run lint       # Biome (UI lint + format check), then rustfmt --check and clippy on the backend
-npm run format     # Biome and rustfmt: format and apply safe fixes
-npm run build      # release binary → src-tauri/target/release/kletse-rss (macOS: also …/bundle/macos/Kletse RSS.app)
-(cd src-tauri && cargo test)   # backend tests, with a mock Miniflux/Readeck
+cargo run          # the app (KLETSE_RSS_DEMO=1 cargo run: with built-in sample data, no server needed)
+cargo test         # everything the app does, driven by key presses against a fake Miniflux; no Qt window needed
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+cargo build --release   # → target/release/kletse-rss
 ```
 
-[Biome](https://biomejs.dev) lints and formats the UI code, CSS, JSON and Markdown: every stable rule plus the nursery ones, with the few that don't fit this stack switched off, each with its reason in `biome.jsonc`. TypeScript runs with `strict` and the extra checks in `tsconfig.json` (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, …). Editors: `.zed/settings.json` formats and fixes with Biome on save and runs clippy through rust-analyzer (install Zed's Biome extension); `.vscode/` does the same for VS Code.
+You need Rust and Qt 6 (see [Install](#install)); `qmake6` (or `qmake`) must be on the `PATH`, which is how the build finds Qt.
 
-CI runs the same checks plus `npm audit` and `cargo audit` on every push, with clippy and the Rust tests on both Linux and macOS.
+**How it fits together.** All behaviour lives in `src/app.rs`: a state machine that never waits. An action (a key, a click) changes the state and returns the server calls it needs; their answers come back later and are applied in turn. That is what the tests drive, with a fake Miniflux that shuffles items published in the same second, as Postgres does. `src/bridge.rs` is the one object the QML sees: it runs those calls on a small tokio runtime, and after every change copies what the window shows into properties. The QML (`qml/`) only draws and forwards keys and clicks.
 
-**Releasing:** bump the version in `package.json` (`npm version --no-git-tag-version <version>` also updates the lockfile), `src-tauri/Cargo.toml` and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
+**Agents and contributors:** [AGENTS.md](AGENTS.md) has the practical side: how to see the QML's errors, take screenshots without a window, and the traps found so far.
 
-**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
+CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and a smoke test that renders several screens of the demo offscreen with every QML warning made fatal.
 
-```bash
-KLETSE_RSS_DEMO=1 npm run dev
-```
+**Releasing:** bump the version in `Cargo.toml` (then `cargo build`, to update `Cargo.lock`) and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
+
+**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots.
 
 ```text
-src/                 TypeScript UI (SolidJS)
-  state/             app state (signals) and actions
-    queue.ts         the reading queue, paging, article actions
-    picker.ts        the feeds picker
-    settings.ts      settings, onboarding, start-up
-    prefs.ts         font size and column width
-    ui.ts            overlays, toast, confirm, scrolling
-    server.ts        what the backend reported (Readeck set up)
-  App.tsx            layout and link clicks
-  keyboard.ts        the single keyboard handler: a keymap per mode
-  components/        top bar, article, picker, settings form, help/confirm/toast
-  picker-items.ts    feed counts → picker rows
-  paging.ts          where the next page starts (a publication time, not an offset)
-  keys.ts            key reference and platform modifier
-  content.ts         sanitising article HTML, embeds → links, code highlighting
-  theme.ts           theme palette → CSS variables, live
-  title.ts           the window title follows the article on screen
-  api.ts             typed wrappers for the Rust commands
-  *.test.ts(x)       vitest unit and UI tests
-  testing.ts         for the tests: mocked Rust commands served by a fake Miniflux
-src-tauri/src/
-  lib.rs             Tauri commands
+src/
+  main.rs            starts Qt and loads the QML
+  app.rs             everything the app does: queue, paging, picker, overlays, settings, keys (no Qt, no network)
+  app_tests.rs       its tests: key presses against a fake Miniflux
+  bridge.rs          the QObject the QML sees; runs effects on tokio, copies state into properties
+  backend.rs         the server side of effects: Miniflux, Readeck, the config file, opening links
+  keys.rs            the keymaps and the help overlay's text, checked against each other and the README
+  paging.rs          where the next page starts (a publication time, not an offset)
+  picker.rs          feed counts → picker rows
+  prefs.rs           font size and column width, remembered
+  content/convert.rs feed HTML → blocks of native layout (paragraphs, images, code, quotes, lists, tables, embeds)
+  content/highlight.rs  code blocks highlighted with syntect, in theme colours
+  theme/             the Omarchy theme (watched live) or the macOS appearance, as a palette
   miniflux.rs        Miniflux API client
   readeck.rs         Readeck "save bookmark"
-  theme/omarchy.rs   reads ~/.local/state/omarchy/current/theme/colors.toml, watches for switches
-  theme/macos.rs     light/dark mode and accent colour from System Settings, follows changes
   config.rs          ~/.config/kletse-rss/config.toml (macOS: ~/Library/Application Support/kletse-rss/)
   demo.rs            sample data for KLETSE_RSS_DEMO=1
-src-tauri/patches/   glib 0.18.5 with a backported security fix (see PATCHED.md there)
-packaging/           PKGBUILD, .desktop entry, icon
+qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings
+assets/fonts/        Literata and Inter (SIL Open Font License), compiled into the binary
+packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, release scripts
 ```
 
 ### How it handles articles
 
-- Article HTML is sanitised with DOMPurify. Scripts, styles and forms are dropped, and iframes and videos become a plain _▶ Embedded media_ link.
+- Article HTML is turned into native blocks: paragraphs, headings, images with captions, code, quotes, lists, tables and rules. Only a small set of tags and attributes makes it through, so scripts, styles, forms and tracking attributes are gone, and nothing in an article can run.
+- Iframes, videos and audio become a plain _▶ Embedded media_ link. Inline SVG and MathML aren't shown (run with `KLETSE_RSS_DEBUG=1` to see on stderr when an article had some).
 - Images load (through Miniflux's media proxy if you have it enabled).
 - Every link opens in your default browser, never inside the app.
-- Code blocks are highlighted with highlight.js using the theme's own colours.
+- Code blocks are highlighted with syntect using the theme's own colours.
+- Text can be selected within a paragraph, and <kbd>Ctrl</kbd>+<kbd>C</kbd> (<kbd>⌘</kbd><kbd>C</kbd>) copies it.
 
 ## Not (yet) in scope
 

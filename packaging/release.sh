@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publishes a release of the version in package.json at HEAD:
+# Publishes a release of the version in Cargo.toml at HEAD:
 #   1. creates a draft GitHub release v<version> with the notes
 #   2. tags HEAD and pushes the tag: GitHub Actions (.github/workflows/release.yml) builds the Arch package
 #      and the Linux binary on a native x86_64 runner and attaches them
@@ -8,7 +8,7 @@
 #
 # Usage: packaging/release.sh NOTES.md
 #
-# Needs: gh (logged in) and Node (for check-version.sh).
+# Needs: gh (logged in).
 # Commit the version bump and push it first: the release is built from what is on GitHub.
 # To build the Linux downloads locally without releasing, see build-linux-docker.sh.
 set -euo pipefail

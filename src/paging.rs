@@ -1,13 +1,13 @@
 //! Paging through a selection: where the next page starts, and what a page adds to the queue.
-//! Unread items come oldest first, history newest first.
+//! Unread items come oldest first (by publication time), history most recently read first.
 
 use crate::dates;
-use crate::miniflux::{Entry, EntryPage, EntryStatus};
+use crate::miniflux::{Entry, EntryPage, HistoryPage};
 use std::collections::HashSet;
 
 pub const PAGE: usize = 50;
 
-/// "unread": read the unread items, oldest first. "history": browse read items, newest first.
+/// "unread": read the unread items, oldest first. "history": browse read items, the most recently read first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Unread,
@@ -15,14 +15,6 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// The list a mode pages through.
-    pub fn status(self) -> EntryStatus {
-        match self {
-            Mode::Unread => EntryStatus::Unread,
-            Mode::History => EntryStatus::Read,
-        }
-    }
-
     pub fn other(self) -> Mode {
         match self {
             Mode::Unread => Mode::History,
@@ -57,6 +49,77 @@ pub fn next_page(queue: &[Entry], mode: Mode) -> PageRequest {
     PageRequest { past, limit: PAGE + overlap }
 }
 
+/// A page to load: unread ones by publication time, history by when items were read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Request {
+    Unread(PageRequest),
+    History(HistoryPage),
+}
+
+/// Where the history goes on. Pages come by `changed_at`, newest first. A full page may end in the middle of
+/// entries read in the same second, which Miniflux returns in no particular order (marking a list read gives
+/// them all the same moment), so that second's entries are put back and fetched by id instead. After that it goes
+/// on below the second. Nothing is skipped or shown twice, and items read meanwhile (here or elsewhere) just move
+/// to the top, which the queue doesn't come back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryCursor {
+    /// The most recently read.
+    Start,
+    /// Read before this second.
+    Below(i64),
+    /// The rest of what was read in this second, with ids below `before_id` (0: all of it).
+    Within {
+        second: i64,
+        before_id: i64,
+    },
+    End,
+}
+
+impl HistoryCursor {
+    pub fn request(self) -> Option<HistoryPage> {
+        Some(match self {
+            HistoryCursor::Start => HistoryPage::ChangedBefore { before: 0, limit: PAGE },
+            HistoryCursor::Below(second) => HistoryPage::ChangedBefore { before: second, limit: PAGE },
+            HistoryCursor::Within { second, before_id } => HistoryPage::AroundSecond { second, before_id, limit: PAGE },
+            HistoryCursor::End => return None,
+        })
+    }
+}
+
+/// The second an entry was read in.
+fn read_second(entry: &Entry) -> Option<i64> {
+    dates::unix_millis(&entry.changed_at).map(|ms| ms.div_euclid(1000))
+}
+
+/// What a history page adds to the queue, and where the history goes on.
+pub fn merge_history(queue: &[Entry], request: HistoryPage, page: EntryPage) -> (Vec<Entry>, HistoryCursor) {
+    let have: HashSet<i64> = queue.iter().map(|e| e.id).collect();
+    let new = |e: &Entry| !have.contains(&e.id);
+    match request {
+        HistoryPage::ChangedBefore { limit, .. } => {
+            let full = page.entries.len() >= limit;
+            match page.entries.last().and_then(read_second).filter(|_| full) {
+                // The page may have cut that second in two: keep what was read after it, fetch it by id next.
+                Some(last) => {
+                    let fresh = page.entries.into_iter().filter(|e| new(e) && read_second(e) != Some(last)).collect();
+                    (fresh, HistoryCursor::Within { second: last, before_id: 0 })
+                }
+                // The end of the history (or a server without read times, which can only be shown as it comes).
+                None => (page.entries.into_iter().filter(new).collect(), HistoryCursor::End),
+            }
+        }
+        HistoryPage::AroundSecond { second, limit, .. } => {
+            let next = match page.entries.last() {
+                Some(last) if page.entries.len() >= limit => HistoryCursor::Within { second, before_id: last.id },
+                _ => HistoryCursor::Below(second),
+            };
+            // The window holds the second before too; that comes later, below this one.
+            let fresh = page.entries.into_iter().filter(|e| new(e) && read_second(e) == Some(second)).collect();
+            (fresh, next)
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Merged {
     /// The page's items that aren't in the queue yet.
@@ -82,7 +145,7 @@ pub fn merge_page(queue: &[Entry], page: EntryPage) -> Merged {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::miniflux::EntryFeed;
+    use crate::miniflux::{EntryFeed, EntryStatus};
 
     /// An entry published `minute` minutes after the start of October 2026, like the TS tests had.
     pub fn entry_at(id: i64, title: &str, status: EntryStatus, minute: i64) -> Entry {
@@ -94,6 +157,7 @@ pub mod tests {
             author: String::new(),
             content: format!("<p>{title} body</p>"),
             published_at: dates::rfc3339_utc(OCTOBER_2026 + minute * 60_000),
+            changed_at: dates::rfc3339_utc(OCTOBER_2026 + minute * 60_000),
             status,
             reading_time: 1,
             feed: EntryFeed { id: 1, title: "Feed".into() },

@@ -7,13 +7,13 @@
 //! another selection changes nothing.
 //!
 //! Unread mode: unread items, oldest first; going back shows items read this session.
-//! History mode: read items, newest first.
+//! History mode: read items, the most recently read first.
 //! Both load a page at a time as you get near the end. At the end of the unread list, it looks once more for
 //! items that arrived meanwhile.
 
 use crate::keys::{self, Action};
 use crate::miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
-use crate::paging::{self, Mode, PageRequest};
+use crate::paging::{self, HistoryCursor, Mode, Request};
 use crate::picker::{self, PickerItem};
 use crate::prefs::Prefs;
 use std::collections::HashMap;
@@ -109,14 +109,12 @@ pub enum Effect {
     OpenSelection {
         load: u64,
         selection: Selection,
-        mode: Mode,
-        request: PageRequest,
+        request: Request,
     },
     LoadPage {
         load: u64,
         selection: Selection,
-        mode: Mode,
-        request: PageRequest,
+        request: Request,
         arrivals: bool,
     },
     SetStatus {
@@ -174,8 +172,8 @@ impl std::fmt::Debug for SettingsValuesBox {
 
 /// The answer to an `Effect`. Errors are already the message to show.
 pub enum Outcome {
-    Opened { load: u64, result: Result<(EntryPage, i64), String> },
-    Page { load: u64, arrivals: bool, result: Result<EntryPage, String> },
+    Opened { load: u64, request: Request, result: Result<(EntryPage, i64), String> },
+    Page { load: u64, request: Request, arrivals: bool, result: Result<EntryPage, String> },
     StatusSet { status: EntryStatus, revert: Option<Revert>, announce: bool, result: Result<(), String> },
     ContentFetched { index: usize, id: i64, result: Result<String, String> },
     FeedCounts(Result<Vec<FeedCount>, String>),
@@ -229,6 +227,8 @@ pub struct App {
     total: i64,
     /// More pages on the server.
     has_more: bool,
+    /// Where the history goes on (history mode only).
+    history: HistoryCursor,
     /// Past the end of the unread list, looking for new arrivals.
     checking: bool,
     /// Opening another selection makes the loads still in flight no-ops: each remembers this and compares.
@@ -273,6 +273,7 @@ impl App {
             mode: Mode::Unread,
             total: 0,
             has_more: false,
+            history: HistoryCursor::Start,
             checking: false,
             latest_load: 0,
             opened: None,
@@ -453,6 +454,7 @@ impl App {
         self.selection_label = label;
         self.total = 0;
         self.has_more = false;
+        self.history = HistoryCursor::Start;
         self.checking = false;
     }
 
@@ -472,11 +474,12 @@ impl App {
         self.newest_at_open = 0;
         self.reset_queue(item.label);
         self.loading = true;
-        let request = paging::next_page(&self.queue, mode);
-        fx.push(Effect::OpenSelection { load: self.latest_load, selection: item.selection, mode, request });
+        if let Some(request) = self.next_request() {
+            fx.push(Effect::OpenSelection { load: self.latest_load, selection: item.selection, request });
+        }
     }
 
-    fn opened(&mut self, load: u64, result: Result<(EntryPage, i64), String>) {
+    fn opened(&mut self, load: u64, request: Request, result: Result<(EntryPage, i64), String>, fx: &mut Vec<Effect>) {
         if load != self.latest_load {
             return;
         }
@@ -484,7 +487,7 @@ impl App {
         match result {
             Ok((page, newest)) => {
                 self.newest_at_open = newest;
-                self.append_page(page);
+                self.append_page(request, page, fx);
             }
             Err(message) => self.toast_error(message),
         }
@@ -492,11 +495,43 @@ impl App {
 
     // ---- Paging (see paging.rs) -----------------------------------------
 
-    fn append_page(&mut self, page: EntryPage) {
-        let merged = paging::merge_page(&self.queue, page);
-        self.queue.extend(merged.fresh);
-        self.has_more = merged.more;
-        self.total = merged.total;
+    /// The page after what's loaded, if there is one to ask for.
+    fn next_request(&self) -> Option<Request> {
+        match self.mode {
+            Mode::Unread => Some(Request::Unread(paging::next_page(&self.queue, self.mode))),
+            Mode::History => self.history.request().map(Request::History),
+        }
+    }
+
+    fn append_page(&mut self, request: Request, page: EntryPage, fx: &mut Vec<Effect>) {
+        match request {
+            Request::Unread(_) => {
+                let merged = paging::merge_page(&self.queue, page);
+                self.queue.extend(merged.fresh);
+                self.has_more = merged.more;
+                self.total = merged.total;
+            }
+            Request::History(history) => {
+                // The first page counts the whole history; later ones count only what's below them.
+                let first = self.queue.is_empty() && self.history == HistoryCursor::Start;
+                let total = page.total;
+                let (fresh, next) = paging::merge_history(&self.queue, history, page);
+                let nothing_new = fresh.is_empty();
+                self.queue.extend(fresh);
+                self.history = next;
+                self.has_more = next != HistoryCursor::End;
+                if first {
+                    self.total = total;
+                }
+                if !self.has_more {
+                    self.total = i64::try_from(self.queue.len()).unwrap_or(i64::MAX);
+                }
+                // A page can bring nothing to show (a second that was all loaded already): go on to the next.
+                if nothing_new && self.has_more {
+                    self.load_page(false, fx);
+                }
+            }
+        }
     }
 
     /// Asks for the page after what's loaded; one at a time. Returns whether it did.
@@ -505,13 +540,20 @@ impl App {
         if self.loading_more {
             return false;
         }
+        let Some(request) = self.next_request() else { return false };
         self.loading_more = true;
-        let request = paging::next_page(&self.queue, self.mode);
-        fx.push(Effect::LoadPage { load: self.latest_load, selection, mode: self.mode, request, arrivals });
+        fx.push(Effect::LoadPage { load: self.latest_load, selection, request, arrivals });
         true
     }
 
-    fn page_loaded(&mut self, load: u64, arrivals: bool, result: Result<EntryPage, String>) {
+    fn page_loaded(
+        &mut self,
+        load: u64,
+        request: Request,
+        arrivals: bool,
+        result: Result<EntryPage, String>,
+        fx: &mut Vec<Effect>,
+    ) {
         self.loading_more = false;
         if arrivals {
             self.checking = false;
@@ -520,7 +562,7 @@ impl App {
             return;
         }
         match result {
-            Ok(page) => self.append_page(page),
+            Ok(page) => self.append_page(request, page, fx),
             Err(message) => self.toast_error(message),
         }
     }
@@ -818,7 +860,7 @@ impl App {
         !self.queue.is_empty() || !self.selection_label.is_empty()
     }
 
-    /// h: switch between unread and history (read items, newest first).
+    /// h: switch between unread and history (read items, the most recently read first).
     fn toggle_mode(&mut self, fx: &mut Vec<Effect>) {
         let mode = if self.overlay == Overlay::Picker { self.picker_mode } else { self.mode };
         self.open_picker(Some(mode.other()), fx);
@@ -1098,8 +1140,10 @@ impl App {
     pub fn apply(&mut self, outcome: Outcome) -> Vec<Effect> {
         let mut fx = Vec::new();
         match outcome {
-            Outcome::Opened { load, result } => self.opened(load, result),
-            Outcome::Page { load, arrivals, result } => self.page_loaded(load, arrivals, result),
+            Outcome::Opened { load, request, result } => self.opened(load, request, result, &mut fx),
+            Outcome::Page { load, request, arrivals, result } => {
+                self.page_loaded(load, request, arrivals, result, &mut fx);
+            }
             Outcome::StatusSet { status, revert, announce, result } => {
                 self.status_set(status, revert, announce, result);
             }

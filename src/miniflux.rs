@@ -71,6 +71,9 @@ pub struct Entry {
     #[serde(default)]
     pub content: String,
     pub published_at: String,
+    /// When its status last changed: for a read entry, when it was read.
+    #[serde(default)]
+    pub changed_at: String,
     pub status: EntryStatus,
     #[serde(default)]
     pub reading_time: i64,
@@ -137,6 +140,18 @@ impl Selection {
     }
 }
 
+/// One page of the history: read entries, the most recently read first. Miniflux has no tie-breaker for
+/// entries changed at the same moment (marking a whole list read gives thousands the same `changed_at`), so the
+/// app pages by time down to a second and walks that second by id (see `HistoryCursor` in paging.rs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryPage {
+    /// Read before `before` (unix seconds; 0: from the top), the latest change first.
+    ChangedBefore { before: i64, limit: usize },
+    /// Read in the two seconds around `second` (`second - 1 < changed_at < second + 1`), by id, highest first,
+    /// below `before_id` (0: from the highest).
+    AroundSecond { second: i64, before_id: i64, limit: usize },
+}
+
 /// Upper bound on one page requested by the UI; Miniflux's own maximum for `limit`.
 const MAX_PAGE: usize = 1000;
 /// Entries per request when walking a selection by id to mark it read.
@@ -190,7 +205,8 @@ impl Client {
         Ok(merge_counts(feeds, &counters))
     }
 
-    /// One page of the selection's entries: unread ones oldest first, or read ones (the history) newest first.
+    /// One page of the selection's entries by publication time: unread ones oldest first, or read ones newest first.
+    /// The app's history pages by when items were read instead (`history`).
     /// Both are loaded as you go. `past` is where the page starts, in unix seconds: entries published after it
     /// (unread) or before it (read); 0 starts at the beginning. See `nextPage` in src/paging.ts for why that and
     /// not an offset. `after` / `before` compare `published_at` strictly and exist since Miniflux 2.0.9;
@@ -216,6 +232,34 @@ impl Client {
         if past > 0 {
             path.push_str(&format!("&{bound}={past}"));
         }
+        self.get_json(&path).await
+    }
+
+    /// One page of the selection's history. `order=changed_at` and the `changed_*` filters need Miniflux 2.0.49.
+    pub async fn history(&self, sel: Selection, page: HistoryPage) -> Result<EntryPage, Error> {
+        let prefix = sel.path_prefix();
+        let path = match page {
+            HistoryPage::ChangedBefore { before, limit } => {
+                let limit = limit.clamp(1, MAX_PAGE);
+                let mut path = format!("{prefix}/entries?status=read&order=changed_at&direction=desc&limit={limit}");
+                if before > 0 {
+                    path.push_str(&format!("&changed_before={before}"));
+                }
+                path
+            }
+            HistoryPage::AroundSecond { second, before_id, limit } => {
+                let limit = limit.clamp(1, MAX_PAGE);
+                let mut path = format!(
+                    "{prefix}/entries?status=read&order=id&direction=desc&limit={limit}&changed_after={}&changed_before={}",
+                    second - 1,
+                    second + 1
+                );
+                if before_id > 0 {
+                    path.push_str(&format!("&before_entry_id={before_id}"));
+                }
+                path
+            }
+        };
         self.get_json(&path).await
     }
 
@@ -518,6 +562,56 @@ mod tests {
         let c = client(&server);
         let page = c.entries(Selection::Feed { id: 7 }, EntryStatus::Read, 1_761_286_321, 100_000).await;
         assert_eq!(page.unwrap().total, 41);
+    }
+
+    #[tokio::test]
+    async fn history_pages_by_when_entries_were_read() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/categories/2/entries"))
+            .and(query_param("status", "read"))
+            .and(query_param("order", "changed_at"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("limit", "50"))
+            .and(query_param_is_missing("changed_before"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 3, "entries": [entry_json(3)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/categories/2/entries"))
+            .and(query_param("order", "changed_at"))
+            .and(query_param("changed_before", "1761286321"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 2, "entries": [] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        let sel = Selection::Category { id: 2 };
+        assert_eq!(c.history(sel, HistoryPage::ChangedBefore { before: 0, limit: 50 }).await.unwrap().total, 3);
+        let page = c.history(sel, HistoryPage::ChangedBefore { before: 1_761_286_321, limit: 50 }).await;
+        assert_eq!(page.unwrap().total, 2);
+    }
+
+    #[tokio::test]
+    async fn history_walks_one_second_by_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("status", "read"))
+            .and(query_param("order", "id"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("changed_after", "99"))
+            .and(query_param("changed_before", "101"))
+            .and(query_param("before_entry_id", "500"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 1, "entries": [entry_json(4)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let page = client(&server)
+            .history(Selection::All, HistoryPage::AroundSecond { second: 100, before_id: 500, limit: 50 })
+            .await;
+        assert_eq!(page.unwrap().entries[0].id, 4);
     }
 
     #[tokio::test]

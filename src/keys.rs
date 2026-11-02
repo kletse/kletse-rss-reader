@@ -137,7 +137,7 @@ pub const HELP: &[HelpRow] = &[
     HelpRow { keys: &[Plain("r")], action: "refresh feeds", place: Where::Picker, picker_note: None },
     HelpRow {
         keys: &[Plain("h")],
-        action: "history: read items, newest first (again for unread)",
+        action: "history: read items, last read first (again for unread)",
         place: Where::Both,
         picker_note: None,
     },

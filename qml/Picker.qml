@@ -30,7 +30,7 @@ Panel {
         Button {
             ui: picker.ui
             text: picker.model.pickerHistory ? "Unread" : "History"
-            tip: picker.model.pickerHistory ? "Unread items (h)" : "Read items, newest first (h)"
+            tip: picker.model.pickerHistory ? "Unread items (h)" : "Read items, last read first (h)"
             onClicked: picker.model.press("mode")
         },
         Button {

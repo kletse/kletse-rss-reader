@@ -5,9 +5,10 @@
 
 use super::*;
 use crate::dates;
-use crate::miniflux::{Category, Feed};
-use crate::paging::PAGE;
+use crate::miniflux::{Category, Feed, HistoryPage};
 use crate::paging::tests::{entry, entry_at};
+use crate::paging::{PAGE, PageRequest};
+use std::cmp::Reverse;
 use std::collections::VecDeque;
 
 /// What the fake Miniflux holds (every selection gets all of it). Tests change statuses here as "elsewhere".
@@ -15,7 +16,11 @@ use std::collections::VecDeque;
 struct Fake {
     entries: Vec<Entry>,
     requests: i64,
+    /// What `now()` is in the database: every status change is stamped with it, a second later each time.
+    clock_ms: i64,
 }
+
+const NOVEMBER_2026_MS: i64 = 1_793_491_200_000;
 
 fn seconds(e: &Entry) -> i64 {
     dates::unix_millis(&e.published_at).unwrap() / 1000
@@ -38,9 +43,46 @@ impl Fake {
         EntryPage { total: i64::try_from(list.len()).unwrap(), entries: list.into_iter().take(limit).collect() }
     }
 
+    /// The history, the way Miniflux pages it: by `changed_at`, ties in a different order on every request, or one
+    /// window of time by id.
+    fn history(&mut self, page: HistoryPage) -> EntryPage {
+        self.requests += 1;
+        let salt = self.requests;
+        let read_ms = |e: &Entry| dates::unix_millis(&e.changed_at).unwrap();
+        let mut list: Vec<Entry> = self.entries.iter().filter(|e| e.status == EntryStatus::Read).cloned().collect();
+        let limit = match page {
+            HistoryPage::ChangedBefore { before, limit } => {
+                list.retain(|e| before == 0 || read_ms(e) < before * 1000);
+                list.sort_by_key(|e| (Reverse(read_ms(e)), (e.id * salt) % 17, e.id));
+                limit
+            }
+            HistoryPage::AroundSecond { second, before_id, limit } => {
+                list.retain(|e| {
+                    read_ms(e) > (second - 1) * 1000
+                        && read_ms(e) < (second + 1) * 1000
+                        && (before_id == 0 || e.id < before_id)
+                });
+                list.sort_by_key(|e| Reverse(e.id));
+                limit
+            }
+        };
+        EntryPage { total: i64::try_from(list.len()).unwrap(), entries: list.into_iter().take(limit).collect() }
+    }
+
+    fn serve(&mut self, request: Request) -> EntryPage {
+        match request {
+            Request::Unread(r) => self.page(EntryStatus::Unread, r.past, r.limit),
+            Request::History(page) => self.history(page),
+        }
+    }
+
+    /// One `UPDATE … SET status = …, changed_at = now()`: every entry it touches gets the same moment.
     fn mark(&mut self, ids: &[i64], status: EntryStatus) {
+        self.clock_ms = self.clock_ms.max(NOVEMBER_2026_MS) + 1000;
+        let now = dates::rfc3339_utc(self.clock_ms);
         for e in self.entries.iter_mut().filter(|e| ids.contains(&e.id)) {
             e.status = status;
+            e.changed_at.clone_from(&now);
         }
     }
 
@@ -82,7 +124,7 @@ impl Harness {
     fn new(entries: Vec<Entry>) -> Self {
         Self {
             app: App::new(Prefs::default(), false),
-            fake: Fake { entries, requests: 0 },
+            fake: Fake { entries, requests: 0, clock_ms: 0 },
             status: Status { configured: true, readeck: false },
             counts: counts(2, 3),
             calls: Vec::new(),
@@ -129,22 +171,24 @@ impl Harness {
             self.calls.push(effect.clone());
         }
         match effect {
-            Effect::OpenSelection { load, mode, request, .. } => {
-                let page = self.fake.page(mode.status(), request.past, request.limit);
-                let newest =
-                    if mode == Mode::Unread { self.fake.unread_ids().into_iter().max().unwrap_or(0) } else { 0 };
-                Some(Outcome::Opened { load, result: Ok((page, newest)) })
+            Effect::OpenSelection { load, request, .. } => {
+                let page = self.fake.serve(request);
+                let newest = match request {
+                    Request::Unread(_) => self.fake.unread_ids().into_iter().max().unwrap_or(0),
+                    Request::History(_) => 0,
+                };
+                Some(Outcome::Opened { load, request, result: Ok((page, newest)) })
             }
-            Effect::LoadPage { load, mode, request, arrivals, .. } => {
+            Effect::LoadPage { load, request, arrivals, .. } => {
                 if std::mem::take(&mut self.hold_next_page) {
                     self.held = Some(effect);
                     return None;
                 }
                 let result = match self.fail_next_page.take() {
                     Some(message) => Err(message),
-                    None => Ok(self.fake.page(mode.status(), request.past, request.limit)),
+                    None => Ok(self.fake.serve(request)),
                 };
-                Some(Outcome::Page { load, arrivals, result })
+                Some(Outcome::Page { load, request, arrivals, result })
             }
             Effect::SetStatus { ids, status, revert, announce } => {
                 let result = match self.fail_next_status.take() {
@@ -275,7 +319,16 @@ fn read_items(n: i64) -> Vec<Entry> {
 
 fn page_request(e: &Effect) -> Option<PageRequest> {
     match e {
-        Effect::OpenSelection { request, .. } | Effect::LoadPage { request, .. } => Some(*request),
+        Effect::OpenSelection { request: Request::Unread(r), .. }
+        | Effect::LoadPage { request: Request::Unread(r), .. } => Some(*r),
+        _ => None,
+    }
+}
+
+fn history_request(e: &Effect) -> Option<HistoryPage> {
+    match e {
+        Effect::OpenSelection { request: Request::History(h), .. }
+        | Effect::LoadPage { request: Request::History(h), .. } => Some(*h),
         _ => None,
     }
 }
@@ -487,14 +540,76 @@ fn history_loads_the_next_page_as_you_get_near_the_end() {
     h.open(true);
     assert_eq!(h.title(), Some(format!("Read {}", PAGE + 5).as_str()));
     assert_eq!(h.app.position(), format!("1 / {}", PAGE + 5));
+    // The first page ends at Read 6, which may share its second with others: it's held back, then fetched by id.
+    assert_eq!(h.app.queue().len(), PAGE - 1);
     for _ in 0..PAGE - 10 {
         h.key("n");
     }
-    // Page two starts before the oldest item loaded: Read 6.
-    let past = seconds(&entry(6, "")) + 1;
-    assert!(h.entries_calls().iter().any(|c| page_request(c) == Some(PageRequest { past, limit: PAGE + 1 })));
+    let read6 = seconds(&entry(6, ""));
+    let asked: Vec<HistoryPage> = h.entries_calls().iter().filter_map(|c| history_request(c)).collect();
+    assert_eq!(
+        asked,
+        [
+            HistoryPage::ChangedBefore { before: 0, limit: PAGE },
+            HistoryPage::AroundSecond { second: read6, before_id: 0, limit: PAGE },
+            HistoryPage::ChangedBefore { before: read6, limit: PAGE },
+        ]
+    );
     assert_eq!(h.app.queue().len(), PAGE + 5);
     assert!(!h.app.has_more());
+}
+
+#[test]
+fn history_shows_the_most_recently_read_first() {
+    // Published 1, 2, 3; read 2, then 3, then 1.
+    let mut h = Harness::new(read_items(3));
+    h.fake.mark(&[2], EntryStatus::Read);
+    h.fake.mark(&[3], EntryStatus::Read);
+    h.fake.mark(&[1], EntryStatus::Read);
+    h.open(true);
+    assert_eq!(h.press_through(&["n"]), [1, 3, 2]);
+    assert!(h.caught_up());
+}
+
+#[test]
+fn a_whole_list_read_at_once_is_shown_once_whatever_order_the_server_gives_ties() {
+    // 30 read long ago, then 230 marked read in one go (the same moment), then 20 read one by one.
+    let mut h = Harness::new(read_items(30));
+    h.fake.entries.extend((31..=280).map(|id| entry(id, &format!("Item {id}"))));
+    h.fake.mark(&range(31, 260), EntryStatus::Read);
+    for id in 261..=280 {
+        h.fake.mark(&[id], EntryStatus::Read);
+    }
+    h.open(true);
+    let ids = h.press_through(&["n"]);
+    let mut latest: Vec<i64> = range(261, 280);
+    latest.reverse();
+    assert_eq!(ids[..20], latest[..], "the most recently read come first");
+    let mut batch = ids[20..250].to_vec();
+    batch.sort_unstable();
+    assert_eq!(batch, range(31, 260), "the batch is all there, once");
+    let mut oldest: Vec<i64> = range(1, 30);
+    oldest.reverse();
+    assert_eq!(ids[250..], oldest[..]);
+    assert!(h.caught_up());
+}
+
+#[test]
+fn reading_elsewhere_while_in_history_skips_nothing() {
+    let mut h = Harness::new(read_items(120));
+    h.fake.entries.extend((121..=125).map(|id| entry(id, &format!("Item {id}"))));
+    h.open(true);
+    // On the phone meanwhile: five more read, which go to the top this queue has passed, and 10–20 (not loaded
+    // yet) marked unread, which leaves the history.
+    h.fake.mark(&range(121, 125), EntryStatus::Read);
+    h.fake.mark(&range(10, 20), EntryStatus::Unread);
+    let ids = h.press_through(&["n"]);
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), ids.len(), "nothing twice");
+    let expected: Vec<i64> = range(1, 120).into_iter().filter(|id| !(10..=20).contains(id)).collect();
+    assert_eq!(sorted, expected, "everything else, once");
 }
 
 #[test]
@@ -713,7 +828,7 @@ fn h_in_the_picker_switches_to_read_items_newest_first_with_the_same_keys() {
     assert_eq!(h.title(), Some("Read 3"));
     assert!(matches!(
         h.entries_calls()[0],
-        Effect::OpenSelection { mode: Mode::History, request: PageRequest { past: 0, limit: PAGE }, .. }
+        Effect::OpenSelection { request: Request::History(HistoryPage::ChangedBefore { before: 0, limit: PAGE }), .. }
     ));
     assert_eq!(h.app.mode(), Mode::History);
     h.key("j");

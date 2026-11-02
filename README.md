@@ -16,7 +16,7 @@
   <img alt="SolidJS" src="https://img.shields.io/badge/SolidJS-UI-2C4F7C?logo=solid&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
   <img alt="Arch package" src="https://img.shields.io/badge/Arch-PKGBUILD-1793D1?logo=archlinux&logoColor=white">
-  <img alt="macOS" src="https://img.shields.io/badge/macOS-.app-000000?logo=apple&logoColor=white">
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-from_source-000000?logo=apple&logoColor=white">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
@@ -109,15 +109,9 @@ This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</
 
 ### macOS
 
-**From a release** (quickest): download `Kletse-RSS-<version>-macos-universal.zip` from [Releases](https://github.com/kletse/kletse-rss-reader/releases) (Apple Silicon and Intel), unzip it and move **Kletse RSS.app** to `/Applications`. The app isn't signed by Apple, so macOS blocks it the first time. To allow it, run this once:
+There's no macOS download: build it from source, it takes a few minutes.
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/Kletse RSS.app"
-```
-
-To update, quit the app, replace it with the new download and run the same command again.
-
-**From source:** you need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
+You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Node.
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
@@ -182,7 +176,7 @@ npm run build      # release binary → src-tauri/target/release/kletse-rss (mac
 
 CI runs the same checks plus `npm audit` and `cargo audit` on every push, with clippy and the Rust tests on both Linux and macOS.
 
-**Releasing:** bump the version in `package.json` (`npm version --no-git-tag-version <version>` also updates the lockfile), `src-tauri/Cargo.toml` and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md` on a Mac. It creates a draft release and pushes the tag. GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner while the script builds the universal macOS app locally, then it publishes the release once both are attached. It needs `gh` and `rustup target add aarch64-apple-darwin x86_64-apple-darwin`. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker; slow under emulation on Apple Silicon).
+**Releasing:** bump the version in `package.json` (`npm version --no-git-tag-version <version>` also updates the lockfile), `src-tauri/Cargo.toml` and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
 
 **Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src-tauri/src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots:
 

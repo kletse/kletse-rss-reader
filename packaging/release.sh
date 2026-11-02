@@ -1,22 +1,20 @@
 #!/bin/bash
-# Publishes a release of the version in package.json at HEAD, from a Mac:
+# Publishes a release of the version in package.json at HEAD:
 #   1. creates a draft GitHub release v<version> with the notes
 #   2. tags HEAD and pushes the tag: GitHub Actions (.github/workflows/release.yml) builds the Arch package
 #      and the Linux binary on a native x86_64 runner and attaches them
-#   3. meanwhile builds the universal macOS app here (Apple Silicon + Intel) and attaches it
-#   4. waits for the Linux build, then publishes the release as the latest
+#   3. waits for that build, then publishes the release as the latest
+# Releases have no macOS app: Mac users build from source (see the README).
 #
 # Usage: packaging/release.sh NOTES.md
 #
-# Needs: gh (logged in), Node/npm, and Rust with both macOS targets:
-#   rustup target add aarch64-apple-darwin x86_64-apple-darwin
+# Needs: gh (logged in) and Node (for check-version.sh).
 # Commit the version bump and push it first: the release is built from what is on GitHub.
 # To build the Linux downloads locally without releasing, see build-linux-docker.sh.
 set -euo pipefail
 
 notes=${1:?usage: packaging/release.sh NOTES.md}
 [ -f "$notes" ] || { echo "No notes file at $notes" >&2; exit 1; }
-[ "$(uname -s)" = Darwin ] || { echo "release.sh builds the macOS app, so run it on a Mac" >&2; exit 1; }
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
@@ -36,22 +34,6 @@ gh release create "$tag" --draft --target "$sha" --title "Kletse RSS $version" -
 echo "==> Tag $tag: GitHub Actions builds the Linux downloads"
 git tag -a "$tag" "$sha" -m "Kletse RSS $version"
 git push -q origin "$tag"
-
-echo "==> macOS (universal), built here meanwhile"
-out="$root/packaging/release"
-rm -rf "$out"
-mkdir -p "$out"
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-git archive --format=tar --prefix=kletse-rss-reader/ "$sha" | tar -x -C "$work"
-(
-  cd "$work/kletse-rss-reader"
-  npm ci
-  npx tauri build --target universal-apple-darwin
-  ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Kletse RSS.app" \
-    "$out/Kletse-RSS-$version-macos-universal.zip"
-)
-gh release upload "$tag" "$out/Kletse-RSS-$version-macos-universal.zip" --clobber
 
 echo "==> Waiting for the Linux build"
 run=""

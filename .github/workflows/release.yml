@@ -1,7 +1,7 @@
 name: Release
 
 # Builds the Linux downloads (Arch package and standalone binary) on a native x86_64 runner and attaches
-# them to the GitHub release of the tag. packaging/release.sh pushes the tag, adds the macOS app and publishes.
+# them to the GitHub release of the tag. packaging/release.sh pushes the tag and publishes.
 on:
   push:
     tags: ["v*"]

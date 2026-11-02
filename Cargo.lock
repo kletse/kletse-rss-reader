@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "kletse-rss"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "base64 0.22.1",
  "cxx",

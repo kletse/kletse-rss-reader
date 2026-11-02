@@ -1,0 +1,108 @@
+//! Turns feed counts into the rows of the feeds picker.
+
+use crate::miniflux::{FeedCount, Selection};
+use crate::paging::Mode;
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerItem {
+    pub selection: Selection,
+    pub label: String,
+    pub count: i64,
+    /// 0 for "All …" and categories, 1 for feeds.
+    pub depth: u8,
+}
+
+fn by_title(a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
+}
+
+/// Turns feed counts into the picker rows: "All unread" (or "All read" in history mode),
+/// then each category (sorted) with its feeds. Anything with nothing to show is left out.
+pub fn build(counts: &[FeedCount], mode: Mode) -> Vec<PickerItem> {
+    let count_of = |fc: &FeedCount| if mode == Mode::History { fc.read } else { fc.unread };
+    let total: i64 = counts.iter().map(count_of).sum();
+
+    // Feeds with something to show, grouped by category id.
+    let mut groups: BTreeMap<i64, (String, Vec<&FeedCount>)> = BTreeMap::new();
+    for fc in counts.iter().filter(|fc| count_of(fc) > 0) {
+        let category = &fc.feed.category;
+        groups.entry(category.id).or_insert_with(|| (category.title.clone(), Vec::new())).1.push(fc);
+    }
+    let mut groups: Vec<_> = groups.into_iter().collect();
+    groups.sort_by(|a, b| by_title(&a.1.0, &b.1.0));
+
+    let mut rows = Vec::new();
+    if total > 0 {
+        let label = if mode == Mode::History { "All read" } else { "All unread" };
+        rows.push(PickerItem { selection: Selection::All, label: label.into(), count: total, depth: 0 });
+    }
+    for (id, (title, mut feeds)) in groups {
+        feeds.sort_by(|a, b| by_title(&a.feed.title, &b.feed.title));
+        let count = feeds.iter().map(|fc| count_of(fc)).sum();
+        rows.push(PickerItem { selection: Selection::Category { id }, label: title, count, depth: 0 });
+        rows.extend(feeds.into_iter().map(|fc| PickerItem {
+            selection: Selection::Feed { id: fc.feed.id },
+            label: fc.feed.title.clone(),
+            count: count_of(fc),
+            depth: 1,
+        }));
+    }
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::miniflux::{Category, Feed};
+
+    fn fc(id: i64, title: &str, category: (i64, &str), unread: i64, read: i64) -> FeedCount {
+        FeedCount {
+            feed: Feed { id, title: title.into(), category: Category { id: category.0, title: category.1.into() } },
+            unread,
+            read,
+        }
+    }
+
+    fn rows(items: &[PickerItem]) -> Vec<(&str, i64, u8)> {
+        items.iter().map(|i| (i.label.as_str(), i.count, i.depth)).collect()
+    }
+
+    #[test]
+    fn is_empty_when_nothing_is_unread() {
+        assert_eq!(build(&[], Mode::Unread), vec![]);
+        assert_eq!(build(&[fc(1, "A", (1, "Dev"), 0, 0)], Mode::Unread), vec![]);
+    }
+
+    #[test]
+    fn lists_all_unread_then_categories_with_their_feeds_hiding_read_out_feeds() {
+        let items = build(
+            &[
+                fc(1, "Zed", (1, "Dev"), 2, 0),
+                fc(2, "Alpha", (1, "Dev"), 3, 0),
+                fc(3, "Quiet", (2, "Blogs"), 0, 0),
+                fc(4, "Loud", (2, "Blogs"), 1, 0),
+                fc(5, "Nothing", (3, "Empty"), 0, 0),
+            ],
+            Mode::Unread,
+        );
+        assert_eq!(
+            rows(&items),
+            [("All unread", 6, 0), ("Blogs", 1, 0), ("Loud", 1, 1), ("Dev", 5, 0), ("Alpha", 3, 1), ("Zed", 2, 1)]
+        );
+        let selections: Vec<_> = items.iter().take(3).map(|i| i.selection).collect();
+        assert_eq!(selections, [Selection::All, Selection::Category { id: 2 }, Selection::Feed { id: 4 }]);
+    }
+
+    #[test]
+    fn history_mode_uses_read_counts_and_hides_feeds_with_nothing_read() {
+        let items = build(
+            &[fc(1, "Zed", (1, "Dev"), 2, 0), fc(2, "Alpha", (1, "Dev"), 0, 7), fc(3, "Loud", (2, "Blogs"), 1, 3)],
+            Mode::History,
+        );
+        assert_eq!(
+            rows(&items),
+            [("All read", 10, 0), ("Blogs", 3, 0), ("Loud", 3, 1), ("Dev", 7, 0), ("Alpha", 7, 1)]
+        );
+    }
+}

@@ -9,62 +9,59 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ui:
-    name: UI lint, type-check and tests
+  linux:
+    name: fmt, clippy, tests and a QML smoke test
     runs-on: ubuntu-latest
+    # Arch, as the app's users run it: a current Qt 6 and Rust from the distribution.
+    container: archlinux:latest
     steps:
+      - name: Install Rust, Qt 6 and a font
+        run: pacman -Syu --noconfirm --needed base-devel git rust qt6-base qt6-declarative qt6-svg qt6-imageformats ttf-dejavu
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: Swatinem/rust-cache@v2
       - name: Same version in every file that carries it
         run: packaging/check-version.sh
-      - run: npx biome ci
-      - run: npm run check
-      - run: npm test
-
-  backend:
-    name: Rust fmt, clippy and tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Tauri system dependencies
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      # QML is only checked when it runs. Render a few screens of the demo offscreen; any QML warning (a type that
+      # doesn't resolve, a binding loop, a missing property) is fatal and fails the job.
+      - name: Smoke test the window
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FATAL_WARNINGS: "1"
+          QT_FORCE_STDERR_LOGGING: "1"
+          LANG: C.UTF-8
+          KLETSE_RSS_DEMO: "1"
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
-      - uses: dtolnay/rust-toolchain@stable
+          cargo build --locked
+          for keys in "Enter" "Enter n n" "Enter ?" "Enter ," "h Enter" "Enter A" "Enter n n n n n n n n"; do
+            echo "== $keys"
+            rm -f /tmp/shot.png
+            KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/kletse-rss
+            test -s /tmp/shot.png
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure()
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - name: Placeholder frontend so tauri's build script finds frontendDist
-        run: mkdir -p dist && touch dist/index.html
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - name: src/bindings.ts matches the Rust types and commands (run `npm run bindings`)
-        run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --lib bindings::export_bindings
-          git diff --exit-code -- src/bindings.ts
+          name: smoke-test-shot
+          path: /tmp/shot.png
+          if-no-files-found: ignore
 
   macos:
-    name: macOS clippy and tests
+    name: macOS clippy, tests and the app bundle
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Qt 6
+        run: brew install qt
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - name: Placeholder frontend so tauri's build script finds frontendDist
-        run: mkdir -p dist && touch dist/index.html
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: packaging/macos/build-app.sh
 
   audit:
     name: Dependency audit
@@ -74,13 +71,6 @@ jobs:
       checks: write # rustsec/audit-check posts its result as a check run
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm audit --audit-level=high
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: src-tauri

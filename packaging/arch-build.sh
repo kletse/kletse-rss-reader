@@ -13,7 +13,7 @@ mkdir -p "$work/out"
 # pacman's download sandbox needs seccomp, which Docker on Apple Silicon (x86_64 under emulation)
 # can't set up. The container is thrown away after the build, so the sandbox is turned off everywhere.
 sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
-pacman -Syu --noconfirm --needed base-devel rust npm webkit2gtk-4.1 gtk3 >/dev/null
+pacman -Syu --noconfirm --needed base-devel rust qt6-base qt6-declarative qt6-svg qt6-imageformats qt6-wayland >/dev/null
 
 # makepkg refuses to run as root.
 useradd -m builder
@@ -24,4 +24,4 @@ su builder -c 'cd ~/kletse-rss-reader/packaging && makepkg -f --noconfirm'
 root=/home/builder/kletse-rss-reader
 version=$(sed -n 's/^pkgver=//p' "$root/packaging/PKGBUILD")
 cp "$root"/packaging/*.pkg.tar.zst "$work/out/"
-cp "$root/src-tauri/target/release/kletse-rss" "$work/out/kletse-rss-$version-x86_64"
+cp "$root/target/release/kletse-rss" "$work/out/kletse-rss-$version-x86_64"

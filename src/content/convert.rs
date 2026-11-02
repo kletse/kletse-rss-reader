@@ -1,0 +1,733 @@
+//! Feed HTML to a list of blocks QML can lay out natively: what `src/content.ts` + DOMPurify + the article CSS
+//! do in the webview, done by hand. Text inside a block stays a small HTML subset (links, bold, italics,
+//! inline code), which Qt's rich-text engine renders; everything with its own box (images, code, quotes, lists,
+//! tables, embeds) becomes its own block.
+//!
+//! Nothing here runs scripts or loads anything; only the whitelisted tags and attributes reach the output.
+
+use super::highlight;
+use crate::theme::Palette;
+use base64::Engine as _;
+use ego_tree::NodeRef;
+use scraper::{Html, Node, node::Element};
+use serde::Serialize;
+use std::collections::BTreeMap;
+use url::Url;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Block {
+    Paragraph { html: String },
+    Heading { level: u8, html: String },
+    Image { src: String, alt: String, href: Option<String>, caption: Option<String> },
+    Caption { html: String },
+    Code { html: String, lang: Option<String> },
+    Quote { blocks: Vec<Block> },
+    List { ordered: bool, start: i64, items: Vec<Vec<Block>> },
+    Table { html: String },
+    Rule,
+    Embed { href: String, label: String },
+}
+
+/// What the conversion couldn't carry over, to judge how far a native renderer gets on real feeds.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Stats {
+    /// Elements the webview would show and this doesn't (inline SVG, MathML, canvas).
+    pub dropped: BTreeMap<String, usize>,
+    /// Tags with no rule here; their content is kept as if they weren't there.
+    pub unknown: BTreeMap<String, usize>,
+    /// Code blocks with a grammar / without one (shown plain).
+    pub code_highlighted: usize,
+    pub code_plain: usize,
+    /// Language hints syntect has no grammar for.
+    pub code_no_grammar: BTreeMap<String, usize>,
+    pub images: usize,
+    pub tables: usize,
+    pub embeds: usize,
+}
+
+impl Stats {
+    /// One line for `KLETSE_RSS_DEBUG=1`; empty when everything carried over.
+    pub fn summary(&self) -> String {
+        let list =
+            |m: &BTreeMap<String, usize>| m.iter().map(|(k, v)| format!("{k}×{v}")).collect::<Vec<_>>().join(" ");
+        let mut parts = Vec::new();
+        if !self.dropped.is_empty() {
+            parts.push(format!("dropped: {}", list(&self.dropped)));
+        }
+        if !self.unknown.is_empty() {
+            parts.push(format!("unknown: {}", list(&self.unknown)));
+        }
+        if !self.code_no_grammar.is_empty() {
+            parts.push(format!("no grammar: {}", list(&self.code_no_grammar)));
+        }
+        parts.join(" · ")
+    }
+}
+
+pub struct Rendered {
+    pub blocks: Vec<Block>,
+    pub stats: Stats,
+}
+
+/// Elements removed with everything inside them (DOMPurify's FORBID_CONTENTS plus the app's FORBID_TAGS).
+const REMOVED: &[&str] = &[
+    "script", "style", "noscript", "template", "select", "textarea", "title", "head", "meta", "link", "input",
+    "source", "track", "param", "base",
+];
+/// Things the webview draws and this renderer can't.
+const UNSUPPORTED: &[&str] = &["svg", "math", "canvas"];
+/// Embeds become a link to their source, as `replaceEmbeds` in content.ts does.
+const EMBEDS: &[&str] = &["iframe", "embed", "object", "video", "audio"];
+/// Block containers with no look of their own: they only separate paragraphs.
+const CONTAINERS: &[&str] = &[
+    "p", "div", "section", "article", "main", "header", "footer", "aside", "nav", "center", "details", "summary",
+    "address", "dl", "dd", "hgroup", "body", "html", "form", "fieldset", "legend", "li", "caption", "search",
+];
+/// Inline wrappers with no look of their own.
+const TRANSPARENT: &[&str] = &[
+    "span", "font", "time", "abbr", "acronym", "label", "bdi", "bdo", "data", "picture", "button", "big", "nobr",
+    "output",
+];
+
+pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
+    let doc = Html::parse_fragment(html);
+    let mut c =
+        Converter { base: Url::parse(base_url).ok(), palette, syntax_theme: None, stats: Stats::default(), link: None };
+    let mut blocks = Vec::new();
+    let mut para = Para::default();
+    for child in doc.root_element().children() {
+        c.walk(child, &mut blocks, &mut para);
+    }
+    c.flush(&mut blocks, &mut para);
+    Rendered { blocks, stats: c.stats }
+}
+
+/// The paragraph being collected: inline HTML, and whether any of it is visible.
+#[derive(Default)]
+struct Para {
+    html: String,
+    visible: bool,
+}
+
+impl Para {
+    fn text(&mut self, text: &str) {
+        if text.chars().any(|c| !c.is_whitespace()) {
+            self.visible = true;
+        }
+        self.html.push_str(&highlight::escape(text));
+    }
+
+    fn take(&mut self) -> Option<String> {
+        let para = std::mem::take(self);
+        para.visible.then(|| para.html.trim().to_string())
+    }
+}
+
+struct Converter<'a> {
+    base: Option<Url>,
+    palette: &'a Palette,
+    syntax_theme: Option<syntect::highlighting::Theme>,
+    stats: Stats,
+    /// The link we are inside of, so an image in a link stays clickable.
+    link: Option<String>,
+}
+
+impl Converter<'_> {
+    fn flush(&mut self, out: &mut Vec<Block>, para: &mut Para) {
+        if let Some(html) = para.take() {
+            out.push(Block::Paragraph { html });
+        }
+    }
+
+    fn absolute(&self, url: &str) -> String {
+        let url = url.trim();
+        self.base.as_ref().and_then(|b| b.join(url).ok()).map_or_else(|| url.to_string(), String::from)
+    }
+
+    fn walk_children(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para) {
+        for child in node.children() {
+            self.walk(child, out, para);
+        }
+    }
+
+    /// The children of `node` as blocks of their own (a quote, a list item).
+    fn blocks_of(&mut self, node: NodeRef<'_, Node>) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        let mut para = Para::default();
+        self.walk_children(node, &mut blocks, &mut para);
+        self.flush(&mut blocks, &mut para);
+        blocks
+    }
+
+    fn walk(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para) {
+        match node.value() {
+            Node::Text(text) => para.text(text),
+            Node::Element(el) => self.element(node, el, out, para),
+            _ => {}
+        }
+    }
+
+    fn element(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>, para: &mut Para) {
+        let name = el.name();
+        match name {
+            _ if REMOVED.contains(&name) => {}
+            _ if UNSUPPORTED.contains(&name) => *self.stats.dropped.entry(name.into()).or_default() += 1,
+            _ if EMBEDS.contains(&name) => self.embed(node, el, out, para),
+            "img" => self.image(el, out, para),
+            "br" => para.html.push_str("<br>"),
+            "hr" => {
+                self.flush(out, para);
+                out.push(Block::Rule);
+            }
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                self.flush(out, para);
+                let mut heading = Para::default();
+                self.walk_children(node, out, &mut heading);
+                if let Some(html) = heading.take() {
+                    let level = name[1..].parse().unwrap_or(2);
+                    out.push(Block::Heading { level, html });
+                }
+            }
+            "blockquote" => {
+                self.flush(out, para);
+                let blocks = self.blocks_of(node);
+                if !blocks.is_empty() {
+                    out.push(Block::Quote { blocks });
+                }
+            }
+            "ul" | "ol" | "menu" => {
+                self.flush(out, para);
+                self.list(node, el, out);
+            }
+            "pre" => {
+                self.flush(out, para);
+                self.code(node, el, out);
+            }
+            "table" => {
+                self.flush(out, para);
+                self.table(node, out);
+            }
+            "figure" => {
+                self.flush(out, para);
+                self.figure(node, out);
+            }
+            "figcaption" => {
+                // Outside a figure; inside one, figure() handles it.
+                self.flush(out, para);
+                let mut caption = Para::default();
+                self.walk_children(node, out, &mut caption);
+                if let Some(html) = caption.take() {
+                    out.push(Block::Caption { html });
+                }
+            }
+            "dt" => {
+                self.flush(out, para);
+                para.html.push_str("<b>");
+                self.walk_children(node, out, para);
+                para.html.push_str("</b>");
+                self.flush(out, para);
+            }
+            _ if CONTAINERS.contains(&name) => {
+                self.flush(out, para);
+                self.walk_children(node, out, para);
+                self.flush(out, para);
+            }
+            "a" => match el.attr("href").filter(|h| !h.trim().is_empty() && !h.trim_start().starts_with("javascript:"))
+            {
+                Some(href) => {
+                    let href = self.absolute(href);
+                    // Qt's rich text colours links from the palette unless the anchor says otherwise.
+                    let accent = &self.palette.accent;
+                    para.html.push_str(&format!("<a href=\"{}\" style=\"color:{accent}\">", highlight::escape(&href)));
+                    let outer = self.link.replace(href);
+                    self.walk_children(node, out, para);
+                    self.link = outer;
+                    para.html.push_str("</a>");
+                }
+                None => self.walk_children(node, out, para),
+            },
+            "strong" | "b" => self.wrap(node, out, para, "<b>", "</b>"),
+            "em" | "i" | "cite" | "dfn" | "var" => self.wrap(node, out, para, "<i>", "</i>"),
+            "u" | "ins" => self.wrap(node, out, para, "<u>", "</u>"),
+            "s" | "del" | "strike" => self.wrap(node, out, para, "<s>", "</s>"),
+            "sub" => self.wrap(node, out, para, "<sub>", "</sub>"),
+            "sup" => self.wrap(node, out, para, "<sup>", "</sup>"),
+            "small" => self.wrap(node, out, para, "<small>", "</small>"),
+            "q" => self.wrap(node, out, para, "“", "”"),
+            "mark" => {
+                let open = format!("<span style=\"background-color:{}\">", self.palette.selection);
+                self.wrap(node, out, para, &open, "</span>");
+            }
+            "code" | "kbd" | "samp" | "tt" => {
+                // Qt's rich text has no padding or radius on inline runs; a tinted background is what's left.
+                let open = format!(
+                    "<code style=\"font-family:'{}'; font-size:85%; background-color:{}\">\u{a0}",
+                    self.palette.ui_font, self.palette.bg_light
+                );
+                self.wrap(node, out, para, &open, "\u{a0}</code>");
+            }
+            "wbr" => {}
+            _ if TRANSPARENT.contains(&name) => self.walk_children(node, out, para),
+            _ => {
+                *self.stats.unknown.entry(name.into()).or_default() += 1;
+                self.walk_children(node, out, para);
+            }
+        }
+    }
+
+    fn wrap(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para, open: &str, close: &str) {
+        para.html.push_str(open);
+        self.walk_children(node, out, para);
+        para.html.push_str(close);
+    }
+
+    fn image(&mut self, el: &Element, out: &mut Vec<Block>, para: &mut Para) {
+        let src = el.attr("src").unwrap_or("").trim();
+        if src.is_empty() || is_empty_svg_placeholder(src) {
+            return;
+        }
+        let alt = el.attr("alt").unwrap_or("").trim().to_string();
+        // WordPress swaps emoji for images of them; the character itself reads better inline.
+        let is_emoji = el.classes().any(|c| c == "emoji" || c == "wp-smiley");
+        if is_emoji && !alt.is_empty() {
+            para.text(&alt);
+            return;
+        }
+        self.flush(out, para);
+        self.stats.images += 1;
+        out.push(Block::Image { src: self.absolute(src), alt, href: self.link.clone(), caption: None });
+    }
+
+    fn embed(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>, para: &mut Para) {
+        let source = || {
+            node.children().find_map(|c| match c.value() {
+                Node::Element(e) if e.name() == "source" => e.attr("src").map(str::to_string),
+                _ => None,
+            })
+        };
+        let src = el.attr("src").or_else(|| el.attr("data")).map(str::to_string).or_else(source);
+        let Some(src) = src.filter(|s| !s.trim().is_empty()) else { return };
+        self.flush(out, para);
+        self.stats.embeds += 1;
+        let href = self.absolute(&src);
+        let host = Url::parse(&href)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()))
+            .unwrap_or_else(|| href.clone());
+        out.push(Block::Embed { label: format!("▶ Embedded media · {host}"), href });
+    }
+
+    fn list(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>) {
+        let mut items = Vec::new();
+        for child in node.children() {
+            match child.value() {
+                Node::Element(e) if e.name() == "li" => items.push(self.blocks_of(child)),
+                // Stray text or elements between items: give them an item of their own rather than lose them.
+                Node::Element(_) => {
+                    let mut blocks = Vec::new();
+                    let mut para = Para::default();
+                    self.walk(child, &mut blocks, &mut para);
+                    self.flush(&mut blocks, &mut para);
+                    if !blocks.is_empty() {
+                        items.push(blocks);
+                    }
+                }
+                Node::Text(t) if !t.trim().is_empty() => {
+                    items.push(vec![Block::Paragraph { html: highlight::escape(t.trim()) }]);
+                }
+                _ => {}
+            }
+        }
+        if !items.is_empty() {
+            let ordered = el.name() == "ol";
+            let start = el.attr("start").and_then(|s| s.trim().parse().ok()).unwrap_or(1);
+            out.push(Block::List { ordered, start, items });
+        }
+    }
+
+    fn code(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>) {
+        let mut text = String::new();
+        collect_text(node, &mut text);
+        let text = text.strip_prefix('\n').unwrap_or(&text).trim_end().to_string();
+        if text.is_empty() {
+            return;
+        }
+        // Language hints: classes and data-lang on the <pre> and on a <code> inside it.
+        let mut hints: Vec<String> = el.classes().map(str::to_string).collect();
+        hints.extend(el.attr("data-lang").map(str::to_string));
+        for d in node.descendants() {
+            if let Node::Element(e) = d.value()
+                && e.name() == "code"
+            {
+                hints.extend(e.classes().map(str::to_string));
+                hints.extend(e.attr("data-lang").map(str::to_string));
+            }
+        }
+        let hint_refs: Vec<&str> = hints.iter().map(String::as_str).collect();
+        let syntax = highlight::find_syntax(&hint_refs, &text);
+        let lang_hint = hint_refs
+            .iter()
+            .find_map(|h| h.strip_prefix("language-").or_else(|| h.strip_prefix("lang-")))
+            .map(str::to_string);
+        if syntax.is_some() {
+            self.stats.code_highlighted += 1;
+        } else {
+            self.stats.code_plain += 1;
+            if let Some(lang) = &lang_hint {
+                *self.stats.code_no_grammar.entry(lang.clone()).or_default() += 1;
+            }
+        }
+        let palette = self.palette;
+        let theme = self.syntax_theme.get_or_insert_with(|| highlight::theme(palette));
+        let html = highlight::to_html(&text, syntax, theme);
+        out.push(Block::Code { html, lang: syntax.map(|s| s.name.clone()).or(lang_hint) });
+    }
+
+    /// A table as Qt rich-text table HTML; cell content is flattened to inline text (images become links).
+    fn table(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>) {
+        self.stats.tables += 1;
+        let border = &self.palette.bg_light;
+        let mut html = format!(
+            "<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" style=\"border-collapse:collapse; border-color:{border}\">"
+        );
+        let mut rows = 0;
+        for row in node.descendants() {
+            let Node::Element(e) = row.value() else { continue };
+            if e.name() != "tr" {
+                continue;
+            }
+            rows += 1;
+            html.push_str("<tr>");
+            for cell in row.children() {
+                let Node::Element(ce) = cell.value() else { continue };
+                if ce.name() != "td" && ce.name() != "th" {
+                    continue;
+                }
+                let span = |attr: &str| ce.attr(attr).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&n| n > 1);
+                html.push('<');
+                html.push_str(ce.name());
+                if let Some(n) = span("colspan") {
+                    html.push_str(&format!(" colspan=\"{n}\""));
+                }
+                if let Some(n) = span("rowspan") {
+                    html.push_str(&format!(" rowspan=\"{n}\""));
+                }
+                html.push('>');
+                html.push_str(&self.inline_flattened(cell));
+                html.push_str("</");
+                html.push_str(ce.name());
+                html.push('>');
+            }
+            html.push_str("</tr>");
+        }
+        html.push_str("</table>");
+        if rows > 0 {
+            out.push(Block::Table { html });
+        }
+    }
+
+    /// Everything under `node` as one run of inline HTML: blocks are joined with line breaks, images become
+    /// links to themselves. For table cells, where Qt can't nest our blocks.
+    fn inline_flattened(&mut self, node: NodeRef<'_, Node>) -> String {
+        let blocks = self.blocks_of(node);
+        let mut parts = Vec::new();
+        for block in blocks {
+            match block {
+                Block::Paragraph { html } | Block::Heading { html, .. } | Block::Caption { html } => parts.push(html),
+                Block::Image { src, alt, .. } => {
+                    let label = if alt.is_empty() { "image".to_string() } else { alt };
+                    parts.push(format!(
+                        "<a href=\"{}\" style=\"color:{}\">[{}]</a>",
+                        highlight::escape(&src),
+                        self.palette.accent,
+                        highlight::escape(&label)
+                    ));
+                }
+                Block::Code { html, .. } => parts.push(format!("<code>{html}</code>")),
+                Block::Embed { href, label } => parts.push(format!(
+                    "<a href=\"{}\" style=\"color:{}\">{label}</a>",
+                    highlight::escape(&href),
+                    self.palette.accent
+                )),
+                Block::Quote { .. } | Block::List { .. } | Block::Table { .. } | Block::Rule => {
+                    *self.stats.dropped.entry("nested block in table cell".into()).or_default() += 1;
+                }
+            }
+        }
+        parts.join("<br>")
+    }
+
+    /// An image with its caption; a figure without an image keeps its parts as they come.
+    fn figure(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>) {
+        let start = out.len();
+        let mut para = Para::default();
+        let mut caption = None;
+        for child in node.children() {
+            match child.value() {
+                Node::Element(e) if e.name() == "figcaption" => {
+                    let mut c = Para::default();
+                    self.walk_children(child, out, &mut c);
+                    caption = c.take();
+                }
+                _ => self.walk(child, out, &mut para),
+            }
+        }
+        self.flush(out, &mut para);
+        let Some(caption) = caption else { return };
+        match out[start..].iter_mut().rev().find(|b| matches!(b, Block::Image { .. })) {
+            Some(Block::Image { caption: slot, .. }) => *slot = Some(caption),
+            _ => out.push(Block::Caption { html: caption }),
+        }
+    }
+}
+
+/// The text of a `<pre>`, with `<br>` as a newline.
+fn collect_text(node: NodeRef<'_, Node>, out: &mut String) {
+    for child in node.children() {
+        match child.value() {
+            Node::Text(t) => out.push_str(t),
+            Node::Element(e) if e.name() == "br" => out.push('\n'),
+            Node::Element(e) if REMOVED.contains(&e.name()) => {}
+            Node::Element(_) => collect_text(child, out),
+            _ => {}
+        }
+    }
+}
+
+/// True for an inline SVG that draws nothing: the stand-in lazy-loading scripts swap for the real image.
+/// Same rule as `isEmptySvgPlaceholder` in src/content.ts.
+fn is_empty_svg_placeholder(src: &str) -> bool {
+    let Some((header, body)) = src.split_once(',') else { return false };
+    let header = header.to_ascii_lowercase();
+    if !header.starts_with("data:image/svg+xml") {
+        return false;
+    }
+    let svg = if header.ends_with(";base64") {
+        base64::engine::general_purpose::STANDARD.decode(body.trim()).ok().and_then(|b| String::from_utf8(b).ok())
+    } else {
+        percent_encoding::percent_decode_str(body).decode_utf8().ok().map(|s| s.into_owned())
+    };
+    let Some(svg) = svg else { return false };
+    let svg = svg.trim().to_ascii_lowercase();
+    if !svg.starts_with("<svg") || svg.matches('<').count() > 2 {
+        return false;
+    }
+    if svg.matches('<').count() == 1 {
+        return svg.ends_with("/>");
+    }
+    svg.strip_suffix("</svg>").and_then(|s| s.split_once('>')).is_some_and(|(_, between)| between.trim().is_empty())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn blocks(html: &str) -> Vec<Block> {
+        convert(html, "https://example.com/post/", &Palette::default()).blocks
+    }
+
+    fn para(html: &str) -> Block {
+        Block::Paragraph { html: html.into() }
+    }
+
+    #[test]
+    fn paragraphs_and_loose_text_become_paragraphs() {
+        assert_eq!(
+            blocks("<p>One</p>\n  <p>Two <b>bold</b></p>tail"),
+            vec![para("One"), para("Two <b>bold</b>"), para("tail")]
+        );
+    }
+
+    #[test]
+    fn images_split_paragraphs_and_resolve_against_the_article() {
+        let b = blocks("<p>Before <a href='/full.png'><img src='thumb.png' alt='A cat'></a> after</p>");
+        assert_eq!(b.len(), 3);
+        // The paragraph is cut inside the link; Qt's parser closes the dangling tag.
+        assert!(matches!(&b[0], Block::Paragraph { html } if html.starts_with("Before")));
+        assert_eq!(
+            b[1],
+            Block::Image {
+                src: "https://example.com/post/thumb.png".into(),
+                alt: "A cat".into(),
+                href: Some("https://example.com/full.png".into()),
+                caption: None
+            }
+        );
+    }
+
+    #[test]
+    fn figure_captions_attach_to_their_image() {
+        let b = blocks("<figure><img src='a.jpg'><figcaption>The <i>caption</i></figcaption></figure>");
+        assert!(matches!(&b[..], [Block::Image { caption: Some(c), .. }] if c == "The <i>caption</i>"));
+    }
+
+    #[test]
+    fn scripts_go_and_svg_counts_as_dropped() {
+        let r = convert("<script>alert(1)</script><svg><circle/></svg><p>ok</p>", "", &Palette::default());
+        assert_eq!(r.blocks, vec![para("ok")]);
+        assert_eq!(r.stats.dropped.get("svg"), Some(&1));
+    }
+
+    #[test]
+    fn embeds_become_links() {
+        let b = blocks("<iframe src='https://www.youtube.com/embed/x'></iframe><video><source src='/v.mp4'></video>");
+        assert_eq!(
+            b,
+            vec![
+                Block::Embed {
+                    href: "https://www.youtube.com/embed/x".into(),
+                    label: "▶ Embedded media · youtube.com".into()
+                },
+                Block::Embed {
+                    href: "https://example.com/v.mp4".into(),
+                    label: "▶ Embedded media · example.com".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn code_blocks_keep_their_text_and_get_highlighted() {
+        let r = convert("<pre><code class='language-rust'>fn main() {}\n</code></pre>", "", &Palette::default());
+        let [Block::Code { html, lang }] = &r.blocks[..] else { panic!("{:?}", r.blocks) };
+        assert_eq!(lang.as_deref(), Some("Rust"));
+        assert!(html.contains("<span style=\"color:"));
+        assert_eq!(r.stats.code_highlighted, 1);
+    }
+
+    #[test]
+    fn nested_lists_and_quotes_nest() {
+        let b = blocks("<blockquote><p>q</p><ul><li>a<ol start='3'><li>b</li></ol></li></ul></blockquote>");
+        let [Block::Quote { blocks: inner }] = &b[..] else { panic!("{b:?}") };
+        assert_eq!(inner[0], para("q"));
+        let Block::List { ordered: false, items, .. } = &inner[1] else { panic!("{inner:?}") };
+        assert!(matches!(&items[0][1], Block::List { ordered: true, start: 3, .. }));
+    }
+
+    #[test]
+    fn text_is_escaped() {
+        assert_eq!(blocks("<p>a &lt;b&gt; &amp; c</p>"), vec![para("a &lt;b&gt; &amp; c")]);
+    }
+
+    #[test]
+    fn javascript_links_lose_their_href() {
+        assert_eq!(blocks("<p><a href='javascript:alert(1)'>x</a></p>"), vec![para("x")]);
+    }
+
+    #[test]
+    fn empty_svg_placeholders_are_dropped() {
+        assert!(is_empty_svg_placeholder("data:image/svg+xml,%3Csvg%20viewBox='0%200%201750%201167'%3E%3C/svg%3E"));
+        assert!(is_empty_svg_placeholder("data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PScwIDAgMSAxJy8+"));
+        assert!(!is_empty_svg_placeholder("data:image/svg+xml,<svg><rect/></svg>"));
+        assert!(!is_empty_svg_placeholder("https://example.com/a.svg"));
+    }
+
+    #[test]
+    fn emoji_images_become_their_character() {
+        assert_eq!(blocks("<p>hi <img class='emoji' alt='🙂' src='x.svg'></p>"), vec![para("hi 🙂")]);
+    }
+
+    // ---- The cases content.test.ts had for the webview version ----
+
+    const BASE: &str = "https://blog.example.com/posts/hello";
+
+    fn render(html: &str) -> Vec<Block> {
+        convert(html, BASE, &Palette::default()).blocks
+    }
+
+    fn image_srcs(blocks: &[Block]) -> Vec<&str> {
+        blocks.iter().filter_map(|b| if let Block::Image { src, .. } = b { Some(src.as_str()) } else { None }).collect()
+    }
+
+    #[test]
+    fn keeps_ordinary_article_markup() {
+        let b = render("<h2>Title</h2><p>Hi <em>there</em></p><ul><li>one</li></ul><blockquote>q</blockquote>");
+        assert_eq!(b[0], Block::Heading { level: 2, html: "Title".into() });
+        assert_eq!(b[1], para("Hi <i>there</i>"));
+        assert!(matches!(&b[2], Block::List { items, .. } if items.len() == 1));
+        assert_eq!(b[3], Block::Quote { blocks: vec![para("q")] });
+    }
+
+    #[test]
+    fn drops_event_handlers_styles_forms_and_layout_attributes() {
+        let b = render(
+            "<p onclick=\"alert(1)\" style=\"color:red\" class=\"c\" id=\"i\">t</p><style>p{display:none}</style>\
+             <form action=\"/x\"><input name=\"a\"><button>go</button></form><img src=\"a.png\" onerror=\"alert(3)\">",
+        );
+        let all = format!("{b:?}");
+        assert!(!all.contains("alert") && !all.contains("onclick") && !all.contains("display"), "{all}");
+        assert_eq!(b[0], para("t"));
+        assert_eq!(b[1], para("go")); // a button's text stays, as DOMPurify kept it
+    }
+
+    #[test]
+    fn turns_every_kind_of_embed_into_a_link_to_its_source() {
+        let b = render(
+            "<iframe src=\"https://www.youtube.com/embed/abc\"></iframe>\
+             <video><source src=\"/media/clip.mp4\" type=\"video/mp4\"></video>\
+             <embed src=\"https://cdn.example.net/x.swf\"><object data=\"https://cdn.example.net/y\"></object>",
+        );
+        let hrefs: Vec<&str> = b
+            .iter()
+            .filter_map(|b| if let Block::Embed { href, .. } = b { Some(href.as_str()) } else { None })
+            .collect();
+        assert_eq!(
+            hrefs,
+            [
+                "https://www.youtube.com/embed/abc",
+                "https://blog.example.com/media/clip.mp4",
+                "https://cdn.example.net/x.swf",
+                "https://cdn.example.net/y"
+            ]
+        );
+    }
+
+    #[test]
+    fn removes_embeds_without_a_source() {
+        assert_eq!(render("<p>a</p><iframe></iframe><video></video><p>b</p>"), vec![para("a"), para("b")]);
+    }
+
+    #[test]
+    fn resolves_relative_image_and_link_urls_against_the_article() {
+        let b =
+            render("<img src=\"../img/pic.jpg\"><p><a href=\"other\">o</a><a href=\"//cdn.example.net/z\">z</a></p>");
+        assert_eq!(image_srcs(&b), ["https://blog.example.com/img/pic.jpg"]);
+        let Block::Paragraph { html } = &b[1] else { panic!("{b:?}") };
+        assert!(html.contains("href=\"https://blog.example.com/posts/other\""), "{html}");
+        assert!(html.contains("href=\"https://cdn.example.net/z\""), "{html}");
+    }
+
+    #[test]
+    fn a_picture_is_its_img_without_srcset() {
+        let b = render(
+            "<picture><source srcset=\"small.webp 480w\" type=\"image/webp\"><img src=\"full.jpg\" srcset=\"a.jpg 1x, b.jpg 2x\"></picture>",
+        );
+        assert_eq!(image_srcs(&b), ["https://blog.example.com/posts/full.jpg"]);
+    }
+
+    #[test]
+    fn drops_images_without_a_source_and_keeps_data_images() {
+        assert_eq!(render("<p>t</p><img alt=\"tracking pixel\"><img src=\"\">"), vec![para("t")]);
+        let b = render("<img src=\"data:image/gif;base64,R0lGODlhAQABAAAAACw=\">");
+        assert!(image_srcs(&b)[0].starts_with("data:image/gif"));
+    }
+
+    #[test]
+    fn code_keeps_its_text_escaped_and_inline_code_stays_inline() {
+        let b = render("<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre><p>use <code>cargo</code></p>");
+        let Block::Code { html, .. } = &b[0] else { panic!("{b:?}") };
+        assert!(html.contains("&lt;script&gt;") && !html.contains("<script>"), "{html}");
+        let Block::Paragraph { html } = &b[1] else { panic!("{b:?}") };
+        assert!(html.starts_with("use <code") && html.contains("cargo"), "{html}");
+    }
+
+    #[test]
+    fn survives_empty_and_broken_input() {
+        assert_eq!(render(""), vec![]);
+        assert_eq!(render("<p>unclosed <b>bold"), vec![para("unclosed <b>bold</b>")]);
+        let b = convert("<a href=\"x\">rel</a>", "not a url", &Palette::default()).blocks;
+        assert_eq!(b, vec![para("<a href=\"x\" style=\"color:#7aa2f7\">rel</a>")]);
+    }
+}

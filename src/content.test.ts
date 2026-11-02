@@ -84,6 +84,20 @@ describe("renderContent", () => {
     expect(out.querySelector("img")).toBeNull();
   });
 
+  it("drops empty SVG placeholders left behind by lazy-loading scripts", () => {
+    const empty = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1750 1167'></svg>";
+    const out = render(
+      `<img src="data:image/svg+xml,${encodeURIComponent(empty)}" alt="placeholder">` +
+        `<img src="data:image/svg+xml;base64,${btoa("<svg viewBox='0 0 1 1'/>")}">` +
+        `<img src="data:image/svg+xml,%3Csvg%20viewBox='0%200%201%201'%3E%3Ccircle%20r='1'/%3E%3C/svg%3E">` +
+        `<img src="https://example.com/real.jpg" alt="real">`,
+    );
+    const srcs = Array.from(out.querySelectorAll("img")).map((img) => img.getAttribute("src"));
+    expect(srcs).toHaveLength(2);
+    expect(srcs[0]).toMatch(/circle/u);
+    expect(srcs[1]).toBe("https://example.com/real.jpg");
+  });
+
   it("keeps data: images (feeds inline small graphics)", () => {
     const out = render(`<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">`);
     expect(out.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/gif/u);

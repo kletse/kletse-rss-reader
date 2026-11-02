@@ -4,6 +4,8 @@ import hljs from "highlight.js/lib/common";
 
 const EMBEDS = "iframe, embed, object, video, audio";
 const LEADING_WWW = /^www\./u;
+const EMPTY_SVG_DATA = /^data:image\/svg\+xml(?:;charset=[\w-]+)?(?<base64>;base64)?,(?<body>.*)$/isu;
+const EMPTY_SVG = /^\s*<svg\b[^>]*(?:\/>|>\s*<\/svg>)\s*$/iu;
 
 /** Embeds become plain links to their source; embeds without one are dropped. */
 function replaceEmbeds(doc: Document, baseUrl: string): void {
@@ -23,12 +25,30 @@ function replaceEmbeds(doc: Document, baseUrl: string): void {
   }
 }
 
+/**
+ * True for an inline SVG that draws nothing: the stand-in lazy-loading scripts swap for the real image
+ * (`data:image/svg+xml,<svg viewBox='0 0 1750 1167'></svg>`). Without those scripts it is a blank box.
+ */
+function isEmptySvgPlaceholder(src: string): boolean {
+  const match = EMPTY_SVG_DATA.exec(src);
+  if (match === null) {
+    return false;
+  }
+  const { base64, body = "" } = match.groups ?? {};
+  try {
+    const svg = base64 === undefined ? decodeURIComponent(body) : atob(body);
+    return EMPTY_SVG.test(svg);
+  } catch {
+    return false;
+  }
+}
+
 /** Images load lazily from absolute URLs; one without a source would load the base URL itself. */
 function fixImages(root: DocumentFragment, baseUrl: string): void {
   const images = Array.from(root.querySelectorAll("img"));
   for (const img of images) {
     const src = img.getAttribute("src");
-    if (src === null || src === "") {
+    if (src === null || src === "" || isEmptySvgPlaceholder(src)) {
       img.remove();
     } else {
       img.setAttribute("loading", "lazy");

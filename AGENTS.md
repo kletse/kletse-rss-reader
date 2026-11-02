@@ -23,6 +23,12 @@ and how to build it is in the [README](README.md).
   Qt's rich text knows only a little CSS: colours, font, `line-height` (its 100% is the font's natural spacing,
   not 1em), and table borders. There's no padding or radius on inline runs. Colours are baked into the HTML from
   the palette, which is why a theme change re-renders.
+- **Scrolling is hand-made** in `qml/Reader.qml`, to feel like the web view did. Flickable is not `interactive`,
+  and a `WheelHandler` applies WebKitGTK's rules: touchpad and TrackPoint deltas ×4 (GTK 3 takes a Wayland
+  pixel as 1/10 of a scroll unit, WebKit scrolls 40 px per unit), a kinetic glide after the fingers lift
+  (velocity × e^-4t), and wheel clicks of height^(2/3) px, animated. Qt's own Flickable wheel handling (1:1, no
+  momentum, 72 px per click) felt about 4× too slow under Omarchy's `touchpad:scroll_factor`. macOS takes deltas
+  1:1, since the system adds its own momentum.
 - **The shared core** (`miniflux.rs`, `readeck.rs`, `config.rs`, `error.rs`, `demo.rs`) came over from the Tauri
   version unchanged apart from dropping the IPC bits. Its tests use wiremock.
 

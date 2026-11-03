@@ -91,6 +91,11 @@ const TRANSPARENT: &[&str] = &[
     "output",
 ];
 
+/// How deep into nested elements the converter follows before it only keeps the text. html5ever closes nothing
+/// by itself, so a feed with thousands of unclosed tags would otherwise take the recursion, and the stack, as deep
+/// as it likes; the article is converted ahead on a thread with 2 MB of it. Browsers stop at 512.
+const MAX_DEPTH: usize = 256;
+
 pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
     convert_with(html, base_url, palette, false)
 }
@@ -133,7 +138,7 @@ fn collect_images(blocks: &[Block], found: &mut Vec<ImageRef>) {
 fn convert_with(html: &str, base_url: &str, palette: &Palette, plain: bool) -> Rendered {
     let doc = Html::parse_fragment(html);
     let base = Url::parse(base_url).ok();
-    let mut c = Converter { base, palette, plain, syntax_theme: None, stats: Stats::default(), link: None };
+    let mut c = Converter { base, palette, plain, syntax_theme: None, stats: Stats::default(), link: None, depth: 0 };
     let mut blocks = Vec::new();
     let mut para = Para::default();
     for child in doc.root_element().children() {
@@ -173,6 +178,8 @@ struct Converter<'a> {
     stats: Stats,
     /// The link we are inside of, so an image in a link stays clickable.
     link: Option<String>,
+    /// How many elements deep `walk_children` is.
+    depth: usize,
 }
 
 impl Converter<'_> {
@@ -188,9 +195,21 @@ impl Converter<'_> {
     }
 
     fn walk_children(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para) {
+        if self.depth >= MAX_DEPTH {
+            // Too deep to follow: the text underneath, as it comes, and nothing else.
+            *self.stats.dropped.entry(format!("nesting past {MAX_DEPTH}")).or_default() += 1;
+            for below in node.descendants().skip(1) {
+                if let Node::Text(text) = below.value() {
+                    para.text(text);
+                }
+            }
+            return;
+        }
+        self.depth += 1;
         for child in node.children() {
             self.walk(child, out, para);
         }
+        self.depth -= 1;
     }
 
     /// The children of `node` as blocks of their own (a quote, a list item).
@@ -390,7 +409,7 @@ impl Converter<'_> {
 
     fn code(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>) {
         let mut text = String::new();
-        collect_text(node, &mut text);
+        collect_text(node, &mut text, 0);
         let text = text.strip_prefix('\n').unwrap_or(&text).trim_end().to_string();
         if text.is_empty() {
             return;
@@ -528,14 +547,21 @@ impl Converter<'_> {
     }
 }
 
-/// The text of a `<pre>`, with `<br>` as a newline.
-fn collect_text(node: NodeRef<'_, Node>, out: &mut String) {
+/// The text of a `<pre>`, with `<br>` as a newline. Stops following elements at `MAX_DEPTH`, as `walk_children` does.
+fn collect_text(node: NodeRef<'_, Node>, out: &mut String, depth: usize) {
     for child in node.children() {
         match child.value() {
             Node::Text(t) => out.push_str(t),
             Node::Element(e) if e.name() == "br" => out.push('\n'),
             Node::Element(e) if REMOVED.contains(&e.name()) => {}
-            Node::Element(_) => collect_text(child, out),
+            Node::Element(_) if depth < MAX_DEPTH => collect_text(child, out, depth + 1),
+            Node::Element(_) => {
+                for below in child.descendants().skip(1) {
+                    if let Node::Text(t) = below.value() {
+                        out.push_str(t);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -584,6 +610,28 @@ mod tests {
             blocks("<p>One</p>\n  <p>Two <b>bold</b></p>tail"),
             vec![para("One"), para("Two <b>bold</b>"), para("tail")]
         );
+    }
+
+    /// Runs on the test's own 2 MB stack, the size of the thread the next article is converted on.
+    #[test]
+    fn nesting_without_end_keeps_the_text_and_doesnt_take_the_stack_with_it() {
+        let depth = 30_000;
+        // (Not li: html5ever makes those siblings.)
+        for tag in ["b", "blockquote", "span", "div"] {
+            let html = format!("{}deep inside{}", format!("<{tag}>").repeat(depth), format!("</{tag}>").repeat(depth));
+            let rendered = convert(&html, "https://example.com/", &Palette::default());
+            let mut blocks = &rendered.blocks[..];
+            while let [Block::Quote { blocks: inner }] = blocks {
+                blocks = inner;
+            }
+            assert!(matches!(blocks, [Block::Paragraph { html }] if html.contains("deep inside")), "{tag}: {blocks:?}");
+            assert!(rendered.stats.dropped.contains_key("nesting past 256"), "{tag}");
+        }
+        let pre = format!("<pre>{}code{}</pre>", "<span>".repeat(depth), "</span>".repeat(depth));
+        assert_eq!(blocks(&pre), vec![Block::Code { html: "code".into(), lang: None }]);
+        // Nothing of the sort happens to an ordinary article.
+        let quote = blocks("<blockquote><p>One</p><blockquote><p>Two</p></blockquote></blockquote>");
+        assert_eq!(quote, vec![Block::Quote { blocks: vec![para("One"), Block::Quote { blocks: vec![para("Two")] }] }]);
     }
 
     #[test]

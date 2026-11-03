@@ -99,6 +99,11 @@ const MAX_DEPTH: usize = 256;
 const MAX_LIST_START: i64 = 1_000_000_000;
 /// The most columns or rows a table cell can span; browsers stop there too.
 pub const MAX_SPAN: u32 = 1000;
+/// Where a link may point, an image may come from, and an embed may be from. Anything else (javascript:, file:,
+/// blob:…) is left out; the backend refuses to open anything but these as well.
+const LINK_SCHEMES: &[&str] = &["http", "https", "mailto"];
+const IMAGE_SCHEMES: &[&str] = &["http", "https", "data"];
+const EMBED_SCHEMES: &[&str] = &["http", "https"];
 
 pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
     convert_with(html, base_url, palette, false)
@@ -196,6 +201,16 @@ impl Converter<'_> {
     fn absolute(&self, url: &str) -> String {
         let url = url.trim();
         self.base.as_ref().and_then(|b| b.join(url).ok()).map_or_else(|| url.to_string(), String::from)
+    }
+
+    /// `url` made absolute, if it is one of the `schemes`. (The url crate lowercases the scheme and strips the
+    /// tabs and newlines browsers ignore, so "JavaScript:" and "java\nscript:" are javascript: here too.)
+    fn allowed(&self, url: &str, schemes: &[&str]) -> Option<String> {
+        if url.trim().is_empty() {
+            return None;
+        }
+        let url = self.absolute(url);
+        schemes.contains(&Url::parse(&url).ok()?.scheme()).then_some(url)
     }
 
     fn walk_children(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para) {
@@ -298,10 +313,8 @@ impl Converter<'_> {
                 self.walk_children(node, out, para);
                 self.flush(out, para);
             }
-            "a" => match el.attr("href").filter(|h| !h.trim().is_empty() && !h.trim_start().starts_with("javascript:"))
-            {
+            "a" => match el.attr("href").and_then(|h| self.allowed(h, LINK_SCHEMES)) {
                 Some(href) => {
-                    let href = self.absolute(href);
                     // Qt's rich text colours links from the palette unless the anchor says otherwise.
                     let accent = &self.palette.accent;
                     para.html.push_str(&format!("<a href=\"{}\" style=\"color:{accent}\">", highlight::escape(&href)));
@@ -359,9 +372,13 @@ impl Converter<'_> {
             para.text(&alt);
             return;
         }
+        let Some(src) = self.allowed(src, IMAGE_SCHEMES) else {
+            *self.stats.dropped.entry("image from somewhere other than the web".into()).or_default() += 1;
+            return;
+        };
         self.flush(out, para);
         self.stats.images += 1;
-        out.push(Block::Image { src: self.absolute(src), alt, href: self.link.clone(), caption: None });
+        out.push(Block::Image { src, alt, href: self.link.clone(), caption: None });
     }
 
     fn embed(&mut self, node: NodeRef<'_, Node>, el: &Element, out: &mut Vec<Block>, para: &mut Para) {
@@ -372,10 +389,9 @@ impl Converter<'_> {
             })
         };
         let src = el.attr("src").or_else(|| el.attr("data")).map(str::to_string).or_else(source);
-        let Some(src) = src.filter(|s| !s.trim().is_empty()) else { return };
+        let Some(href) = src.and_then(|s| self.allowed(&s, EMBED_SCHEMES)) else { return };
         self.flush(out, para);
         self.stats.embeds += 1;
-        let href = self.absolute(&src);
         let host = Url::parse(&href)
             .ok()
             .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()))
@@ -669,14 +685,13 @@ mod tests {
 
     #[test]
     fn an_embeds_label_is_text_wherever_it_ends_up() {
-        // No host to show: the label says what the address was, and the address may contain anything.
+        // An address that isn't one is no embed at all, so no markup in it can reach the label.
         let hostile = "http://[<b style=\"color:red\">boo";
-        let b = blocks(&format!("<iframe src='{hostile}'></iframe>"));
-        assert_eq!(b, vec![Block::Embed { href: hostile.into(), label: format!("▶ Embedded media · {hostile}") }]);
-        let b = blocks(&format!("<table><tr><td><iframe src='{hostile}'></iframe></td></tr></table>"));
+        assert_eq!(blocks(&format!("<iframe src='{hostile}'></iframe>")), vec![]);
+        let b = blocks("<table><tr><td><iframe src='https://www.youtube.com/embed/x'></iframe></td></tr></table>");
         let [Block::Table { html }] = &b[..] else { panic!("{b:?}") };
-        assert!(html.contains("· http://[&lt;b style=&quot;color:red&quot;&gt;boo</a>"), "{html}");
-        assert!(!html.contains("<b "), "{html}");
+        assert!(html.contains("<td><a href=\"https://www.youtube.com/embed/x\""), "{html}");
+        assert!(html.contains(">▶ Embedded media · youtube.com</a></td>"), "{html}");
     }
 
     #[test]
@@ -753,6 +768,30 @@ mod tests {
     #[test]
     fn javascript_links_lose_their_href() {
         assert_eq!(blocks("<p><a href='javascript:alert(1)'>x</a></p>"), vec![para("x")]);
+        assert_eq!(blocks("<p><a href='JavaScript:alert(1)'>x</a></p>"), vec![para("x")]);
+        assert_eq!(blocks("<p><a href='java\nscript:alert(1)'>x</a></p>"), vec![para("x")]);
+        assert_eq!(blocks("<p><a href='file:///etc/passwd'>x</a></p>"), vec![para("x")]);
+        assert_eq!(blocks("<p><a href=''>x</a></p>"), vec![para("x")]);
+        let mail = blocks("<p><a href='mailto:a@example.com'>x</a></p>");
+        assert!(
+            matches!(&mail[..], [Block::Paragraph { html }] if html.starts_with("<a href=\"mailto:a@example.com\""))
+        );
+    }
+
+    #[test]
+    fn images_and_embeds_come_from_the_web_or_not_at_all() {
+        let r = convert("<img src='file:///etc/passwd'><p>x</p>", "https://example.com/", &Palette::default());
+        assert_eq!(r.blocks, vec![para("x")]);
+        assert_eq!(r.stats.dropped.get("image from somewhere other than the web"), Some(&1));
+        assert!(matches!(&blocks("<img src='data:image/png;base64,AAAA'>")[..], [Block::Image { .. }]));
+        assert!(
+            matches!(&blocks("<img src='//cdn.example.com/a.png'>")[..], [Block::Image { src, .. }] if src == "https://cdn.example.com/a.png")
+        );
+        assert_eq!(blocks("<iframe src='file:///etc/passwd'></iframe><iframe src='javascript:1'></iframe>"), vec![]);
+        assert!(matches!(
+            &blocks("<iframe src='https://www.youtube.com/embed/x'></iframe>")[..],
+            [Block::Embed { .. }]
+        ));
     }
 
     #[test]
@@ -881,7 +920,8 @@ mod tests {
     fn survives_empty_and_broken_input() {
         assert_eq!(render(""), vec![]);
         assert_eq!(render("<p>unclosed <b>bold"), vec![para("unclosed <b>bold</b>")]);
+        // A relative link with nothing to make it absolute goes nowhere: its text stays.
         let b = convert("<a href=\"x\">rel</a>", "not a url", &Palette::default()).blocks;
-        assert_eq!(b, vec![para("<a href=\"x\" style=\"color:#7aa2f7\">rel</a>")]);
+        assert_eq!(b, vec![para("rel")]);
     }
 }

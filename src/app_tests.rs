@@ -352,6 +352,31 @@ fn loads_a_page_at_a_time_and_j_marking_items_read_doesnt_make_it_skip_any() {
 }
 
 #[test]
+fn a_page_still_loading_for_the_last_selection_doesnt_hold_up_the_new_one() {
+    let mut h = Harness::new(items(120));
+    h.open(false);
+    h.hold_next_page = true;
+    for _ in 0..PAGE - 10 {
+        h.key("j");
+    }
+    assert!(h.held.is_some(), "the second page is on its way");
+    h.key("p");
+    h.key("j"); // the category: the 80 items still unread
+    h.key("Enter");
+    assert_eq!(h.app.queue().len(), PAGE);
+    for _ in 0..PAGE {
+        h.key("j");
+    }
+    // Its second page was asked for and came, without waiting for the old one.
+    assert_eq!(h.app.screen(), Screen::Article);
+    assert_eq!(h.title(), Some("Item 91"));
+    assert_eq!(h.app.queue().len(), 80);
+    // The old one, when it does come, changes nothing.
+    h.answer();
+    assert_eq!(h.app.queue().iter().map(|e| e.id).collect::<Vec<_>>(), range(41, 120));
+}
+
+#[test]
 fn shows_everything_once_with_ties_in_publication_time_and_items_read_elsewhere_meanwhile() {
     // Items 30–110 were all published in the same second, which Miniflux returns in any order.
     let entries = items(130)

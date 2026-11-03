@@ -646,9 +646,17 @@ impl App {
         self.checking = false;
     }
 
+    /// Forgets the loads in flight: their answers change nothing now, and they no longer hold up new ones.
+    fn new_load(&mut self) -> u64 {
+        self.latest_load += 1;
+        self.loading_more = false;
+        self.checking = false;
+        self.latest_load
+    }
+
     /// Empties the queue and cancels a selection that is still loading (after the server changed).
     fn clear_queue(&mut self) {
-        self.latest_load += 1;
+        self.new_load();
         self.versions.clear();
         self.loading = false;
         self.opened = None;
@@ -656,7 +664,7 @@ impl App {
     }
 
     fn open_selection(&mut self, selection: Selection, label: String, mode: Mode, fx: &mut Vec<Effect>) {
-        self.latest_load += 1;
+        self.new_load();
         self.mode = mode;
         self.order = match mode {
             Mode::Unread if !self.prefs.newest_first => Order::OldestFirst,
@@ -720,12 +728,14 @@ impl App {
     }
 
     fn page_loaded(&mut self, load: u64, arrivals: bool, result: Result<EntryPage, String>) {
+        // An answer for an earlier selection: `new_load` already let go of it, and a page of this one may be on
+        // its way, so leave the flags alone.
+        if load != self.latest_load {
+            return;
+        }
         self.loading_more = false;
         if arrivals {
             self.checking = false;
-        }
-        if load != self.latest_load {
-            return;
         }
         match result {
             Ok(page) => self.append_page(page),
@@ -1021,7 +1031,7 @@ impl App {
         }
         // Nothing unread is left up to where the selection was opened. Drop a page still loading: it would bring
         // back items just marked read.
-        self.latest_load += 1;
+        self.new_load();
         self.has_more = false;
         self.total = i64::try_from(self.queue.len()).unwrap_or(i64::MAX);
     }
@@ -1204,7 +1214,7 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.search_query.clone_from(&query);
-        self.latest_load += 1;
+        self.new_load();
         self.opened = Some(Opened::Search(query.clone()));
         self.newest_at_open = 0;
         self.reset_queue(format!("“{query}”"));

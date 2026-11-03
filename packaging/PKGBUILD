@@ -7,7 +7,7 @@ pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
 arch=('x86_64')
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-imageformats' 'qt6-wayland')
-makedepends=('cargo')
+makedepends=('cargo' 'lld') # cxx-qt links with ld.gold without lld, which fails since the lib/bin split
 options=('!lto' '!debug') # cargo does the LTO; makepkg's would also reach the C++ of the Qt bridge
 
 _root() { realpath "$startdir/.."; }

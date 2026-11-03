@@ -98,6 +98,10 @@ so keep that in mind before sharing a screenshot.
   contain itself.
 - **Key text with Ctrl held is a control character.** `keyName()` falls back to the key code for letters, digits
   and `=`/`+`/`-`. On macOS, Qt reports ⌘ as `ControlModifier` and the Control key as `MetaModifier`.
+- **Linking needs lld.** When `ld` is GNU bfd, cxx-qt's build helper picks `lld` if it's installed and `ld.gold`
+  otherwise. Gold fails with `undefined reference to 'cxx_qt_init_crate_kletse_rss'` (and the other
+  `cxx_qt_init_*`) since `bridge.rs` moved into the library. Arch's `rust` package pulls in `lld`; with rustup,
+  install it (`sudo pacman -S lld`). The PKGBUILD lists it in `makedepends`.
 - **Test-only accessors** in `app.rs` are `#[cfg(test)]`. Clippy runs with `-D warnings`, so an unused one fails
   CI.
 

@@ -96,7 +96,7 @@ Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: 
 sudo pacman -U kletse-rss-*-x86_64.pkg.tar.zst
 ```
 
-**From source**, on Arch / Omarchy with `rust` (or `rustup`) and Qt 6 (`qt6-base qt6-declarative qt6-svg qt6-imageformats`):
+**From source**, on Arch / Omarchy with `rust` (or `rustup` and `lld`) and Qt 6 (`qt6-base qt6-declarative qt6-svg qt6-imageformats`):
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git

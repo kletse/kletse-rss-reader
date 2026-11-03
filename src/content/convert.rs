@@ -99,6 +99,9 @@ const MAX_DEPTH: usize = 256;
 const MAX_LIST_START: i64 = 1_000_000_000;
 /// The most columns or rows a table cell can span; browsers stop there too.
 pub const MAX_SPAN: u32 = 1000;
+/// Code longer than this is shown plain: syntect takes tens of microseconds a line, and the article on screen
+/// is converted on the window's thread, so a dump of eighty thousand lines would hold it for seconds.
+const HIGHLIGHT_LIMIT: usize = 100 * 1024;
 /// Where a link may point, an image may come from, and an embed may be from. Anything else (javascript:, file:,
 /// blob:…) is left out; the backend refuses to open anything but these as well.
 const LINK_SCHEMES: &[&str] = &["http", "https", "mailto"];
@@ -464,11 +467,17 @@ impl Converter<'_> {
             return;
         }
         let hint_refs: Vec<&str> = hints.iter().map(String::as_str).collect();
-        let syntax = highlight::find_syntax(&hint_refs, &text);
         let lang_hint = hint_refs
             .iter()
             .find_map(|h| h.strip_prefix("language-").or_else(|| h.strip_prefix("lang-")))
             .map(str::to_string);
+        if text.len() > HIGHLIGHT_LIMIT {
+            self.stats.code_plain += 1;
+            *self.stats.dropped.entry("highlighting of a code block too long for it".into()).or_default() += 1;
+            out.push(Block::Code { html: highlight::escape(&text), lang: lang_hint });
+            return;
+        }
+        let syntax = highlight::find_syntax(&hint_refs, &text);
         if syntax.is_some() {
             self.stats.code_highlighted += 1;
         } else {
@@ -722,6 +731,22 @@ mod tests {
         assert!(html.contains("<td>second</td>"), "{html}");
         assert_eq!(r.stats.tables, 1);
         assert!(r.stats.dropped.is_empty(), "{:?}", r.stats.dropped);
+    }
+
+    #[test]
+    fn a_code_block_too_long_to_highlight_is_shown_plain() {
+        let line = "let x = \"<a&b>\"; // comment\n";
+        let long = line.repeat(HIGHLIGHT_LIMIT / line.len() + 1);
+        let html = format!("<pre><code class='language-rust'>{}</code></pre>", highlight::escape(&long));
+        let r = convert(&html, "https://example.com/", &Palette::default());
+        assert_eq!(r.blocks, vec![Block::Code { html: highlight::escape(long.trim_end()), lang: Some("rust".into()) }]);
+        assert_eq!((r.stats.code_plain, r.stats.code_highlighted), (1, 0));
+        // A block within the limit is highlighted as before.
+        let html = format!("<pre><code class='language-rust'>{}</code></pre>", highlight::escape(&line.repeat(10)));
+        let r = convert(&html, "https://example.com/", &Palette::default());
+        assert!(
+            matches!(&r.blocks[..], [Block::Code { html, lang: Some(l) }] if l == "Rust" && html.contains("<span"))
+        );
     }
 
     #[test]

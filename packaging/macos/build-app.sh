@@ -37,7 +37,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 
 if command -v macdeployqt >/dev/null; then
-  macdeployqt "$app" -qmldir=qml -always-overwrite
+  # Homebrew splits Qt into separate kegs (qtbase, qtdeclarative, qtsvg, …), so macdeployqt doesn't find QtSvg,
+  # QtPdf and the like on its own. A plugin needing one then loads Homebrew's copy through the binary's
+  # /opt/homebrew/lib rpath, and with it a second QtCore. Point it at Homebrew's lib, where they're all linked.
+  libpath=()
+  command -v brew >/dev/null && libpath=("-libpath=$(brew --prefix)/lib")
+  macdeployqt "$app" -qmldir=qml -always-overwrite ${libpath[@]+"${libpath[@]}"}
 else
   echo "macdeployqt not found: the app uses the Qt it was built against (fine on this Mac)." >&2
 fi

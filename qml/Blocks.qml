@@ -115,10 +115,11 @@ Column {
                     radius: root.ui.radius
                 }
 
+                // The image viewer; from there, o opens the link it's in.
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.open(fig.b.href || fig.b.src)
+                    onClicked: root.ui.model.viewImage(fig.b.src)
                 }
             }
 

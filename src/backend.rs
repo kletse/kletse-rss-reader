@@ -6,6 +6,7 @@ use crate::config;
 use crate::demo;
 use crate::error::Error;
 use crate::miniflux::{self, EntryPage, EntryStatus, Selection};
+use crate::paging::PageRequest;
 use crate::readeck;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -105,11 +106,30 @@ impl Backend {
         Ok(self.status())
     }
 
-    async fn entries(&self, sel: Selection, status: EntryStatus, past: i64, limit: usize) -> Result<EntryPage, Error> {
+    async fn entries(&self, sel: Selection, status: EntryStatus, request: PageRequest) -> Result<EntryPage, Error> {
+        let PageRequest { past, limit, order } = request;
         if self.demo {
-            return Ok(demo::entries(sel, status, past, limit));
+            return Ok(demo::entries(sel, status, order, past, limit));
         }
-        self.miniflux()?.entries(sel, status, past, limit).await
+        self.miniflux()?.entries(sel, status, order, past, limit).await
+    }
+
+    async fn search(&self, query: &str, offset: usize, limit: usize) -> Result<EntryPage, Error> {
+        if self.demo {
+            return Ok(demo::search(query, offset, limit));
+        }
+        self.miniflux()?.search(query, offset, limit).await
+    }
+
+    /// The selection's newest unread id, and how many are unread up to it.
+    async fn count_row(&self, sel: Selection) -> Result<(i64, i64), Error> {
+        let newest = self.newest_unread_id(sel).await?;
+        let count = if self.demo {
+            demo::unread_count(sel, newest)
+        } else {
+            self.miniflux()?.unread_count(sel, newest).await?
+        };
+        Ok((newest, count))
     }
 
     async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
@@ -125,7 +145,7 @@ impl Backend {
         Some(match effect {
             Effect::OpenSelection { load, selection, mode, request } => {
                 let status = mode.status();
-                let page = self.entries(selection, status, request.past, request.limit);
+                let page = self.entries(selection, status, request);
                 let result = if status == EntryStatus::Unread {
                     tokio::try_join!(page, self.newest_unread_id(selection))
                 } else {
@@ -134,8 +154,16 @@ impl Backend {
                 Outcome::Opened { load, result: result.map_err(msg) }
             }
             Effect::LoadPage { load, selection, mode, request, arrivals } => {
-                let result = self.entries(selection, mode.status(), request.past, request.limit).await;
+                let result = self.entries(selection, mode.status(), request).await;
                 Outcome::Page { load, arrivals, result: result.map_err(msg) }
+            }
+            Effect::Search { load, query, offset, limit, first } => {
+                let result = self.search(&query, offset, limit).await.map_err(msg);
+                if first {
+                    Outcome::Opened { load, result: result.map(|page| (page, 0)) }
+                } else {
+                    Outcome::Page { load, arrivals: false, result }
+                }
             }
             Effect::SetStatus { ids, status, revert, announce } => {
                 let result = if self.demo { Ok(()) } else { self.set_status(&ids, status).await };
@@ -218,6 +246,21 @@ impl Backend {
                     }
                 };
                 Outcome::MarkedAllRead { load, result: result.map_err(msg) }
+            }
+            Effect::CountRow { selection, label } => {
+                Outcome::RowCounted { selection, label, result: self.count_row(selection).await.map_err(msg) }
+            }
+            Effect::MarkRowRead { selection, label, up_to } => {
+                let result = if self.demo {
+                    demo::mark_read_up_to(selection, up_to);
+                    Ok(())
+                } else {
+                    match self.miniflux() {
+                        Ok(client) => client.mark_read_up_to(selection, up_to).await.map(|_| ()),
+                        Err(e) => Err(e),
+                    }
+                };
+                Outcome::RowMarkedRead { selection, label, up_to, result: result.map_err(msg) }
             }
             Effect::LoadSettings => Outcome::SettingsLoaded {
                 values: self.settings(),

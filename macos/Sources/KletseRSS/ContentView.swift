@@ -1,5 +1,6 @@
 // The window: the toolbar, the reader (an article, a message or the settings form), and what goes over it:
-// the feeds picker and the keys (sheets), the confirm dialog (an alert) and toasts.
+// the feeds picker, the keys and the search box (sheets), the confirm dialog (an alert), the image viewer and
+// toasts.
 import SwiftUI
 
 struct ContentView: View {
@@ -15,6 +16,11 @@ struct ContentView: View {
                 ReaderView(model: model)
             }
         }
+        .overlay {
+            if state?.overlay == "image", let viewer = state?.viewer {
+                LightboxView(model: model, viewer: viewer)
+            }
+        }
         .overlay(alignment: .bottom) { ToastView(model: model) }
         // The title is the article, for Mission Control and the Window menu; the toolbar leaves it out, as the
         // article's own heading is right below. Where you are sits in the middle, as in the Qt top bar.
@@ -26,6 +32,7 @@ struct ContentView: View {
             switch sheet {
             case .picker: PickerView(model: model)
             case .help: HelpView(model: model)
+            case .search: SearchView(model: model)
             }
         }
         .alert(
@@ -50,16 +57,19 @@ struct ContentView: View {
         ToolbarItem(placement: .navigation) {
             let label = state?.selectionLabel ?? ""
             Button { model.press("picker") } label: {
-                // Reading read items: the button says so with its icon, the middle of the bar with a word.
+                // Reading read items or search results: the button says so with its icon, the middle of the bar
+                // with a word.
                 Label(label.isEmpty ? "Feeds" : label,
-                      systemImage: state?.history == true ? "clock.arrow.circlepath" : "list.bullet")
+                      systemImage: state?.history == true ? "clock.arrow.circlepath"
+                          : state?.searching == true ? "magnifyingglass" : "list.bullet")
                     .labelStyle(.titleAndIcon)
             }
             .help("Feeds (p)")
         }
         if let position = state?.position, !position.isEmpty {
             ToolbarItem(placement: .principal) {
-                Text(state?.history == true ? "History · \(position)" : position)
+                Text(state?.history == true ? "History · \(position)"
+                    : state?.searching == true ? "Search · \(position)" : position)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -79,7 +89,7 @@ struct ContentView: View {
     }
 
     private enum Sheet: String, Identifiable {
-        case picker, help
+        case picker, help, search
         var id: String { rawValue }
     }
 
@@ -93,6 +103,7 @@ struct ContentView: View {
                 switch model.state?.overlay {
                 case "picker": model.pickerBackdrop()
                 case "help": model.closeHelp()
+                case "search": model.cancelSearch()
                 default: break
                 }
             }

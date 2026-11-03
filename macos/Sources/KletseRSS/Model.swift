@@ -61,13 +61,17 @@ final class Model {
         ])?.used ?? false
     }
 
-    /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help".
+    /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help", "search", "order".
     func press(_ button: String) { send(["cmd": "press", "button": button]) }
     func chooseRow(_ row: Int) { send(["cmd": "choose_row", "row": row]) }
     func pickerBackdrop() { send(["cmd": "picker_backdrop"]) }
     func closeHelp() { send(["cmd": "close_help"]) }
     func openLink(_ url: String) { send(["cmd": "open_link", "url": url]) }
     func cancelSettings() { send(["cmd": "cancel_settings"]) }
+    func search(_ query: String) { send(["cmd": "search", "query": query]) }
+    func cancelSearch() { send(["cmd": "cancel_search"]) }
+    func viewImage(_ src: String) { send(["cmd": "view_image", "src": src]) }
+    func closeViewer() { send(["cmd": "close_viewer"]) }
     func dismissToast(_ serial: Int) { send(["cmd": "dismiss_toast", "serial": serial]) }
 
     func submitSettings(minifluxUrl: String, minifluxApiKey: String, readeckUrl: String, readeckToken: String) {
@@ -84,6 +88,7 @@ final class Model {
         if let blocks = reply.state.article?.blocks {
             self.blocks = blocks
         }
+        RemoteImage.prefetch(reply.state.prefetchImages)
         for event in reply.events {
             switch event {
             case "scroll_up", "scroll_down":

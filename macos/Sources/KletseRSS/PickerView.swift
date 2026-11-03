@@ -12,6 +12,12 @@ struct PickerView: View {
             HStack(spacing: 8) {
                 Text(history ? "History" : "Feeds").font(.headline)
                 Spacer()
+                Button { model.press("search") } label: { Image(systemName: "magnifyingglass") }
+                    .help("Search all feeds (/)")
+                if !history {
+                    Button(picker?.newestFirst == true ? "Newest First" : "Oldest First") { model.press("order") }
+                        .help("Order of unread items (s)")
+                }
                 Button { model.press("help") } label: { Image(systemName: "keyboard") }
                     .help("Keys (?)")
                 Button(history ? "Unread" : "History") { model.press("mode") }
@@ -78,6 +84,38 @@ struct PickerView: View {
             return picker?.history == true ? "Nothing read yet. Press h for unread items."
                 : "Nothing unread. Press r to refresh, or h for history."
         default: return "Loading…"
+        }
+    }
+}
+
+/// The search box (`/`): Enter searches every feed, read and unread; Esc goes back (the core takes it).
+struct SearchView: View {
+    let model: Model
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Search").font(.headline)
+            TextField("Words to look for, in every feed", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit { model.search(query) }
+            HStack {
+                Text("Read and unread items, best match first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { model.cancelSearch() }
+                Button("Search") { model.search(query) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .onAppear {
+            query = model.state?.searchQuery ?? ""
+            focused = true
         }
     }
 }

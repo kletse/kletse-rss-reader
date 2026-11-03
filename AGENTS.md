@@ -18,6 +18,10 @@ and how to build it is in the [README](README.md).
   notify on a real change, so syncing everything each time is fine. The article is re-rendered only when its id,
   text or the theme changes (`Rendered`), and `articleSerial` only changes for a new article or new text, which
   is what resets the scroll position.
+- **The next article is got ready ahead** (`prefetch` in bridge.rs and ffi.rs): converted on the runtime, and
+  its image URLs handed to the window. In Qt a hidden `Repeater` of `Image`s in `Main.qml` loads them; they only
+  share Qt's image cache with the article's `Image`s if the cache key matches, which includes the `fillMode`.
+  Keep `source`, `fillMode` and `sourceSize` the same in `Main.qml`, `Blocks.qml` and `Lightbox.qml`.
 - **QML (`qml/`) draws and forwards.** Keys go to `model.key(name, …)` named as the web's `KeyboardEvent.key`
   names them ("j", "A", "ArrowDown", " ", "Escape"); `Main.qml` `keyName()` translates. Keymaps and the help text
   live in `src/keys.rs`, and a test keeps them in step with each other and with the README's key table.
@@ -38,7 +42,7 @@ and how to build it is in the [README](README.md).
 ## Commands
 
 ```bash
-cargo test                                   # ~140 tests, no window
+cargo test                                   # ~170 tests, no window
 cargo clippy --all-targets -- -D warnings    # CI is this strict
 cargo fmt
 KLETSE_RSS_DEMO=1 cargo run                  # sample data, no server, nothing marked read
@@ -72,18 +76,24 @@ KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter n n" \
 Once the feeds load, it presses the keys one per 400 ms (default `Enter`, which opens the first row; write a
 space as `Space`). It then waits 3 s for images, saves the window to the PNG and quits. Useful key sequences:
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
-(history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread). Read the PNG to look at it. The
-offscreen platform renders like the real one, including the app's fonts.
+(history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
+`"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read).
+Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
-so keep that in mind before sharing a screenshot.
+so keep that in mind before sharing a screenshot. Likewise, keys that change prefs (`s`, `Ctrl +`, `[`) save to
+your real `prefs.toml`; put it back after a snapshot that pressed one.
 
 `KLETSE_RSS_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
 
 ## Traps found so far
 
 - **Names in this QML module shadow Qt's.** `qml/Settings.qml` hid QtCore's `Settings` until `Main.qml` imported
-  QtCore `as Core`. Before naming a new QML file, check that Qt Quick, Controls and QtCore have no type by that name.
+  QtCore `as Core`. Before naming a new QML file, check that Qt Quick, Controls and QtCore have no type by that name
+  (newer Controls have a `SearchField`, hence `SearchPanel.qml`).
+- **A text field in an overlay must be created when it opens.** `Main.qml` gives the keyboard back to its
+  `FocusScope` whenever the overlay changes; the search box is loaded by a `Loader` only while it's open and
+  takes the focus itself on creation, so a hidden field never keeps it.
 - **Don't redeclare properties Qt types already have.** `property string icon` on a `Button` fails, because
   `AbstractButton.icon` is FINAL. The same goes for `width` on `TextMetrics` and the like.
 - **Size loops end up as size zero.** A control whose content width depends on its own width, such as a label

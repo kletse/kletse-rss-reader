@@ -30,9 +30,9 @@ struct BlocksView: View {
             RichText(runs: runs, look: TextLook(size: size * scale[min(level, 6)], design: .default, weight: .bold,
                                                 lineSpacing: 0.15))
                 .padding(.top, size * 0.7)
-        case .image(let src, let alt, let href, let caption):
+        case .image(let src, let alt, _, let caption):
             VStack(spacing: 8) {
-                RemoteImage(src: src, alt: alt, href: href)
+                RemoteImage(src: src, alt: alt)
                 if let caption {
                     RichText(runs: caption, look: TextLook(size: size * 0.8, design: .serif), secondary: true)
                         .multilineTextAlignment(.center)

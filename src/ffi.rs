@@ -4,7 +4,8 @@
 //! `pump` from the main thread, which applies the answer there. So the app only ever changes on the main thread.
 //!
 //! The article body goes out only when it was converted again (a new article, new text, a new palette), with
-//! `serial` changing only for a new article or new text, which is what scrolls back to the top.
+//! `serial` changing only for a new article or new text, which is what scrolls back to the top. The next article
+//! is converted ahead on the runtime, and its images listed for Swift to load, so it's ready when you get there.
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
@@ -64,14 +65,33 @@ struct Rendered {
     palette: u64,
 }
 
+/// The next article, converted in the background while this one is read.
+struct Prefetched {
+    key: Rendered,
+    blocks: Vec<native::NativeBlock>,
+    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    lost: String,
+    images: Vec<String>,
+}
+
+/// What comes back from the runtime for `pump` to take in.
+enum Answer {
+    Outcome(Outcome),
+    Prefetched(Prefetched),
+}
+
 pub struct Core {
     app: App,
     backend: Arc<Backend>,
     palette: Palette,
-    answers: mpsc::Sender<Outcome>,
-    waiting: mpsc::Receiver<Outcome>,
+    answers: mpsc::Sender<Answer>,
+    waiting: mpsc::Receiver<Answer>,
     waker: Arc<Waker>,
     rendered: Option<Rendered>,
+    prefetched: Option<Prefetched>,
+    /// The article being converted ahead, so it isn't started twice.
+    prefetching: Option<Rendered>,
+    prefetch_images: Vec<String>,
     article_serial: u64,
     /// Whether the settings form on screen was filled in from the loaded values yet.
     settings_shown: bool,
@@ -132,6 +152,17 @@ enum Command {
         readeck_token: String,
     },
     CancelSettings,
+    /// The search box's Enter.
+    Search {
+        query: String,
+    },
+    CancelSearch,
+    /// A click on an image in the article.
+    ViewImage {
+        src: String,
+    },
+    /// A click in the image viewer.
+    CloseViewer,
     DismissToast {
         serial: u64,
     },
@@ -156,10 +187,17 @@ struct State {
     window_title: String,
     selection_label: String,
     history: bool,
+    /// Reading search results.
+    searching: bool,
     position: String,
     readeck: bool,
     article: Option<Article>,
     picker: Picker,
+    /// The search box starts from the last search.
+    search_query: String,
+    viewer: Option<ViewerState>,
+    /// The next article's images, to load while this one is read.
+    prefetch_images: Vec<String>,
     help: Vec<(String, String)>,
     confirm_text: String,
     toast: Option<ToastState>,
@@ -191,6 +229,18 @@ struct Picker {
     rows: Vec<PickerRow>,
     cursor: usize,
     history: bool,
+    /// Unread items come newest first.
+    newest_first: bool,
+}
+
+#[derive(Serialize)]
+struct ViewerState {
+    src: String,
+    alt: String,
+    /// The link the image is in, if any.
+    href: Option<String>,
+    index: usize,
+    count: usize,
 }
 
 #[derive(Serialize)]
@@ -244,6 +294,9 @@ impl Core {
             waiting,
             waker: Arc::new(waker),
             rendered: None,
+            prefetched: None,
+            prefetching: None,
+            prefetch_images: Vec::new(),
             article_serial: 0,
             settings_shown: false,
             settings_serial: 0,
@@ -290,6 +343,19 @@ impl Core {
                 self.app.submit_settings(SettingsValues { miniflux_url, miniflux_api_key, readeck_url, readeck_token })
             }
             Command::CancelSettings => self.app.cancel_settings(),
+            Command::Search { query } => self.app.search(&query),
+            Command::CancelSearch => {
+                self.app.cancel_search();
+                Vec::new()
+            }
+            Command::ViewImage { src } => {
+                self.app.view_image(&src);
+                Vec::new()
+            }
+            Command::CloseViewer => {
+                self.app.close_viewer();
+                Vec::new()
+            }
             Command::DismissToast { serial } => {
                 self.app.dismiss_toast(serial);
                 Vec::new()
@@ -297,10 +363,15 @@ impl Core {
             Command::Pump => {
                 self.waker.pending.store(false, Ordering::Release);
                 let mut fx = Vec::new();
-                while let Ok(outcome) = self.waiting.try_recv() {
-                    fx.extend(self.app.apply(outcome));
-                    // What an answer asks for runs before the next answer is applied, as it would in Qt.
-                    self.run(std::mem::take(&mut fx), &mut events);
+                while let Ok(answer) = self.waiting.try_recv() {
+                    match answer {
+                        Answer::Outcome(outcome) => {
+                            fx.extend(self.app.apply(outcome));
+                            // What an answer asks for runs before the next answer is applied, as it would in Qt.
+                            self.run(std::mem::take(&mut fx), &mut events);
+                        }
+                        Answer::Prefetched(prefetched) => self.prefetched(prefetched),
+                    }
                 }
                 fx
             }
@@ -322,7 +393,7 @@ impl Core {
                     let waker = Arc::clone(&self.waker);
                     RUNTIME.spawn(async move {
                         if let Some(outcome) = backend.run(effect).await
-                            && answers.send(outcome).is_ok()
+                            && answers.send(Answer::Outcome(outcome)).is_ok()
                         {
                             waker.wake();
                         }
@@ -332,8 +403,45 @@ impl Core {
         }
     }
 
+    /// Converts the next article on the runtime; `pump` takes it in.
+    fn prefetch(&mut self) {
+        let Some(next) = self.app.upcoming().cloned() else { return };
+        let key = Rendered { id: next.id, content: hash(&next.content), palette: hash(&format!("{:?}", self.palette)) };
+        if self.prefetched.as_ref().is_some_and(|p| p.key == key) || self.prefetching == Some(key) {
+            return;
+        }
+        self.prefetching = Some(key);
+        let palette = self.palette.clone();
+        let (answers, waker) = (self.answers.clone(), Arc::clone(&self.waker));
+        RUNTIME.spawn_blocking(move || {
+            let rendered = convert::convert(&next.content, &next.url, &palette);
+            let prefetched = Prefetched {
+                key,
+                blocks: native::native(&rendered.blocks),
+                lost: rendered.stats.summary(),
+                images: convert::image_refs(&rendered.blocks).into_iter().map(|i| i.src).collect(),
+            };
+            if answers.send(Answer::Prefetched(prefetched)).is_ok() {
+                waker.wake();
+            }
+        });
+    }
+
+    /// Keeps the converted article, unless you've moved on and another one is being converted meanwhile.
+    fn prefetched(&mut self, prefetched: Prefetched) {
+        if self.prefetching != Some(prefetched.key) {
+            return;
+        }
+        self.prefetching = None;
+        self.prefetch_images.clone_from(&prefetched.images);
+        self.prefetched = Some(prefetched);
+    }
+
     fn state(&mut self) -> State {
         let article = self.article();
+        if article.is_some() {
+            self.prefetch();
+        }
         let settings = self.settings();
         let app = &self.app;
         let (picker_state, picker_error) = match app.picker_list() {
@@ -354,6 +462,7 @@ impl Core {
             window_title: app.window_title(),
             selection_label: app.selection_label().to_string(),
             history: app.history_badge(),
+            searching: app.searching(),
             position: app.position(),
             readeck: app.readeck(),
             article,
@@ -363,7 +472,20 @@ impl Core {
                 rows,
                 cursor: app.picker_cursor(),
                 history: app.picker_mode() == Mode::History,
+                newest_first: app.newest_first(),
             },
+            search_query: app.search_query().to_string(),
+            viewer: app.viewer().map(|v| {
+                let image = &v.images[v.index];
+                ViewerState {
+                    src: image.src.clone(),
+                    alt: image.alt.clone(),
+                    href: image.href.clone(),
+                    index: v.index,
+                    count: v.images.len(),
+                }
+            }),
+            prefetch_images: self.prefetch_images.clone(),
             help: app.help_lines(),
             confirm_text: app.confirm_text().to_string(),
             toast: app.toast().map(|t| ToastState {
@@ -383,19 +505,22 @@ impl Core {
             Rendered { id: entry.id, content: hash(&entry.content), palette: hash(&format!("{:?}", self.palette)) };
         let previous = self.rendered;
         let blocks = (previous != Some(key)).then(|| {
-            let rendered = convert::convert(&entry.content, &entry.url, &self.palette);
-            if *DEBUG {
-                let lost = rendered.stats.summary();
-                if !lost.is_empty() {
-                    eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+            let (blocks, lost) = match self.prefetched.take_if(|p| p.key == key) {
+                Some(p) => (p.blocks, p.lost),
+                None => {
+                    let rendered = convert::convert(&entry.content, &entry.url, &self.palette);
+                    (native::native(&rendered.blocks), rendered.stats.summary())
                 }
+            };
+            if *DEBUG && !lost.is_empty() {
+                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
             }
             self.rendered = Some(key);
             if previous.is_none_or(|p| p.id != key.id || p.content != key.content) {
                 // A new article, or new text for it (`f`): it starts from the top.
                 self.article_serial += 1;
             }
-            native::native(&rendered.blocks)
+            blocks
         });
         Some(Article {
             serial: self.article_serial,
@@ -535,6 +660,40 @@ mod tests {
         let space = send(core, r#"{"cmd":"key","key":" "}"#);
         assert_eq!(space["events"][0], "scroll_down");
         assert_eq!(send(core, r#"{"cmd":"key","key":"x"}"#)["used"], false);
+
+        // The first demo article has an image: the viewer, and Esc closes it.
+        let viewer = send(core, r#"{"cmd":"key","key":"v"}"#)["state"].clone();
+        assert_eq!((viewer["overlay"].as_str(), viewer["viewer"]["count"].as_u64()), (Some("image"), Some(1)));
+        assert!(send(core, r#"{"cmd":"key","key":"Escape"}"#)["state"]["viewer"].is_null());
+
+        // The next article was converted ahead: moving on sends its blocks without converting it again.
+        // SAFETY: a look at the core between commands, on the thread that sends them.
+        let prefetched = |id: i64| unsafe { (*core).prefetched.as_ref().is_some_and(|p| p.key.id == id) };
+        for _ in 0..200 {
+            if prefetched(2) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            send(core, r#"{"cmd":"pump"}"#);
+        }
+        assert!(prefetched(2));
+        let next = send(core, r#"{"cmd":"key","key":"n"}"#)["state"].clone();
+        assert_eq!((next["article"]["id"].as_i64(), next["article"]["serial"].as_u64()), (Some(2), Some(2)));
+        assert!(next["article"]["blocks"].is_array());
+        assert!(!prefetched(2), "used up");
+
+        // Search: the box, then the results, with the Search badge.
+        assert_eq!(send(core, r#"{"cmd":"key","key":"/"}"#)["state"]["overlay"], "search");
+        send(core, r#"{"cmd":"search","query":"watch"}"#);
+        for _ in 0..200 {
+            state = send(core, r#"{"cmd":"pump"}"#)["state"].clone();
+            if state["screen"] == "article" && state["searching"] == true {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!((state["searching"].as_bool(), state["search_query"].as_str()), (Some(true), Some("watch")));
+        assert_eq!(state["picker"]["newest_first"], false);
         // SAFETY: the core is not used after this.
         drop(unsafe { Box::from_raw(core) });
     }

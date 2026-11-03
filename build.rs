@@ -20,6 +20,8 @@ const QML: &[&str] = &[
     "qml/Field.qml",
     "qml/Panel.qml",
     "qml/Button.qml",
+    "qml/SearchPanel.qml",
+    "qml/Lightbox.qml",
 ];
 
 #[cfg(feature = "qt")]

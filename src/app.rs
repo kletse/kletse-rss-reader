@@ -6,14 +6,16 @@
 //! arrives. Loads remember which selection they were for, so an answer that comes back after you moved on to
 //! another selection changes nothing.
 //!
-//! Unread mode: unread items, oldest first; going back shows items read this session.
+//! Unread mode: unread items, oldest first (or newest first, `s`); going back shows items read this session.
 //! History mode: read items, newest first.
-//! Both load a page at a time as you get near the end. At the end of the unread list, it looks once more for
-//! items that arrived meanwhile.
+//! Search: read and unread items matching some words, best match first.
+//! All of them load a page at a time as you get near the end. At the end of the unread list, it looks once more
+//! for items that arrived meanwhile.
 
+use crate::content::convert::{self, ImageRef};
 use crate::keys::{self, Action};
 use crate::miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
-use crate::paging::{self, Mode, PageRequest};
+use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::Prefs;
 use std::collections::HashMap;
@@ -33,6 +35,10 @@ pub enum Overlay {
     Confirm,
     Settings,
     Onboarding,
+    /// The search box.
+    Search,
+    /// An article's images, one at a time, over the whole window.
+    Image,
 }
 
 impl Overlay {
@@ -45,6 +51,8 @@ impl Overlay {
             Overlay::Confirm => "confirm",
             Overlay::Settings => "settings",
             Overlay::Onboarding => "onboarding",
+            Overlay::Search => "search",
+            Overlay::Image => "image",
         }
     }
 }
@@ -113,6 +121,21 @@ pub struct Revert {
     pub before: EntryStatus,
 }
 
+/// What the open queue holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Opened {
+    Feeds(Selection),
+    /// Search results for these words.
+    Search(String),
+}
+
+/// The image viewer: the article's images, and the one on screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Viewer {
+    pub images: Vec<ImageRef>,
+    pub index: usize,
+}
+
 /// What follows opening a link in the browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterOpen {
@@ -139,6 +162,14 @@ pub enum Effect {
         mode: Mode,
         request: PageRequest,
         arrivals: bool,
+    },
+    /// A page of search results, `offset` into them; the first is answered as `Opened`, the rest as `Page`.
+    Search {
+        load: u64,
+        query: String,
+        offset: usize,
+        limit: usize,
+        first: bool,
     },
     SetStatus {
         ids: Vec<i64>,
@@ -174,6 +205,17 @@ pub enum Effect {
         up_to: i64,
         later: Vec<i64>,
     },
+    /// Shift+A in the picker: the row's newest unread id, and how many are unread up to it.
+    CountRow {
+        selection: Selection,
+        label: String,
+    },
+    /// Marks the row's unread items read, up to the newest one there was when it was counted.
+    MarkRowRead {
+        selection: Selection,
+        label: String,
+        up_to: i64,
+    },
     LoadSettings,
     SaveSettings(SettingsValuesBox),
     SavePrefs(Prefs),
@@ -195,18 +237,61 @@ impl std::fmt::Debug for SettingsValuesBox {
 
 /// The answer to an `Effect`. Errors are already the message to show.
 pub enum Outcome {
-    Opened { load: u64, result: Result<(EntryPage, i64), String> },
-    Page { load: u64, arrivals: bool, result: Result<EntryPage, String> },
-    StatusSet { status: EntryStatus, revert: Option<Revert>, announce: bool, result: Result<(), String> },
-    ContentFetched { index: usize, id: i64, result: Result<String, String> },
+    Opened {
+        load: u64,
+        result: Result<(EntryPage, i64), String>,
+    },
+    Page {
+        load: u64,
+        arrivals: bool,
+        result: Result<EntryPage, String>,
+    },
+    StatusSet {
+        status: EntryStatus,
+        revert: Option<Revert>,
+        announce: bool,
+        result: Result<(), String>,
+    },
+    ContentFetched {
+        index: usize,
+        id: i64,
+        result: Result<String, String>,
+    },
     FeedCounts(Result<Vec<FeedCount>, String>),
     Refreshed(Result<(), String>),
     PickerReloadDue,
     SavedToReadeck(Result<(), String>),
-    OpenedInBrowser { then: AfterOpen, result: Result<(), String> },
-    UnreadCounted { load: u64, selection: Selection, up_to: i64, later: Vec<i64>, result: Result<i64, String> },
-    MarkedAllRead { load: u64, result: Result<(), String> },
-    SettingsLoaded { values: SettingsValues, problem: Option<String> },
+    OpenedInBrowser {
+        then: AfterOpen,
+        result: Result<(), String>,
+    },
+    UnreadCounted {
+        load: u64,
+        selection: Selection,
+        up_to: i64,
+        later: Vec<i64>,
+        result: Result<i64, String>,
+    },
+    MarkedAllRead {
+        load: u64,
+        result: Result<(), String>,
+    },
+    /// The newest unread id, and the unread count up to it.
+    RowCounted {
+        selection: Selection,
+        label: String,
+        result: Result<(i64, i64), String>,
+    },
+    RowMarkedRead {
+        selection: Selection,
+        label: String,
+        up_to: i64,
+        result: Result<(), String>,
+    },
+    SettingsLoaded {
+        values: SettingsValues,
+        problem: Option<String>,
+    },
     SettingsSaved(Result<Status, String>),
 }
 
@@ -236,6 +321,7 @@ pub struct KeyPress {
 #[derive(Debug, Clone)]
 enum Pending {
     MarkAll { load: u64, selection: Selection, up_to: i64, later: Vec<i64> },
+    MarkRow { selection: Selection, label: String, up_to: i64 },
 }
 
 /// Both versions of an article whose full text was fetched this session, so `f` can switch back.
@@ -252,6 +338,8 @@ pub struct App {
     selection_label: String,
     loading: bool,
     mode: Mode,
+    /// The order the open queue was loaded in.
+    order: Order,
     /// The whole selection, including pages not loaded yet.
     total: i64,
     /// More pages on the server.
@@ -260,7 +348,7 @@ pub struct App {
     checking: bool,
     /// Opening another selection makes the loads still in flight no-ops: each remembers this and compares.
     latest_load: u64,
-    opened: Option<Selection>,
+    opened: Option<Opened>,
     /// The newest unread item's id when the selection was opened (0 in history). Shift+A marks up to there.
     newest_at_open: i64,
     /// Saving to Readeck or fetching the full article: one at a time.
@@ -278,6 +366,10 @@ pub struct App {
     overlay: Overlay,
     before_help: Overlay,
     before_confirm: Overlay,
+    before_search: Overlay,
+    /// The last search, to start the box from.
+    search_query: String,
+    viewer: Option<Viewer>,
     confirm_text: String,
     pending: Option<Pending>,
     toast: Option<Toast>,
@@ -304,6 +396,7 @@ impl App {
             selection_label: String::new(),
             loading: false,
             mode: Mode::Unread,
+            order: Order::OldestFirst,
             total: 0,
             has_more: false,
             checking: false,
@@ -319,6 +412,9 @@ impl App {
             overlay: Overlay::None,
             before_help: Overlay::None,
             before_confirm: Overlay::None,
+            before_search: Overlay::None,
+            search_query: String::new(),
+            viewer: None,
             confirm_text: String::new(),
             pending: None,
             toast: None,
@@ -346,6 +442,11 @@ impl App {
 
     pub fn current(&self) -> Option<&Entry> {
         self.queue.get(self.index)
+    }
+
+    /// The article after this one, to get ready while this one is read.
+    pub fn upcoming(&self) -> Option<&Entry> {
+        self.queue.get(self.index + 1)
     }
 
     #[cfg(test)]
@@ -406,6 +507,21 @@ impl App {
         self.picker_mode
     }
 
+    /// Unread items come newest first (`s`).
+    pub fn newest_first(&self) -> bool {
+        self.prefs.newest_first
+    }
+
+    /// What the search box starts with: the last search.
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    /// The image viewer, while it's open.
+    pub fn viewer(&self) -> Option<&Viewer> {
+        self.viewer.as_ref().filter(|_| self.overlay == Overlay::Image)
+    }
+
     pub fn picker_items(&self) -> Vec<PickerItem> {
         match &self.picker_list {
             PickerList::Ready(counts) => picker::build(counts, self.picker_mode),
@@ -439,12 +555,23 @@ impl App {
 
     /// The heading of the screen at the end of the list.
     pub fn end_title(&self) -> &'static str {
-        if self.mode == Mode::History { "End of history" } else { "All caught up" }
+        if self.searching() {
+            "End of results"
+        } else if self.mode == Mode::History {
+            "End of history"
+        } else {
+            "All caught up"
+        }
     }
 
     /// The top bar's History badge: reading read items.
     pub fn history_badge(&self) -> bool {
-        self.mode == Mode::History && !self.selection_label().is_empty()
+        self.mode == Mode::History && !self.searching() && !self.selection_label().is_empty()
+    }
+
+    /// The top bar's Search badge: reading search results.
+    pub fn searching(&self) -> bool {
+        matches!(self.opened, Some(Opened::Search(_)))
     }
 
     /// What fills the window under the top bar.
@@ -508,15 +635,19 @@ impl App {
         self.reset_queue(String::new());
     }
 
-    fn open_selection(&mut self, item: PickerItem, mode: Mode, fx: &mut Vec<Effect>) {
+    fn open_selection(&mut self, selection: Selection, label: String, mode: Mode, fx: &mut Vec<Effect>) {
         self.latest_load += 1;
         self.mode = mode;
-        self.opened = Some(item.selection);
+        self.order = match mode {
+            Mode::Unread if !self.prefs.newest_first => Order::OldestFirst,
+            _ => Order::NewestFirst,
+        };
+        self.opened = Some(Opened::Feeds(selection));
         self.newest_at_open = 0;
-        self.reset_queue(item.label);
+        self.reset_queue(label);
         self.loading = true;
-        let request = paging::next_page(&self.queue, mode);
-        fx.push(Effect::OpenSelection { load: self.latest_load, selection: item.selection, mode, request });
+        let request = paging::next_page(&self.queue, self.order);
+        fx.push(Effect::OpenSelection { load: self.latest_load, selection, mode, request });
     }
 
     fn opened(&mut self, load: u64, result: Result<(EntryPage, i64), String>) {
@@ -536,21 +667,35 @@ impl App {
     // ---- Paging (see paging.rs) -----------------------------------------
 
     fn append_page(&mut self, page: EntryPage) {
-        let merged = paging::merge_page(&self.queue, page);
+        // Search results page by offset, and each page asks for the one after everything loaded.
+        let skipped = if self.searching() { self.queue.len() } else { 0 };
+        let merged = paging::merge_page(&self.queue, page, skipped);
         self.queue.extend(merged.fresh);
         self.has_more = merged.more;
         self.total = merged.total;
     }
 
-    /// Asks for the page after what's loaded; one at a time. Returns whether it did.
+    /// Asks for the page after what's loaded; one at a time. Returns whether it did. New arrivals are always
+    /// looked for after the newest item loaded, also when the list runs newest first.
     fn load_page(&mut self, arrivals: bool, fx: &mut Vec<Effect>) -> bool {
-        let Some(selection) = self.opened else { return false };
         if self.loading_more {
             return false;
         }
+        let load = self.latest_load;
+        let effect = match &self.opened {
+            None => return false,
+            Some(Opened::Feeds(selection)) => {
+                let order = if arrivals { Order::OldestFirst } else { self.order };
+                let request = paging::next_page(&self.queue, order);
+                Effect::LoadPage { load, selection: *selection, mode: self.mode, request, arrivals }
+            }
+            Some(Opened::Search(query)) => {
+                let (query, offset) = (query.clone(), self.queue.len());
+                Effect::Search { load, query, offset, limit: PAGE, first: false }
+            }
+        };
         self.loading_more = true;
-        let request = paging::next_page(&self.queue, self.mode);
-        fx.push(Effect::LoadPage { load: self.latest_load, selection, mode: self.mode, request, arrivals });
+        fx.push(effect);
         true
     }
 
@@ -591,7 +736,7 @@ impl App {
 
     /// After moving on: the next page when it's near, or, just past the end of the unread list, new arrivals.
     fn load_ahead(&mut self, fx: &mut Vec<Effect>) {
-        if self.current().is_none() && !self.has_more && self.mode == Mode::Unread {
+        if self.current().is_none() && !self.has_more && self.mode == Mode::Unread && !self.searching() {
             self.check_for_arrivals(fx);
         } else {
             self.prefetch(fx);
@@ -761,7 +906,14 @@ impl App {
     /// `newest_at_open` is 0, so that's just the items marked unread here.) The server counts, so the question
     /// stays true even after reading elsewhere.
     fn mark_all_read(&mut self, fx: &mut Vec<Effect>) {
-        let Some(selection) = self.opened else { return };
+        let selection = match &self.opened {
+            Some(Opened::Feeds(selection)) => *selection,
+            Some(Opened::Search(_)) => {
+                self.toast_info("Search results can't be marked read all at once");
+                return;
+            }
+            None => return,
+        };
         if self.loading {
             return;
         }
@@ -817,6 +969,68 @@ impl App {
         self.latest_load += 1;
         self.has_more = false;
         self.total = i64::try_from(self.queue.len()).unwrap_or(i64::MAX);
+    }
+
+    /// Shift+A in the picker: the row under the cursor, without opening it. As in the reader, only what was
+    /// unread when it was counted gets marked; the server counts, then the dialog asks.
+    fn mark_row_read(&mut self, fx: &mut Vec<Effect>) {
+        if self.picker_mode == Mode::History {
+            self.toast_info("These are read already. Press h for unread items.");
+            return;
+        }
+        if let Some(item) = self.picker_items().into_iter().nth(self.picker_cursor) {
+            fx.push(Effect::CountRow { selection: item.selection, label: item.label });
+        }
+    }
+
+    fn row_counted(&mut self, selection: Selection, label: String, result: Result<(i64, i64), String>) {
+        match result {
+            Err(message) => self.toast_error(message),
+            Ok((_, 0)) => self.toast_info(format!("Nothing unread in “{label}”")),
+            // Unless you've left the picker meanwhile.
+            Ok((up_to, count)) if self.overlay == Overlay::Picker => {
+                let question = format!("Mark all {count} unread items in “{label}” as read?");
+                self.confirm(question, Pending::MarkRow { selection, label, up_to });
+            }
+            Ok(_) => {}
+        }
+    }
+
+    fn row_marked_read(
+        &mut self,
+        selection: Selection,
+        label: &str,
+        up_to: i64,
+        result: Result<(), String>,
+        fx: &mut Vec<Effect>,
+    ) {
+        if let Err(message) = result {
+            self.toast_error(message);
+            return;
+        }
+        self.toast_info(format!("Marked “{label}” read"));
+        // The open queue may hold some of them: show them read too.
+        let feeds = self.feeds_in(selection);
+        for entry in self.queue.iter_mut() {
+            if entry.status == EntryStatus::Unread && entry.id <= up_to && feeds.contains(entry.feed.id) {
+                entry.status = EntryStatus::Read;
+            }
+        }
+        self.load_picker(fx);
+    }
+
+    /// Which feeds a selection takes in, by the picker's counts (entries only say their feed).
+    fn feeds_in(&self, selection: Selection) -> FeedSet {
+        match selection {
+            Selection::All => FeedSet::All,
+            Selection::Feed { id } => FeedSet::Some(vec![id]),
+            Selection::Category { id } => FeedSet::Some(match &self.picker_list {
+                PickerList::Ready(counts) => {
+                    counts.iter().filter(|fc| fc.feed.category.id == id).map(|fc| fc.feed.id).collect()
+                }
+                _ => Vec::new(),
+            }),
+        }
     }
 
     // ---- The picker ---------------------------------------------------------
@@ -880,7 +1094,7 @@ impl App {
         let items = self.picker_items();
         if let Some(item) = items.into_iter().nth(row.unwrap_or(self.picker_cursor)) {
             self.close_picker();
-            self.open_selection(item, self.picker_mode, fx);
+            self.open_selection(item.selection, item.label, self.picker_mode, fx);
         }
     }
 
@@ -889,6 +1103,118 @@ impl App {
             Ok(()) => fx.extend(REFRESH_RELOAD_MS.map(|millis| Effect::ReloadPickerAfter { millis })),
             Err(message) => self.toast_error(message),
         }
+    }
+
+    /// `s`: unread items newest first, or oldest first again (remembered). An unread list being read opens
+    /// again in the new order; history is always newest first.
+    fn flip_order(&mut self, fx: &mut Vec<Effect>) {
+        self.change_prefs(Prefs::flip_order, fx);
+        let order = if self.prefs.newest_first { "newest" } else { "oldest" };
+        self.toast_info(format!("Unread items {order} first"));
+        if self.overlay == Overlay::None
+            && self.mode == Mode::Unread
+            && let Some(Opened::Feeds(selection)) = self.opened
+        {
+            let label = self.selection_label.clone();
+            self.open_selection(selection, label, Mode::Unread, fx);
+        }
+    }
+
+    // ---- Search ----------------------------------------------------------
+
+    /// `/`: the search box, from the reader or the picker.
+    fn open_search(&mut self) {
+        if matches!(self.overlay, Overlay::None | Overlay::Picker) {
+            self.before_search = self.overlay;
+            self.overlay = Overlay::Search;
+        }
+    }
+
+    fn close_search(&mut self) {
+        if self.overlay == Overlay::Search {
+            self.overlay = self.before_search;
+        }
+    }
+
+    /// The search box's Enter: the results open like any list, best match first. Nothing typed closes the box.
+    pub fn search(&mut self, query: &str) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.overlay != Overlay::Search {
+            return fx;
+        }
+        let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+        if query.is_empty() {
+            self.close_search();
+            return fx;
+        }
+        self.overlay = Overlay::None;
+        self.search_query.clone_from(&query);
+        self.latest_load += 1;
+        self.opened = Some(Opened::Search(query.clone()));
+        self.newest_at_open = 0;
+        self.reset_queue(format!("“{query}”"));
+        self.loading = true;
+        fx.push(Effect::Search { load: self.latest_load, query, offset: 0, limit: PAGE, first: true });
+        fx
+    }
+
+    /// The search box's Cancel: Esc.
+    pub fn cancel_search(&mut self) {
+        self.close_search();
+    }
+
+    // ---- The image viewer ----------------------------------------------------
+
+    /// `v`, or a click on an image (`src`): the article's images, from that one or the first.
+    fn open_viewer(&mut self, src: Option<&str>) {
+        if self.overlay != Overlay::None {
+            return;
+        }
+        let Some(entry) = self.current() else { return };
+        let mut images = convert::images(&entry.content, &entry.url);
+        let index = match src {
+            None => 0,
+            Some(src) => images.iter().position(|i| i.src == src).unwrap_or_else(|| {
+                images = vec![ImageRef { src: src.to_string(), alt: String::new(), href: None }];
+                0
+            }),
+        };
+        if images.is_empty() {
+            self.toast_info("This article has no images");
+            return;
+        }
+        self.viewer = Some(Viewer { images, index });
+        self.overlay = Overlay::Image;
+    }
+
+    /// A click on an image in the article.
+    pub fn view_image(&mut self, src: &str) {
+        self.open_viewer(Some(src));
+    }
+
+    /// A click in the viewer.
+    pub fn close_viewer(&mut self) {
+        if self.overlay == Overlay::Image {
+            self.overlay = Overlay::None;
+            self.viewer = None;
+        }
+    }
+
+    fn viewer_key(&mut self, key: &str, fx: &mut Vec<Effect>) -> bool {
+        let Some(viewer) = self.viewer.as_mut() else { return false };
+        match key {
+            "Escape" | "q" | "v" | "Enter" | " " => self.close_viewer(),
+            "ArrowRight" | "l" => viewer.index = (viewer.index + 1).min(viewer.images.len().saturating_sub(1)),
+            "ArrowLeft" | "h" => viewer.index = viewer.index.saturating_sub(1),
+            "o" => {
+                if let Some(image) = viewer.images.get(viewer.index) {
+                    let url = image.href.clone().unwrap_or_else(|| image.src.clone());
+                    fx.push(Effect::OpenInBrowser { url, then: AfterOpen::Nothing });
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     // ---- Overlays ------------------------------------------------------
@@ -914,6 +1240,9 @@ impl App {
         match self.pending.take() {
             Some(Pending::MarkAll { load, selection, up_to, later }) if yes => {
                 fx.push(Effect::MarkAllRead { load, selection, up_to, later });
+            }
+            Some(Pending::MarkRow { selection, label, up_to }) if yes => {
+                fx.push(Effect::MarkRowRead { selection, label, up_to });
             }
             _ => {}
         }
@@ -1019,6 +1348,17 @@ impl App {
                 }
                 return false;
             }
+            // Typing goes to the box; Enter there searches (`search`).
+            Overlay::Search => {
+                if key == "Escape" {
+                    self.close_search();
+                    return true;
+                }
+                return false;
+            }
+            Overlay::Image => {
+                return !(press.ctrl || press.alt || press.meta) && self.viewer_key(key, fx);
+            }
             Overlay::Picker | Overlay::None => {}
         }
         if press.typing {
@@ -1070,6 +1410,8 @@ impl App {
     /// An action from a key or a button.
     pub fn action(&mut self, action: Action) -> Vec<Effect> {
         let mut fx = Vec::new();
+        // The Mac's toolbar and menus stay at hand while the viewer is up; they're about the article.
+        self.close_viewer();
         match action {
             Action::Space { up } => {
                 fx.push(Effect::ScrollPage { up });
@@ -1090,7 +1432,11 @@ impl App {
             Action::OpenOriginal => self.open_original(fx),
             Action::SaveToReadeck => self.save_to_readeck(fx),
             Action::FetchFull => self.fetch_full(fx),
+            Action::MarkAllRead if self.overlay == Overlay::Picker => self.mark_row_read(fx),
             Action::MarkAllRead => self.mark_all_read(fx),
+            Action::Search => self.open_search(),
+            Action::FlipOrder => self.flip_order(fx),
+            Action::ViewImages => self.open_viewer(None),
             Action::ToggleMode => self.toggle_mode(fx),
             Action::OpenPicker => self.open_picker(None, fx),
             Action::Narrower => self.change_prefs(Prefs::narrower, fx),
@@ -1160,6 +1506,10 @@ impl App {
                 self.unread_counted(load, selection, up_to, later, result);
             }
             Outcome::MarkedAllRead { load, result } => self.marked_all_read(load, result, &mut fx),
+            Outcome::RowCounted { selection, label, result } => self.row_counted(selection, label, result),
+            Outcome::RowMarkedRead { selection, label, up_to, result } => {
+                self.row_marked_read(selection, &label, up_to, result, &mut fx);
+            }
             Outcome::SettingsLoaded { values, problem } => {
                 if self.in_settings() {
                     self.settings = Some(SettingsForm { values, problem, error: String::new(), checking: false });
@@ -1176,6 +1526,21 @@ impl App {
             },
         }
         fx
+    }
+}
+
+/// Feeds a selection takes in.
+enum FeedSet {
+    All,
+    Some(Vec<i64>),
+}
+
+impl FeedSet {
+    fn contains(&self, feed: i64) -> bool {
+        match self {
+            FeedSet::All => true,
+            FeedSet::Some(ids) => ids.contains(&feed),
+        }
     }
 }
 

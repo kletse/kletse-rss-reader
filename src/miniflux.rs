@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::config;
 use crate::error::{Error, Service, ok_status};
+use crate::paging::Order;
 
 /// `Debug` leaves out the API key.
 #[derive(Clone)]
@@ -157,11 +158,11 @@ impl Client {
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
-        self.send(self.req(reqwest::Method::GET, path))
-            .await?
-            .json()
-            .await
-            .map_err(|e| Error::reading(Service::Miniflux, &self.base, e))
+        self.json(self.req(reqwest::Method::GET, path)).await
+    }
+
+    async fn json<T: serde::de::DeserializeOwned>(&self, rb: reqwest::RequestBuilder) -> Result<T, Error> {
+        self.send(rb).await?.json().await.map_err(|e| Error::reading(Service::Miniflux, &self.base, e))
     }
 
     /// Checks URL and API key; returns the username.
@@ -190,23 +191,23 @@ impl Client {
         Ok(merge_counts(feeds, &counters))
     }
 
-    /// One page of the selection's entries: unread ones oldest first, or read ones (the history) newest first.
-    /// Both are loaded as you go. `past` is where the page starts, in unix seconds: entries published after it
-    /// (unread) or before it (read); 0 starts at the beginning. See `nextPage` in src/paging.ts for why that and
-    /// not an offset. `after` / `before` compare `published_at` strictly and exist since Miniflux 2.0.9;
-    /// `published_after` / `published_before` mean the same but need 2.0.49, and an older server would silently
-    /// ignore them.
+    /// One page of the selection's unread or read entries, oldest or newest first, loaded as you go. `past` is
+    /// where the page starts, in unix seconds: entries published after it (oldest first) or before it (newest
+    /// first); 0 starts at the beginning. See `next_page` in src/paging.rs for why that and not an offset.
+    /// `after` / `before` compare `published_at` strictly and exist since Miniflux 2.0.9; `published_after` /
+    /// `published_before` mean the same but need 2.0.49, and an older server would silently ignore them.
     pub async fn entries(
         &self,
         sel: Selection,
         status: EntryStatus,
+        order: Order,
         past: i64,
         limit: usize,
     ) -> Result<EntryPage, Error> {
         let limit = limit.clamp(1, MAX_PAGE);
-        let (direction, bound) = match status {
-            EntryStatus::Unread => ("asc", "after"),
-            EntryStatus::Read => ("desc", "before"),
+        let (direction, bound) = match order {
+            Order::OldestFirst => ("asc", "after"),
+            Order::NewestFirst => ("desc", "before"),
         };
         let mut path = format!(
             "{}/entries?status={}&order=published_at&direction={direction}&limit={limit}",
@@ -217,6 +218,24 @@ impl Client {
             path.push_str(&format!("&{bound}={past}"));
         }
         self.get_json(&path).await
+    }
+
+    /// A page of the entries matching `query`, read and unread, in every feed: the best matches first (Miniflux
+    /// ranks them, a little in favour of recent ones), then the newest. A search has no status filter, so reading
+    /// doesn't move anything out of it and an offset is safe here.
+    pub async fn search(&self, query: &str, offset: usize, limit: usize) -> Result<EntryPage, Error> {
+        let limit = limit.clamp(1, MAX_PAGE).to_string();
+        let offset = offset.to_string();
+        let params = [
+            ("search", query),
+            ("status", "unread"),
+            ("status", "read"),
+            ("order", "published_at"),
+            ("direction", "desc"),
+            ("offset", &offset),
+            ("limit", &limit),
+        ];
+        self.json(self.req(reqwest::Method::GET, "/entries").query(&params)).await
     }
 
     /// The id of the selection's newest unread entry, 0 if there is none. Entry ids only grow, so anything with
@@ -479,7 +498,8 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        let page = c.entries(Selection::Category { id: 10 }, EntryStatus::Unread, 1_761_286_319, 60).await;
+        let page =
+            c.entries(Selection::Category { id: 10 }, EntryStatus::Unread, Order::OldestFirst, 1_761_286_319, 60).await;
         let page = page.unwrap();
         assert_eq!(page.total, 70);
         assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![4]);
@@ -496,7 +516,8 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let page = client(&server).entries(Selection::All, EntryStatus::Unread, 0, 50).await.unwrap();
+        let page =
+            client(&server).entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 50).await.unwrap();
         assert_eq!(page.entries.len(), 1);
     }
 
@@ -516,8 +537,49 @@ mod tests {
             .mount(&server)
             .await;
         let c = client(&server);
-        let page = c.entries(Selection::Feed { id: 7 }, EntryStatus::Read, 1_761_286_321, 100_000).await;
-        assert_eq!(page.unwrap().total, 41);
+        let page = c.entries(Selection::Feed { id: 7 }, EntryStatus::Read, Order::NewestFirst, 1_761_286_321, 100_000);
+        assert_eq!(page.await.unwrap().total, 41);
+    }
+
+    #[tokio::test]
+    async fn unread_entries_newest_first_are_a_page_published_before_past() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("status", "unread"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("before", "1761286321"))
+            .and(query_param_is_missing("after"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 2, "entries": [entry_json(3)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        let page = c.entries(Selection::All, EntryStatus::Unread, Order::NewestFirst, 1_761_286_321, 50).await;
+        assert_eq!(page.unwrap().total, 2);
+    }
+
+    #[tokio::test]
+    async fn search_looks_through_read_and_unread_entries_by_offset() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("search", "rust & “async”"))
+            .and(query_param("offset", "50"))
+            .and(query_param("limit", "50"))
+            .and(query_param("direction", "desc"))
+            .and(query_param_is_missing("after"))
+            .and(query_param_is_missing("before"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 51, "entries": [entry_json(9)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let page = client(&server).search("rust & “async”", 50, 50).await.unwrap();
+        assert_eq!((page.total, page.entries[0].id), (51, 9));
+        let requests = server.received_requests().await.unwrap();
+        let statuses: Vec<String> =
+            requests[0].url.query_pairs().filter(|(k, _)| k == "status").map(|(_, v)| v.into_owned()).collect();
+        assert_eq!(statuses, ["unread", "read"]);
     }
 
     #[tokio::test]

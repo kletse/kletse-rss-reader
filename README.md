@@ -59,32 +59,43 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ## Keys
 
-| Key                                                                          | Action                                                                           |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| <kbd>j</kbd> / <kbd>↓</kbd>                                                  | Next article (**marks read**)                                                    |
-| <kbd>n</kbd>                                                                 | Skip: next article, **keep unread**                                              |
-| <kbd>k</kbd> / <kbd>↑</kbd>                                                  | Previous article                                                                 |
-| <kbd>m</kbd>                                                                 | Toggle read / unread                                                             |
-| <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>                         | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one |
-| <kbd>o</kbd>                                                                 | Open the original in your browser                                                |
-| <kbd>b</kbd>                                                                 | Save to Readeck, mark read, go to the next article                               |
-| <kbd>f</kbd>                                                                 | Fetch the full article (Miniflux's scraper); again for the feed's version        |
-| <kbd>Shift</kbd>+<kbd>A</kbd>                                                | Mark the whole list read, but not what arrived since you opened it (asks first)  |
-| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> / <kbd>←</kbd> | Feeds & categories picker (all but <kbd>←</kbd> also close it)                   |
-| <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                |
-| <kbd>h</kbd>                                                                 | Switch between unread and history (read items, newest first)                     |
-| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                                  | Article font size; the column width scales with it (remembered)                  |
-| <kbd>[</kbd> / <kbd>]</kbd>                                                  | Narrower / wider column (remembered)                                             |
-| <kbd>Ctrl</kbd> <kbd>0</kbd>                                                 | Reset font size and width                                                        |
-| <kbd>,</kbd>                                                                 | Settings                                                                         |
-| <kbd>?</kbd>                                                                 | Show the keys                                                                    |
-| <kbd>q</kbd>                                                                 | Quit                                                                             |
+| Key                                                                          | Action                                                                                                           |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| <kbd>j</kbd> / <kbd>↓</kbd>                                                  | Next article (**marks read**)                                                                                    |
+| <kbd>n</kbd>                                                                 | Skip: next article, **keep unread**                                                                              |
+| <kbd>k</kbd> / <kbd>↑</kbd>                                                  | Previous article                                                                                                 |
+| <kbd>m</kbd>                                                                 | Toggle read / unread                                                                                             |
+| <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>                         | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one                                 |
+| <kbd>o</kbd>                                                                 | Open the original in your browser                                                                                |
+| <kbd>b</kbd>                                                                 | Save to Readeck, mark read, go to the next article                                                               |
+| <kbd>f</kbd>                                                                 | Fetch the full article (Miniflux's scraper); again for the feed's version                                        |
+| <kbd>Shift</kbd>+<kbd>A</kbd>                                                | Mark the whole list read, but not what arrived since you opened it (asks first); in the picker, the selected row |
+| <kbd>/</kbd>                                                                 | Search all feeds, read and unread                                                                                |
+| <kbd>v</kbd>                                                                 | View the article's images, full window (<kbd>←</kbd> / <kbd>→</kbd> between them)                                |
+| <kbd>s</kbd>                                                                 | Unread items oldest first or newest first (remembered)                                                           |
+| <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> / <kbd>←</kbd> | Feeds & categories picker (all but <kbd>←</kbd> also close it)                                                   |
+| <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                                                |
+| <kbd>h</kbd>                                                                 | Switch between unread and history (read items, newest first)                                                     |
+| <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                                  | Article font size; the column width scales with it (remembered)                                                  |
+| <kbd>[</kbd> / <kbd>]</kbd>                                                  | Narrower / wider column (remembered)                                                                             |
+| <kbd>Ctrl</kbd> <kbd>0</kbd>                                                 | Reset font size and width                                                                                        |
+| <kbd>,</kbd>                                                                 | Settings                                                                                                         |
+| <kbd>?</kbd>                                                                 | Show the keys                                                                                                    |
+| <kbd>q</kbd>                                                                 | Quit                                                                                                             |
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
 The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
+Press <kbd>Shift</kbd>+<kbd>A</kbd> in the picker to mark the selected feed or category read without opening it. It asks first, and, as in the reader, leaves alone what arrives after it counted.
+
 Press <kbd>h</kbd> (or the **History** button) to switch the picker to history: **All read**, categories and feeds with read counts. What you open there shows read items newest first, loaded a page at a time as you go, and a **History** badge appears in the top bar. Every key works the same: <kbd>m</kbd> marks an item unread again, <kbd>b</kbd> saves it to Readeck, and so on. <kbd>Esc</kbd> closes the picker without switching, so you're back where you were.
+
+Press <kbd>/</kbd> to search, from the reader or the picker. Miniflux looks through every feed, read and unread items alike, and the results open as a list like any other, best match first, with a **Search** badge in the top bar: <kbd>j</kbd> marks a result read and moves on, <kbd>m</kbd> toggles it, <kbd>b</kbd> saves it. <kbd>/</kbd> again starts from your last search.
+
+Unread items come oldest first, so you read them in the order they were written. Press <kbd>s</kbd> (or the button in the picker) to read the newest first instead; the app remembers. New arrivals still follow on at the end. History is always newest first.
+
+Press <kbd>v</kbd>, or click an image, to see the article's images one at a time over the whole window. <kbd>←</kbd> / <kbd>→</kbd> go between them, <kbd>o</kbd> opens the one on screen (or the link it's in) in your browser, and <kbd>Esc</kbd>, <kbd>Space</kbd> or a click closes the viewer.
 
 ## Install
 
@@ -187,7 +198,7 @@ src/
   keys.rs            the keymaps and the help overlay's text, checked against each other and the README
   paging.rs          where the next page starts (a publication time, not an offset)
   picker.rs          feed counts → picker rows
-  prefs.rs           font size and column width, remembered
+  prefs.rs           font size, column width and the order of unread items, remembered
   content/convert.rs feed HTML → blocks of native layout (paragraphs, images, code, quotes, lists, tables, embeds)
   content/highlight.rs  code blocks highlighted with syntect, in theme colours
   theme/             the Omarchy theme (watched live) or the macOS appearance, as a palette
@@ -204,7 +215,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 
 - Article HTML is turned into native blocks: paragraphs, headings, images with captions, code, quotes, lists, tables and rules. Only a small set of tags and attributes makes it through, so scripts, styles, forms and tracking attributes are gone, and nothing in an article can run.
 - Iframes, videos and audio become a plain _▶ Embedded media_ link. Inline SVG and MathML aren't shown (run with `KLETSE_RSS_DEBUG=1` to see on stderr when an article had some).
-- Images load (through Miniflux's media proxy if you have it enabled).
+- Images load (through Miniflux's media proxy if you have it enabled). While you read, the next article is already converted and its images loaded, so <kbd>j</kbd> doesn't wait for them.
 - Every link opens in your default browser, never inside the app.
 - Code blocks are highlighted with syntect using the theme's own colours.
 - Text can be selected within a paragraph, and <kbd>Ctrl</kbd>+<kbd>C</kbd> (<kbd>⌘</kbd><kbd>C</kbd>) copies it.

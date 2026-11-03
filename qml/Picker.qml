@@ -26,6 +26,19 @@ Panel {
     onBackdrop: model.pickerBackdrop()
 
     actions: [
+        Button {
+            ui: picker.ui
+            iconPath: "M21 21l-4.3-4.3 M19 11a8 8 0 1 1-16 0a8 8 0 1 1 16 0z"
+            tip: "Search all feeds (/)"
+            onClicked: picker.model.press("search")
+        },
+        Button {
+            ui: picker.ui
+            visible: !picker.model.pickerHistory && picker.panelWidth >= 500
+            text: picker.model.newestFirst ? "Newest first" : "Oldest first"
+            tip: "Order of unread items (s)"
+            onClicked: picker.model.press("order")
+        },
         Button { ui: picker.ui; text: "?"; tip: "Keys (?)"; onClicked: picker.model.press("help") },
         Button {
             ui: picker.ui

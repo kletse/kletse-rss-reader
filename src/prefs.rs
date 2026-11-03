@@ -1,4 +1,5 @@
-//! Article font size and column width, remembered between runs. The width is in multiples of the font size.
+//! Article font size, column width and the order of unread items, remembered between runs. The width is in
+//! multiples of the font size.
 //! Kept apart from config.toml, which is yours to edit: this file is the app's own and may be rewritten anytime.
 
 use serde::{Deserialize, Serialize};
@@ -21,11 +22,13 @@ pub struct Prefs {
     pub font_size: i32,
     /// Column width, in multiples of the font size.
     pub width_factor: i32,
+    /// Unread items newest first (`s`), instead of oldest first.
+    pub newest_first: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { font_size: FONT.initial, width_factor: WIDTH.initial }
+        Self { font_size: FONT.initial, width_factor: WIDTH.initial, newest_first: false }
     }
 }
 
@@ -34,6 +37,7 @@ impl Prefs {
         Self {
             font_size: self.font_size.clamp(FONT.min, FONT.max),
             width_factor: self.width_factor.clamp(WIDTH.min, WIDTH.max),
+            ..self
         }
     }
 
@@ -53,8 +57,13 @@ impl Prefs {
         *self = Self { width_factor: self.width_factor - WIDTH.step, ..*self }.clamped();
     }
 
+    /// Ctrl+0 resets the size and width; the order stays.
     pub fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self { newest_first: self.newest_first, ..Self::default() };
+    }
+
+    pub fn flip_order(&mut self) {
+        self.newest_first = !self.newest_first;
     }
 }
 
@@ -90,20 +99,20 @@ mod tests {
 
     #[test]
     fn steps_stay_in_range() {
-        let mut p = Prefs { font_size: 31, width_factor: 78 };
+        let mut p = Prefs { font_size: 31, width_factor: 78, newest_first: true };
         p.bigger();
         p.bigger();
         p.wider();
-        assert_eq!(p, Prefs { font_size: 32, width_factor: 80 });
+        assert_eq!(p, Prefs { font_size: 32, width_factor: 80, newest_first: true });
         p.reset();
         p.narrower();
         p.smaller();
-        assert_eq!(p, Prefs { font_size: 17, width_factor: 36 });
+        assert_eq!(p, Prefs { font_size: 17, width_factor: 36, newest_first: true });
     }
 
     #[test]
     fn a_file_out_of_range_or_partial_is_made_sensible() {
         let p: Prefs = toml::from_str("font_size = 99").unwrap_or_default();
-        assert_eq!(p.clamped(), Prefs { font_size: 32, width_factor: 40 });
+        assert_eq!(p.clamped(), Prefs { font_size: 32, width_factor: 40, newest_first: false });
     }
 }

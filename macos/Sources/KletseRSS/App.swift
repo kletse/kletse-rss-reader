@@ -35,6 +35,10 @@ struct KletseApp: App {
                 Button("Feeds (p)") { Model.shared.press("picker") }
                 Button("History (h)") { Model.shared.key("h") }
                 Button("Mark Whole List Read (Shift+A)") { Model.shared.key("A") }
+                Divider()
+                Button("Search… (/)") { Model.shared.press("search") }
+                Button("View Images (v)") { Model.shared.key("v") }
+                Button("Oldest or Newest First (s)") { Model.shared.press("order") }
             }
             CommandGroup(replacing: .help) {
                 Button("Keyboard Shortcuts (?)") { Model.shared.press("help") }

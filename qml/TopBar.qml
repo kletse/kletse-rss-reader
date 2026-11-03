@@ -31,7 +31,7 @@ Rectangle {
                 onClicked: bar.model.press("picker")
             }
             Rectangle {
-                visible: bar.model.history
+                visible: bar.model.history || bar.model.searching
                 anchors.verticalCenter: parent.verticalCenter
                 width: badge.implicitWidth + 12
                 height: badge.implicitHeight + 2
@@ -41,7 +41,7 @@ Rectangle {
                 Text {
                     id: badge
                     anchors.centerIn: parent
-                    text: "HISTORY"
+                    text: bar.model.searching ? "SEARCH" : "HISTORY"
                     color: bar.model.accent
                     font.family: bar.ui.uiFont
                     font.pixelSize: 11

@@ -92,9 +92,48 @@ const TRANSPARENT: &[&str] = &[
 ];
 
 pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
+    convert_with(html, base_url, palette, false)
+}
+
+/// An image in an article, as the image viewer steps through them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ImageRef {
+    pub src: String,
+    pub alt: String,
+    /// The link the image is in, if any.
+    pub href: Option<String>,
+}
+
+/// An article's images in reading order, as `convert` lays them out, without the time highlighting code takes.
+pub fn images(html: &str, base_url: &str) -> Vec<ImageRef> {
+    image_refs(&convert_with(html, base_url, &Palette::default(), true).blocks)
+}
+
+/// The images among `blocks`, those in quotes and lists included.
+pub fn image_refs(blocks: &[Block]) -> Vec<ImageRef> {
+    let mut found = Vec::new();
+    collect_images(blocks, &mut found);
+    found
+}
+
+fn collect_images(blocks: &[Block], found: &mut Vec<ImageRef>) {
+    for block in blocks {
+        match block {
+            Block::Image { src, alt, href, .. } => {
+                found.push(ImageRef { src: src.clone(), alt: alt.clone(), href: href.clone() });
+            }
+            Block::Quote { blocks } => collect_images(blocks, found),
+            Block::List { items, .. } => items.iter().for_each(|item| collect_images(item, found)),
+            _ => {}
+        }
+    }
+}
+
+/// `plain`: code isn't highlighted.
+fn convert_with(html: &str, base_url: &str, palette: &Palette, plain: bool) -> Rendered {
     let doc = Html::parse_fragment(html);
-    let mut c =
-        Converter { base: Url::parse(base_url).ok(), palette, syntax_theme: None, stats: Stats::default(), link: None };
+    let base = Url::parse(base_url).ok();
+    let mut c = Converter { base, palette, plain, syntax_theme: None, stats: Stats::default(), link: None };
     let mut blocks = Vec::new();
     let mut para = Para::default();
     for child in doc.root_element().children() {
@@ -128,6 +167,8 @@ impl Para {
 struct Converter<'a> {
     base: Option<Url>,
     palette: &'a Palette,
+    /// Leave code plain: only the images are wanted.
+    plain: bool,
     syntax_theme: Option<syntect::highlighting::Theme>,
     stats: Stats,
     /// The link we are inside of, so an image in a link stays clickable.
@@ -364,6 +405,10 @@ impl Converter<'_> {
                 hints.extend(e.classes().map(str::to_string));
                 hints.extend(e.attr("data-lang").map(str::to_string));
             }
+        }
+        if self.plain {
+            out.push(Block::Code { html: highlight::escape(&text), lang: None });
+            return;
         }
         let hint_refs: Vec<&str> = hints.iter().map(String::as_str).collect();
         let syntax = highlight::find_syntax(&hint_refs, &text);
@@ -623,6 +668,21 @@ mod tests {
         assert!(is_empty_svg_placeholder("data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PScwIDAgMSAxJy8+"));
         assert!(!is_empty_svg_placeholder("data:image/svg+xml,<svg><rect/></svg>"));
         assert!(!is_empty_svg_placeholder("https://example.com/a.svg"));
+    }
+
+    #[test]
+    fn images_lists_every_image_in_reading_order_and_leaves_code_plain() {
+        let html = "<p><a href='/big.png'><img src='a.png' alt='A'></a></p><blockquote><img src='b.png'></blockquote>\
+                    <ul><li><img src='c.png'></li></ul><pre><code class='language-rust'>fn x() {}</code></pre>";
+        let found = images(html, "https://example.com/post");
+        let srcs: Vec<&str> = found.iter().map(|i| i.src.as_str()).collect();
+        assert_eq!(srcs, ["https://example.com/a.png", "https://example.com/b.png", "https://example.com/c.png"]);
+        assert_eq!(found[0].alt, "A");
+        assert_eq!(found[0].href.as_deref(), Some("https://example.com/big.png"));
+        // The same list as the converted article has.
+        let rendered = convert(html, "https://example.com/post", &Palette::default());
+        assert_eq!(image_refs(&rendered.blocks), found);
+        assert!(images("<p>no images</p>", "").is_empty());
     }
 
     #[test]

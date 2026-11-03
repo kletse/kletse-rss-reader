@@ -6,8 +6,8 @@
 use super::*;
 use crate::dates;
 use crate::miniflux::{Category, Feed};
-use crate::paging::PAGE;
 use crate::paging::tests::{entry, entry_at};
+use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
 
 /// What the fake Miniflux holds (every selection gets all of it). Tests change statuses here as "elsewhere".
@@ -24,10 +24,11 @@ fn seconds(e: &Entry) -> i64 {
 impl Fake {
     /// Pages like Miniflux: `past` is a strict bound in whole seconds, and items published in the same second come
     /// in a different order on every request, as Postgres may return them.
-    fn page(&mut self, status: EntryStatus, past: i64, limit: usize) -> EntryPage {
+    fn page(&mut self, status: EntryStatus, request: PageRequest) -> EntryPage {
+        let PageRequest { past, limit, order } = request;
         self.requests += 1;
         let salt = self.requests;
-        let dir = if status == EntryStatus::Unread { 1 } else { -1 };
+        let dir = if order == Order::OldestFirst { 1 } else { -1 };
         let mut list: Vec<Entry> = self
             .entries
             .iter()
@@ -36,6 +37,15 @@ impl Fake {
             .collect();
         list.sort_by_key(|e| (dir * seconds(e), (e.id * salt) % 17, e.id));
         EntryPage { total: i64::try_from(list.len()).unwrap(), entries: list.into_iter().take(limit).collect() }
+    }
+
+    /// Every entry whose title has `query`, read or unread, highest id first, from `offset`.
+    fn search(&mut self, query: &str, offset: usize, limit: usize) -> EntryPage {
+        self.requests += 1;
+        let mut found: Vec<Entry> = self.entries.iter().filter(|e| e.title.contains(query)).cloned().collect();
+        found.sort_by_key(|e| -e.id);
+        let total = i64::try_from(found.len()).unwrap();
+        EntryPage { total, entries: found.into_iter().skip(offset).take(limit).collect() }
     }
 
     fn mark(&mut self, ids: &[i64], status: EntryStatus) {
@@ -130,7 +140,7 @@ impl Harness {
         }
         match effect {
             Effect::OpenSelection { load, mode, request, .. } => {
-                let page = self.fake.page(mode.status(), request.past, request.limit);
+                let page = self.fake.page(mode.status(), request);
                 let newest =
                     if mode == Mode::Unread { self.fake.unread_ids().into_iter().max().unwrap_or(0) } else { 0 };
                 Some(Outcome::Opened { load, result: Ok((page, newest)) })
@@ -142,9 +152,31 @@ impl Harness {
                 }
                 let result = match self.fail_next_page.take() {
                     Some(message) => Err(message),
-                    None => Ok(self.fake.page(mode.status(), request.past, request.limit)),
+                    None => Ok(self.fake.page(mode.status(), request)),
                 };
                 Some(Outcome::Page { load, arrivals, result })
+            }
+            Effect::Search { load, ref query, offset, limit, first } => {
+                if !first && std::mem::take(&mut self.hold_next_page) {
+                    self.held = Some(effect);
+                    return None;
+                }
+                let page = self.fake.search(query, offset, limit);
+                Some(if first {
+                    Outcome::Opened { load, result: Ok((page, 0)) }
+                } else {
+                    Outcome::Page { load, arrivals: false, result: Ok(page) }
+                })
+            }
+            Effect::CountRow { selection, label } => {
+                let newest = self.fake.unread_ids().into_iter().max().unwrap_or(0);
+                let count = i64::try_from(self.fake.unread_up_to(newest).len()).unwrap();
+                Some(Outcome::RowCounted { selection, label, result: Ok((newest, count)) })
+            }
+            Effect::MarkRowRead { selection, label, up_to } => {
+                let ids = self.fake.unread_up_to(up_to);
+                self.fake.mark(&ids, EntryStatus::Read);
+                Some(Outcome::RowMarkedRead { selection, label, up_to, result: Ok(()) })
             }
             Effect::SetStatus { ids, status, revert, announce } => {
                 let result = match self.fail_next_status.take() {
@@ -232,7 +264,10 @@ impl Harness {
     }
 
     fn entries_calls(&self) -> Vec<&Effect> {
-        self.calls.iter().filter(|c| matches!(c, Effect::OpenSelection { .. } | Effect::LoadPage { .. })).collect()
+        self.calls
+            .iter()
+            .filter(|c| matches!(c, Effect::OpenSelection { .. } | Effect::LoadPage { .. } | Effect::Search { .. }))
+            .collect()
     }
 
     fn status_calls(&self) -> Vec<(Vec<i64>, EntryStatus)> {
@@ -288,7 +323,10 @@ const PAGE_I64: i64 = PAGE as i64;
 fn loads_a_page_at_a_time_and_j_marking_items_read_doesnt_make_it_skip_any() {
     let mut h = Harness::new(items(120));
     h.open(false);
-    assert_eq!(page_request(h.entries_calls()[0]), Some(PageRequest { past: 0, limit: PAGE }));
+    assert_eq!(
+        page_request(h.entries_calls()[0]),
+        Some(PageRequest { past: 0, limit: PAGE, order: Order::OldestFirst })
+    );
     assert_eq!(h.app.queue().len(), PAGE);
     assert_eq!(h.app.position(), "1 / 120"); // the whole selection
     for _ in 0..PAGE - 10 {
@@ -384,7 +422,10 @@ fn shows_items_that_arrived_while_you_were_reading_instead_of_all_caught_up() {
     assert_eq!(h.app.position(), "4 / 5");
     // It asked for what came after the newest item loaded.
     let past = seconds(&entry(3, "")) - 1;
-    assert_eq!(page_request(h.entries_calls().last().unwrap()), Some(PageRequest { past, limit: PAGE + 1 }));
+    assert_eq!(
+        page_request(h.entries_calls().last().unwrap()),
+        Some(PageRequest { past, limit: PAGE + 1, order: Order::OldestFirst })
+    );
     assert_eq!(h.press_through(&["j"]), [4, 5]);
     assert!(h.caught_up());
     assert!(h.fake.unread_ids().is_empty());
@@ -492,7 +533,11 @@ fn history_loads_the_next_page_as_you_get_near_the_end() {
     }
     // Page two starts before the oldest item loaded: Read 6.
     let past = seconds(&entry(6, "")) + 1;
-    assert!(h.entries_calls().iter().any(|c| page_request(c) == Some(PageRequest { past, limit: PAGE + 1 })));
+    assert!(
+        h.entries_calls()
+            .iter()
+            .any(|c| page_request(c) == Some(PageRequest { past, limit: PAGE + 1, order: Order::NewestFirst }))
+    );
     assert_eq!(h.app.queue().len(), PAGE + 5);
     assert!(!h.app.has_more());
 }
@@ -687,9 +732,9 @@ fn font_size_and_width_keys_change_and_save_the_prefs() {
     let mut h = first_second();
     let ctrl = |key: &str| KeyPress { key: key.into(), ctrl: true, ..KeyPress::default() };
     let (_, fx) = h.app.key(&ctrl("="));
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 40 })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 40, newest_first: false })]);
     let (_, fx) = h.app.key(&KeyPress { key: "[".into(), ..KeyPress::default() });
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36 })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36, newest_first: false })]);
     let (_, fx) = h.app.key(&ctrl("0"));
     assert_eq!(fx, [Effect::SavePrefs(Prefs::default())]);
     let (used, fx) = h.app.key(&ctrl("0"));
@@ -713,7 +758,11 @@ fn h_in_the_picker_switches_to_read_items_newest_first_with_the_same_keys() {
     assert_eq!(h.title(), Some("Read 3"));
     assert!(matches!(
         h.entries_calls()[0],
-        Effect::OpenSelection { mode: Mode::History, request: PageRequest { past: 0, limit: PAGE }, .. }
+        Effect::OpenSelection {
+            mode: Mode::History,
+            request: PageRequest { past: 0, limit: PAGE, order: Order::NewestFirst },
+            ..
+        }
     ));
     assert_eq!(h.app.mode(), Mode::History);
     h.key("j");
@@ -906,4 +955,309 @@ fn a_toast_goes_when_its_time_is_up_but_not_a_newer_one() {
     let second = h.app.toast().unwrap().serial;
     h.app.dismiss_toast(second);
     assert_eq!(h.toast(), None);
+}
+
+// ---- Newest first (s) ----------------------------------------------------------
+
+fn newest_first(entries: Vec<Entry>) -> Harness {
+    let mut h = Harness::new(entries);
+    h.app = App::new(Prefs { newest_first: true, ..Prefs::default() }, false);
+    h
+}
+
+#[test]
+fn s_reopens_the_unread_list_newest_first_and_remembers_it() {
+    let mut h = Harness::new(items(5));
+    h.open(false);
+    let (_, fx) = h.app.key(&KeyPress { key: "s".into(), ..KeyPress::default() });
+    assert!(fx.contains(&Effect::SavePrefs(Prefs { newest_first: true, ..Prefs::default() })));
+    h.run(fx);
+    assert_eq!(h.toast(), Some("Unread items newest first"));
+    assert_eq!(h.app.selection_label(), "All unread");
+    assert_eq!(h.press_through(&["j"]), [5, 4, 3, 2, 1]);
+    assert!(h.caught_up());
+    h.key("s");
+    assert_eq!(h.toast(), Some("Unread items oldest first"));
+    assert!(!h.app.newest_first());
+}
+
+#[test]
+fn newest_first_pages_back_through_everything_once() {
+    let mut h = newest_first(items(120));
+    h.open(false);
+    assert_eq!(page_request(h.entries_calls()[0]).map(|r| r.order), Some(Order::NewestFirst));
+    assert_eq!(h.app.position(), "1 / 120");
+    let mut expected = range(1, 120);
+    expected.reverse();
+    assert_eq!(h.press_through(&["j"]), expected);
+    assert!(h.fake.unread_ids().is_empty());
+}
+
+#[test]
+fn newest_first_still_shows_what_arrived_while_you_were_reading() {
+    let mut h = newest_first(items(3));
+    h.open(false);
+    h.key("j");
+    h.key("j");
+    assert_eq!(h.title(), Some("Item 1"));
+    h.fake.entries.push(entry(4, "Arrived later"));
+    h.fake.entries.push(entry(5, "Also later"));
+    h.key("j");
+    // It looked after the newest item loaded, which here was the first one.
+    let last = page_request(h.entries_calls().last().unwrap()).unwrap();
+    assert_eq!((last.order, last.past), (Order::OldestFirst, seconds(&entry(3, "")) - 1));
+    assert_eq!(h.press_through(&["j"]), [4, 5]);
+    assert!(h.caught_up());
+}
+
+#[test]
+fn s_in_the_picker_only_changes_the_next_list_and_history_stays_newest_first() {
+    let mut h = Harness::new(items(3));
+    h.start();
+    h.key("s");
+    assert!(h.entries_calls().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.key("Enter");
+    assert_eq!(h.title(), Some("Item 3"));
+    h.key("s");
+    assert_eq!(h.title(), Some("Item 1"));
+
+    let mut h = newest_first(read_items(3));
+    h.open(true);
+    assert_eq!(h.title(), Some("Read 3"));
+    h.key("s");
+    assert_eq!(h.title(), Some("Read 3"), "history doesn't open again");
+}
+
+// ---- Search (/) -------------------------------------------------------------------
+
+/// Unread and read items, some with “Rust” in the title.
+fn mixed() -> Vec<Entry> {
+    vec![
+        entry(1, "Rust one"),
+        entry_at(2, "Go two", EntryStatus::Read, 2),
+        entry_at(3, "Rust three", EntryStatus::Read, 3),
+        entry(4, "Rust four"),
+        entry(5, "Zig five"),
+    ]
+}
+
+fn typing(key: &str) -> KeyPress {
+    KeyPress { key: key.into(), typing: true, ..KeyPress::default() }
+}
+
+#[test]
+fn slash_searches_read_and_unread_items_and_they_read_like_any_list() {
+    let mut h = Harness::new(mixed());
+    h.open(false);
+    h.key("/");
+    assert_eq!(h.app.overlay(), Overlay::Search);
+    assert!(!h.app.key(&typing("j")).0, "typing in the box isn't a shortcut");
+    assert_eq!(h.title(), Some("Rust one"));
+    let fx = h.app.search("  Rust \n");
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.app.selection_label(), "“Rust”");
+    assert!(h.app.searching() && !h.app.history_badge());
+    assert_eq!(h.app.position(), "1 / 3");
+    assert_eq!(h.title(), Some("Rust four"));
+    assert_eq!(h.press_through(&["j"]), [4, 3, 1]);
+    assert!(h.caught_up());
+    assert_eq!(h.app.end_title(), "End of results");
+    // No looking for arrivals at the end of a search.
+    assert_eq!(h.entries_calls().iter().filter(|c| matches!(c, Effect::Search { .. })).count(), 1);
+    assert!(h.status_calls().contains(&(vec![4], EntryStatus::Read)));
+    assert!(!h.status_calls().iter().any(|(ids, _)| ids == &[3]), "already read");
+    h.key("j");
+    assert!(h.picker_loaded());
+    h.key("/");
+    assert_eq!(h.app.search_query(), "Rust");
+}
+
+#[test]
+fn esc_closes_the_search_box_back_where_it_was_and_so_does_searching_nothing() {
+    let mut h = Harness::new(mixed());
+    h.start();
+    h.key("/");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.key("Enter");
+    h.key("/");
+    let fx = h.app.search("   ");
+    assert!(fx.is_empty());
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.app.selection_label(), "All unread");
+    h.key("/");
+    h.app.cancel_search();
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert!(h.app.search("Rust").is_empty(), "the box is closed");
+}
+
+#[test]
+fn search_results_load_a_page_at_a_time_by_offset() {
+    let mut h = Harness::new(items(120));
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Item");
+    h.run(fx);
+    assert_eq!(h.app.position(), "1 / 120");
+    assert_eq!(h.app.queue().len(), PAGE);
+    for _ in 0..PAGE - 10 {
+        h.key("n");
+    }
+    assert!(matches!(h.entries_calls().last(), Some(Effect::Search { offset: PAGE, first: false, .. })));
+    let mut expected = range(1, 120);
+    expected.reverse();
+    let shown = h.press_through(&["n"]);
+    assert_eq!(shown, expected[PAGE - 10..]);
+    assert!(h.caught_up());
+}
+
+#[test]
+fn shift_a_doesnt_mark_search_results_read_all_at_once() {
+    let mut h = Harness::new(mixed());
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.toast(), Some("Search results can't be marked read all at once"));
+}
+
+#[test]
+fn a_search_answer_after_opening_something_else_changes_nothing() {
+    let mut h = Harness::new(items(60));
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Item");
+    h.run(fx);
+    h.hold_next_page = true;
+    for _ in 0..PAGE - 10 {
+        h.key("n");
+    }
+    h.key("p");
+    h.key("Enter");
+    h.answer();
+    assert!(!h.app.searching());
+    assert_eq!(h.app.queue().len(), PAGE);
+    assert_eq!(h.title(), Some("Item 1"));
+}
+
+// ---- Shift+A in the picker ----------------------------------------------------------
+
+#[test]
+fn shift_a_in_the_picker_asks_then_marks_the_row_read() {
+    let mut h = Harness::new(items(3));
+    h.start();
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert_eq!(h.app.confirm_text(), "Mark all 3 unread items in “All unread” as read?");
+    let counts_before = h.calls.iter().filter(|c| **c == Effect::FeedCounts).count();
+    h.key("y");
+    assert!(h.fake.unread_ids().is_empty());
+    assert_eq!(h.toast(), Some("Marked “All unread” read"));
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.calls.iter().filter(|c| **c == Effect::FeedCounts).count(), counts_before + 1);
+}
+
+#[test]
+fn shift_a_in_the_picker_can_be_cancelled_and_says_when_theres_nothing() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    h.shift("A");
+    h.key("n");
+    assert_eq!(h.fake.unread_ids(), [1, 2]);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.mark_elsewhere(&[1, 2]);
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.toast(), Some("Nothing unread in “All unread”"));
+    h.key("h");
+    h.shift("A");
+    assert_eq!(h.toast(), Some("These are read already. Press h for unread items."));
+}
+
+#[test]
+fn shift_a_in_the_picker_shows_the_open_queue_read_too() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    h.key("p");
+    h.key("ArrowDown"); // the category
+    h.shift("A");
+    assert_eq!(h.app.confirm_text(), "Mark all 3 unread items in “Dev” as read?");
+    h.key("y");
+    h.key("Escape");
+    assert_eq!(h.app.current().map(|e| e.status), Some(EntryStatus::Read));
+    assert!(h.app.queue().iter().all(|e| e.status == EntryStatus::Read));
+}
+
+// ---- The image viewer (v) ----------------------------------------------------------
+
+fn with_images() -> Harness {
+    let mut article = entry(1, "Pictures");
+    article.content = "<p>a</p><img src='/a.png' alt='First'>\
+                       <p><a href='https://example.com/b-big'><img src='https://example.com/b.png'></a></p>"
+        .into();
+    let mut h = Harness::new(vec![article, entry(2, "Words")]);
+    h.open(false);
+    h
+}
+
+fn viewing(h: &Harness) -> Option<(&str, usize)> {
+    h.app.viewer().map(|v| (v.images[v.index].src.as_str(), v.index))
+}
+
+#[test]
+fn v_steps_through_the_articles_images_and_esc_closes() {
+    let mut h = with_images();
+    h.key("v");
+    assert_eq!(h.app.overlay(), Overlay::Image);
+    assert_eq!(viewing(&h), Some(("https://example.com/a.png", 0)));
+    assert_eq!(h.app.viewer().unwrap().images[0].alt, "First");
+    h.key("ArrowRight");
+    h.key("ArrowRight");
+    assert_eq!(viewing(&h), Some(("https://example.com/b.png", 1)));
+    h.key("o");
+    assert!(
+        h.calls.contains(&Effect::OpenInBrowser { url: "https://example.com/b-big".into(), then: AfterOpen::Nothing })
+    );
+    h.key("j");
+    assert_eq!(h.title(), Some("Pictures"), "the viewer keeps the reader's keys");
+    h.key("ArrowLeft");
+    assert_eq!(viewing(&h).map(|v| v.1), Some(0));
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert!(h.app.viewer().is_none());
+    // A toolbar button closes it too (on the Mac the toolbar is still there).
+    h.key("v");
+    let fx = h.app.action(Action::Prev);
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::None);
+    h.key("j");
+    assert_eq!(h.title(), Some("Words"));
+    h.key("v");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.toast(), Some("This article has no images"));
+}
+
+#[test]
+fn clicking_an_image_opens_the_viewer_on_it() {
+    let mut h = with_images();
+    h.app.view_image("https://example.com/b.png");
+    assert_eq!(viewing(&h), Some(("https://example.com/b.png", 1)));
+    h.app.close_viewer();
+    assert_eq!(h.app.overlay(), Overlay::None);
+    h.app.view_image("https://elsewhere.example/c.png");
+    assert_eq!(viewing(&h), Some(("https://elsewhere.example/c.png", 0)));
+    assert_eq!(h.app.viewer().unwrap().images.len(), 1);
+}
+
+#[test]
+fn the_article_after_this_one_is_known_ahead() {
+    let mut h = Harness::new(items(2));
+    h.open(false);
+    assert_eq!(h.app.upcoming().map(|e| e.id), Some(2));
+    h.key("j");
+    assert!(h.app.upcoming().is_none());
 }

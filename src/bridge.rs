@@ -33,11 +33,12 @@ pub mod qobject {
         #[qproperty(QString, screen)]
         #[qproperty(QString, end_title)]
         #[qproperty(QString, window_title)]
-        // "none", "picker", "help", "confirm", "settings" or "onboarding".
+        // "none", "picker", "help", "confirm", "settings", "onboarding", "search" or "image".
         #[qproperty(QString, overlay)]
         // Top bar
         #[qproperty(QString, selection_label)]
         #[qproperty(bool, history)]
+        #[qproperty(bool, searching)]
         #[qproperty(QString, position)]
         #[qproperty(bool, readeck)]
         // The article. The serial changes with the article or its text, not with a re-render for the theme.
@@ -51,6 +52,14 @@ pub mod qobject {
         #[qproperty(QString, status)]
         // The body as JSON blocks (see content/convert.rs).
         #[qproperty(QString, blocks)]
+        // The next article's images as a JSON list of URLs, loading while this one is read.
+        #[qproperty(QString, prefetch_images)]
+        // The image viewer: the image on screen, its alt text, and "2 / 5" when there are more.
+        #[qproperty(QString, viewer_src)]
+        #[qproperty(QString, viewer_alt)]
+        #[qproperty(QString, viewer_position)]
+        // The search box starts from the last search.
+        #[qproperty(QString, search_query)]
         // Picker
         #[qproperty(QString, picker_state)]
         #[qproperty(QString, picker_error)]
@@ -58,6 +67,8 @@ pub mod qobject {
         #[qproperty(QString, picker_rows)]
         #[qproperty(i32, picker_cursor)]
         #[qproperty(bool, picker_history)]
+        // Unread items come newest first.
+        #[qproperty(bool, newest_first)]
         // Help, confirm, toast
         // JSON `[[keys, action], …]`.
         #[qproperty(QString, help_lines)]
@@ -114,7 +125,7 @@ pub mod qobject {
             typing: bool,
             at_bottom: bool,
         ) -> bool;
-        /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help".
+        /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help", "search", "order".
         #[qinvokable]
         fn press(self: Pin<&mut Model>, button: &QString);
         #[qinvokable]
@@ -135,6 +146,17 @@ pub mod qobject {
         );
         #[qinvokable]
         fn cancel_settings(self: Pin<&mut Model>);
+        /// The search box's Enter.
+        #[qinvokable]
+        fn search(self: Pin<&mut Model>, query: &QString);
+        #[qinvokable]
+        fn cancel_search(self: Pin<&mut Model>);
+        /// A click on an image in the article.
+        #[qinvokable]
+        fn view_image(self: Pin<&mut Model>, src: &QString);
+        /// A click in the image viewer.
+        #[qinvokable]
+        fn close_viewer(self: Pin<&mut Model>);
         #[qinvokable]
         fn dismiss_toast(self: Pin<&mut Model>, serial: i32);
         /// The window regained focus or the system appearance changed (macOS follows the theme this way).
@@ -170,6 +192,15 @@ struct Rendered {
     palette: u64,
 }
 
+/// The next article, converted in the background while this one is read.
+struct Prefetched {
+    key: Rendered,
+    json: String,
+    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    lost: String,
+    images: Vec<String>,
+}
+
 pub struct ModelRust {
     screen: QString,
     end_title: QString,
@@ -177,6 +208,7 @@ pub struct ModelRust {
     overlay: QString,
     selection_label: QString,
     history: bool,
+    searching: bool,
     position: QString,
     readeck: bool,
     article_serial: i32,
@@ -188,11 +220,17 @@ pub struct ModelRust {
     reading_time: i32,
     status: QString,
     blocks: QString,
+    prefetch_images: QString,
+    viewer_src: QString,
+    viewer_alt: QString,
+    viewer_position: QString,
+    search_query: QString,
     picker_state: QString,
     picker_error: QString,
     picker_rows: QString,
     picker_cursor: i32,
     picker_history: bool,
+    newest_first: bool,
     help_lines: QString,
     confirm_text: QString,
     toast_message: QString,
@@ -232,6 +270,9 @@ pub struct ModelRust {
     palette: Palette,
     watcher: Option<theme::Watcher>,
     rendered: Option<Rendered>,
+    prefetched: Option<Prefetched>,
+    /// The article being converted ahead, so it isn't started twice.
+    prefetching: Option<Rendered>,
     /// Whether the settings form on screen was filled in from the loaded values yet.
     settings_shown: bool,
 }
@@ -253,6 +294,7 @@ impl Default for ModelRust {
             overlay: QString::from("none"),
             selection_label: QString::default(),
             history: false,
+            searching: false,
             position: QString::default(),
             readeck: false,
             article_serial: 0,
@@ -264,11 +306,17 @@ impl Default for ModelRust {
             reading_time: 0,
             status: QString::default(),
             blocks: QString::from("[]"),
+            prefetch_images: QString::from("[]"),
+            viewer_src: QString::default(),
+            viewer_alt: QString::default(),
+            viewer_position: QString::default(),
+            search_query: QString::default(),
             picker_state: QString::from("loading"),
             picker_error: QString::default(),
             picker_rows: QString::from("[]"),
             picker_cursor: 0,
             picker_history: false,
+            newest_first: false,
             help_lines: QString::from("[]"),
             confirm_text: QString::default(),
             toast_message: QString::default(),
@@ -307,6 +355,8 @@ impl Default for ModelRust {
             palette: Palette::default(),
             watcher: None,
             rendered: None,
+            prefetched: None,
+            prefetching: None,
             settings_shown: false,
         }
     }
@@ -446,6 +496,26 @@ impl qobject::Model {
         self.run(fx);
     }
 
+    pub fn search(mut self: Pin<&mut Self>, query: &QString) {
+        let fx = self.as_mut().state().app.search(&query.to_string());
+        self.run(fx);
+    }
+
+    pub fn cancel_search(mut self: Pin<&mut Self>) {
+        self.as_mut().state().app.cancel_search();
+        self.sync();
+    }
+
+    pub fn view_image(mut self: Pin<&mut Self>, src: &QString) {
+        self.as_mut().state().app.view_image(&src.to_string());
+        self.sync();
+    }
+
+    pub fn close_viewer(mut self: Pin<&mut Self>) {
+        self.as_mut().state().app.close_viewer();
+        self.sync();
+    }
+
     pub fn dismiss_toast(mut self: Pin<&mut Self>, serial: i32) {
         self.as_mut().state().app.dismiss_toast(u64::try_from(serial).unwrap_or(0));
         self.sync();
@@ -487,7 +557,14 @@ impl qobject::Model {
         let s = self.as_mut().state();
         let app = &s.app;
         let (screen, overlay) = (app.screen().name(), app.overlay().name());
-        let (end_title, history) = (app.end_title(), app.history_badge());
+        let (end_title, history, searching) = (app.end_title(), app.history_badge(), app.searching());
+        let search_query = app.search_query().to_string();
+        let viewer = app.viewer().map(|v| {
+            let image = &v.images[v.index];
+            let n = v.images.len();
+            let position = if n > 1 { format!("{} / {n}", v.index + 1) } else { String::new() };
+            (image.src.clone(), image.alt.clone(), position)
+        });
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
         let confirm = app.confirm_text().to_string();
@@ -500,6 +577,12 @@ impl qobject::Model {
         self.as_mut().set_window_title(qs(&window_title));
         self.as_mut().set_selection_label(qs(&label));
         self.as_mut().set_history(history);
+        self.as_mut().set_searching(searching);
+        self.as_mut().set_search_query(qs(&search_query));
+        let (src, alt, position_in_viewer) = viewer.unwrap_or_default();
+        self.as_mut().set_viewer_src(qs(&src));
+        self.as_mut().set_viewer_alt(qs(&alt));
+        self.as_mut().set_viewer_position(qs(&position_in_viewer));
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
         self.as_mut().set_confirm_text(qs(&confirm));
@@ -522,14 +605,18 @@ impl qobject::Model {
         let key = Rendered { id: entry.id, content: hash(&entry.content), palette };
         let previous = s.rendered;
         if previous != Some(key) {
-            let rendered = convert::convert(&entry.content, &entry.url, &s.palette);
-            if *DEBUG {
-                let lost = rendered.stats.summary();
-                if !lost.is_empty() {
-                    eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+            let ready = s.prefetched.take_if(|p| p.key == key);
+            let (json, lost) = match ready {
+                Some(p) => (p.json, p.lost),
+                None => {
+                    let rendered = convert::convert(&entry.content, &entry.url, &s.palette);
+                    let json = serde_json::to_string(&rendered.blocks).unwrap_or_else(|_| "[]".into());
+                    (json, rendered.stats.summary())
                 }
+            };
+            if *DEBUG && !lost.is_empty() {
+                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
             }
-            let json = serde_json::to_string(&rendered.blocks).unwrap_or_else(|_| "[]".into());
             s.rendered = Some(key);
             let new_article = previous.is_none_or(|p| p.id != key.id || p.content != key.content);
             self.as_mut().set_blocks(qs(&json));
@@ -545,7 +632,45 @@ impl qobject::Model {
         self.as_mut().set_author(qs(&entry.author));
         self.as_mut().set_published_at(qs(&entry.published_at));
         self.as_mut().set_reading_time(to_i32(entry.reading_time));
-        self.set_status(qs(crate::app::status_name(entry.status)));
+        self.as_mut().set_status(qs(crate::app::status_name(entry.status)));
+        // After the article's own images exist: the next one's must not take their place in Qt's image cache.
+        self.prefetch();
+    }
+
+    /// Converts the next article in the background, and then lists its images for the window to load, so it's
+    /// ready by the time you get there.
+    fn prefetch(mut self: Pin<&mut Self>) {
+        let s = self.as_mut().state();
+        let Some(next) = s.app.upcoming().cloned() else { return };
+        let key = Rendered { id: next.id, content: hash(&next.content), palette: palette_hash(&s.palette) };
+        if s.prefetched.as_ref().is_some_and(|p| p.key == key) || s.prefetching == Some(key) {
+            return;
+        }
+        s.prefetching = Some(key);
+        let palette = s.palette.clone();
+        let qt = self.qt_thread();
+        RUNTIME.spawn_blocking(move || {
+            let rendered = convert::convert(&next.content, &next.url, &palette);
+            let prefetched = Prefetched {
+                key,
+                json: serde_json::to_string(&rendered.blocks).unwrap_or_else(|_| "[]".into()),
+                lost: rendered.stats.summary(),
+                images: convert::image_refs(&rendered.blocks).into_iter().map(|i| i.src).collect(),
+            };
+            let _ = qt.queue(move |model| model.prefetched(prefetched));
+        });
+    }
+
+    /// Keeps the converted article, unless you've moved on and another one is being converted meanwhile.
+    fn prefetched(mut self: Pin<&mut Self>, prefetched: Prefetched) {
+        let s = self.as_mut().state();
+        if s.prefetching != Some(prefetched.key) {
+            return;
+        }
+        s.prefetching = None;
+        let images = serde_json::to_string(&prefetched.images).unwrap_or_else(|_| "[]".into());
+        s.prefetched = Some(prefetched);
+        self.set_prefetch_images(qs(&images));
     }
 
     fn sync_picker(mut self: Pin<&mut Self>) {
@@ -563,10 +688,12 @@ impl qobject::Model {
             .collect();
         let rows = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into());
         let (cursor, history) = (to_i32(s.app.picker_cursor()), s.app.picker_mode() == Mode::History);
+        let newest_first = s.app.newest_first();
         self.as_mut().set_picker_state(qs(state));
         self.as_mut().set_picker_error(qs(&error));
         self.as_mut().set_picker_rows(qs(&rows));
         self.as_mut().set_picker_cursor(cursor);
+        self.as_mut().set_newest_first(newest_first);
         self.set_picker_history(history);
     }
 

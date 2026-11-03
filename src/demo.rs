@@ -3,6 +3,7 @@
 //! All feeds, authors and articles here are made up.
 
 use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::paging::Order;
 
 struct DemoFeed {
     id: i64,
@@ -114,21 +115,36 @@ pub fn feed_counts() -> Vec<FeedCount> {
         .collect()
 }
 
-/// A page, the way Miniflux pages: unread oldest first, published after `past`, or read newest first, published
-/// before it (0: from the start). History shows the same articles again, marked read.
-pub fn entries(sel: Selection, status: EntryStatus, past: i64, limit: usize) -> EntryPage {
+/// A page, the way Miniflux pages: oldest first, published after `past`, or newest first, published before it
+/// (0: from the start). History shows the same articles again, marked read.
+pub fn entries(sel: Selection, status: EntryStatus, order: Order, past: i64, limit: usize) -> EntryPage {
     let mut all = selection(sel);
-    if status == EntryStatus::Read {
+    if order == Order::NewestFirst {
         all.reverse();
     }
-    all.retain(|e| match status {
+    all.retain(|e| match order {
         _ if past <= 0 => true,
-        EntryStatus::Unread => unix_seconds(&e.published_at) > past,
-        EntryStatus::Read => unix_seconds(&e.published_at) < past,
+        Order::OldestFirst => unix_seconds(&e.published_at) > past,
+        Order::NewestFirst => unix_seconds(&e.published_at) < past,
     });
     let total = all.len() as i64;
     let entries = all.into_iter().take(limit).map(|e| Entry { status, ..e }).collect();
     EntryPage { total, entries }
+}
+
+/// Articles whose title or text has every word of `query` (any case), newest first, `limit` from `offset`.
+pub fn search(query: &str, offset: usize, limit: usize) -> EntryPage {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut found: Vec<Entry> = selection(Selection::All)
+        .into_iter()
+        .filter(|e| {
+            let text = format!("{} {}", e.title, e.content).to_lowercase();
+            !words.is_empty() && words.iter().all(|w| text.contains(w.as_str()))
+        })
+        .collect();
+    found.reverse();
+    let total = found.len() as i64;
+    EntryPage { total, entries: found.into_iter().skip(offset).take(limit).collect() }
 }
 
 pub fn newest_unread_id(sel: Selection) -> i64 {
@@ -305,47 +321,76 @@ mod tests {
 
     #[test]
     fn selections_filter_consistently() {
-        let all = entries(Selection::All, EntryStatus::Unread, 0, 100);
+        let all = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 100);
         assert_eq!(all.total, ENTRIES.len() as i64);
         assert!(all.entries.iter().all(|e| e.status == EntryStatus::Unread));
         assert_eq!(ids(&all), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
         assert_eq!(newest_unread_id(Selection::All), ENTRIES.len() as i64);
 
-        let dev = entries(Selection::Category { id: 1 }, EntryStatus::Unread, 0, 100).entries;
+        let dev = entries(Selection::Category { id: 1 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries;
         assert!(dev.iter().all(|e| [1, 2].contains(&e.feed.id)));
         assert_eq!(dev.len(), all.entries.iter().filter(|e| [1, 2].contains(&e.feed.id)).count());
 
-        let watches = entries(Selection::Feed { id: 5 }, EntryStatus::Unread, 0, 100).entries;
+        let watches = entries(Selection::Feed { id: 5 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries;
         assert_eq!(watches.len(), 2);
         assert!(watches.iter().all(|e| e.feed.title == "Escapement Journal"));
         assert_eq!(unread_count(Selection::Feed { id: 5 }, watches[0].id), 1);
         assert_eq!(mark_read_up_to(Selection::Feed { id: 5 }, watches[1].id), 2);
 
-        assert!(entries(Selection::Feed { id: 99 }, EntryStatus::Unread, 0, 100).entries.is_empty());
+        assert!(
+            entries(Selection::Feed { id: 99 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries.is_empty()
+        );
         assert_eq!(newest_unread_id(Selection::Feed { id: 99 }), 0);
     }
 
     #[test]
     fn unread_pages_go_on_after_a_time() {
-        let first = entries(Selection::All, EntryStatus::Unread, 0, 3);
+        let first = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 3);
         assert_eq!((ids(&first), first.total), (vec![1, 2, 3], ENTRIES.len() as i64));
         let past = unix_seconds(&first.entries[2].published_at);
-        let next = entries(Selection::All, EntryStatus::Unread, past, 3);
+        let next = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, past, 3);
         assert_eq!((ids(&next), next.total), (vec![4, 5, 6], ENTRIES.len() as i64 - 3));
     }
 
     #[test]
     fn history_is_read_newest_first_and_paged() {
         let n = ENTRIES.len() as i64;
-        let all = entries(Selection::All, EntryStatus::Read, 0, 100);
+        let all = entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 0, 100);
         assert_eq!(all.total, n);
         assert!(all.entries.iter().all(|e| e.status == EntryStatus::Read));
         assert_eq!(ids(&all), (1..=n).rev().collect::<Vec<_>>());
 
-        let page = entries(Selection::All, EntryStatus::Read, unix_seconds(&all.entries[1].published_at), 3);
+        let page = entries(
+            Selection::All,
+            EntryStatus::Read,
+            Order::NewestFirst,
+            unix_seconds(&all.entries[1].published_at),
+            3,
+        );
         assert_eq!(ids(&page), ids(&all)[2..5]);
         assert_eq!(page.total, n - 2);
-        assert!(entries(Selection::All, EntryStatus::Read, 1, 3).entries.is_empty());
+        assert!(entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 1, 3).entries.is_empty());
+    }
+
+    #[test]
+    fn unread_newest_first_runs_backwards() {
+        let page = entries(Selection::All, EntryStatus::Unread, Order::NewestFirst, 0, 2);
+        let n = ENTRIES.len() as i64;
+        assert_eq!(ids(&page), [n, n - 1]);
+        assert!(page.entries.iter().all(|e| e.status == EntryStatus::Unread));
+    }
+
+    #[test]
+    fn search_finds_every_word_in_any_case_newest_first() {
+        let found = search("WATCH", 0, 100);
+        assert!(found.total >= 2);
+        assert!(ids(&found).windows(2).all(|w| w[0] > w[1]));
+        let tick = search("tick tock", 0, 100);
+        assert_eq!(tick.entries.iter().map(|e| e.title.as_str()).next(), Some(ENTRIES[7].title));
+        assert_eq!(search("tick zebra-crossing", 0, 100).total, 0);
+        assert_eq!(search("  ", 0, 100).total, 0);
+        let paged = search("the", 1, 2);
+        assert_eq!(ids(&paged), ids(&search("the", 0, 100))[1..3]);
     }
 
     #[test]

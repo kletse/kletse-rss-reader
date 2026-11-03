@@ -31,30 +31,39 @@ impl Mode {
     }
 }
 
-/// `past`: unix seconds the page starts after (unread) or before (history); 0 is the start of the list.
+/// Which way a list runs, by publication time. Unread items come oldest first unless you flip it (`s`); history
+/// is always newest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    OldestFirst,
+    NewestFirst,
+}
+
+/// `past`: unix seconds the page starts after (oldest first) or before (newest first); 0 is the start of the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageRequest {
     pub past: i64,
     pub limit: usize,
+    pub order: Order,
 }
 
 /// Where the page after `queue` starts, and how long it is.
 ///
 /// Not an offset: reading moves items out of the server's unread list (j here, or a phone meanwhile) and m moves
 /// them back, so a count of loaded items drifts and skips some, and bookkeeping to correct it can't see what happens
-/// elsewhere. Instead the page starts at the newest loaded item's publication time (the oldest's, in history), which
+/// elsewhere. Instead the page starts at the newest loaded item's publication time (the oldest's, newest first), which
 /// no status change moves. Miniflux filters on whole seconds and doesn't order items published in the same second,
 /// so the page starts a second early and is longer by the loaded items in that overlap; `merge_page` drops them
 /// again. Nothing is skipped, whatever was read or marked unread in the meantime, here or elsewhere.
-pub fn next_page(queue: &[Entry], mode: Mode) -> PageRequest {
+pub fn next_page(queue: &[Entry], order: Order) -> PageRequest {
     let times: Vec<i64> = queue.iter().filter_map(|e| dates::unix_millis(&e.published_at)).collect();
-    let history = mode == Mode::History;
-    let edge = if history { times.iter().min() } else { times.iter().max() };
-    let Some(&edge) = edge else { return PageRequest { past: 0, limit: PAGE } };
-    let past = if history { edge.div_euclid(1000) + 1 } else { (edge + 999).div_euclid(1000) - 1 };
+    let back = order == Order::NewestFirst;
+    let edge = if back { times.iter().min() } else { times.iter().max() };
+    let Some(&edge) = edge else { return PageRequest { past: 0, limit: PAGE, order } };
+    let past = if back { edge.div_euclid(1000) + 1 } else { (edge + 999).div_euclid(1000) - 1 };
     let bound = past * 1000;
-    let overlap = times.iter().filter(|&&t| if history { t < bound } else { t > bound }).count();
-    PageRequest { past, limit: PAGE + overlap }
+    let overlap = times.iter().filter(|&&t| if back { t < bound } else { t > bound }).count();
+    PageRequest { past, limit: PAGE + overlap, order }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,12 +76,16 @@ pub struct Merged {
     pub total: i64,
 }
 
-pub fn merge_page(queue: &[Entry], page: EntryPage) -> Merged {
+/// `skipped`: how many of the list's items come before the page. 0 for a page that starts at a time, as
+/// `next_page` asks, since Miniflux then counts only what's past that time; the offset for search results, where
+/// it counts every match.
+pub fn merge_page(queue: &[Entry], page: EntryPage, skipped: usize) -> Merged {
     // The overlap, and items marked unread elsewhere meanwhile, come back again; skip what we already have.
     let have: HashSet<i64> = queue.iter().map(|e| e.id).collect();
     let returned = i64::try_from(page.entries.len()).unwrap_or(i64::MAX);
     let fresh: Vec<Entry> = page.entries.into_iter().filter(|e| !have.contains(&e.id)).collect();
-    let beyond = (page.total - returned).max(0);
+    let skipped = i64::try_from(skipped).unwrap_or(i64::MAX);
+    let beyond = (page.total - skipped - returned).max(0);
     // A page with nothing new can't lead anywhere new either.
     let more = !fresh.is_empty() && beyond > 0;
     let loaded = i64::try_from(queue.len() + fresh.len()).unwrap_or(i64::MAX);
@@ -117,27 +130,39 @@ pub mod tests {
 
     #[test]
     fn starts_at_the_beginning_of_the_list() {
-        assert_eq!(next_page(&[], Mode::Unread), PageRequest { past: 0, limit: PAGE });
+        assert_eq!(next_page(&[], Order::OldestFirst), PageRequest { past: 0, limit: PAGE, order: Order::OldestFirst });
     }
 
     #[test]
     fn starts_a_second_before_the_newest_unread_item_and_is_longer_by_what_that_second_overlaps() {
         let tied = [entry(1, "A"), entry_at(2, "B", EntryStatus::Read, 5), entry_at(3, "C", EntryStatus::Unread, 5)];
-        assert_eq!(next_page(&tied, Mode::Unread), PageRequest { past: second(&tied[2]) - 1, limit: PAGE + 2 });
+        let request = PageRequest { past: second(&tied[2]) - 1, limit: PAGE + 2, order: Order::OldestFirst };
+        assert_eq!(next_page(&tied, Order::OldestFirst), request);
     }
 
     #[test]
-    fn in_history_starts_a_second_after_the_oldest_item() {
+    fn newest_first_starts_a_second_after_the_oldest_item() {
         let read = [entry_at(9, "A", EntryStatus::Read, 9), entry_at(8, "B", EntryStatus::Read, 8)];
-        assert_eq!(next_page(&read, Mode::History), PageRequest { past: second(&read[1]) + 1, limit: PAGE + 1 });
+        let request = PageRequest { past: second(&read[1]) + 1, limit: PAGE + 1, order: Order::NewestFirst };
+        assert_eq!(next_page(&read, Order::NewestFirst), request);
     }
 
     #[test]
     fn drops_whats_loaded_already_and_stops_at_a_page_with_nothing_new() {
         let loaded = [entry(1, "A"), entry(2, "B")];
         let page = EntryPage { total: 10, entries: vec![entry(2, "B"), entry(3, "C")] };
-        assert_eq!(merge_page(&loaded, page), Merged { fresh: vec![entry(3, "C")], more: true, total: 11 });
+        assert_eq!(merge_page(&loaded, page, 0), Merged { fresh: vec![entry(3, "C")], more: true, total: 11 });
         let page = EntryPage { total: 10, entries: loaded.to_vec() };
-        assert_eq!(merge_page(&loaded, page), Merged { fresh: vec![], more: false, total: 2 });
+        assert_eq!(merge_page(&loaded, page, 0), Merged { fresh: vec![], more: false, total: 2 });
+    }
+
+    #[test]
+    fn an_offset_page_counts_what_came_before_it() {
+        // Search results: the total counts every match, the two loaded ones included.
+        let loaded = [entry(1, "A"), entry(2, "B")];
+        let page = EntryPage { total: 5, entries: vec![entry(3, "C"), entry(4, "D")] };
+        assert_eq!(merge_page(&loaded, page, 2).total, 5);
+        let last = EntryPage { total: 5, entries: vec![entry(5, "E")] };
+        assert!(!merge_page(&[], last, 4).more);
     }
 }

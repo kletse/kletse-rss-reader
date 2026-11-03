@@ -20,7 +20,14 @@ pub enum Action {
     OpenOriginal,
     SaveToReadeck,
     FetchFull,
+    /// Shift+A: the whole list in the reader, the row under the cursor in the picker.
     MarkAllRead,
+    /// `/`: the search box.
+    Search,
+    /// `s`: unread items oldest or newest first.
+    FlipOrder,
+    /// `v`: the article's images, one at a time.
+    ViewImages,
     ToggleMode,
     OpenPicker,
     Narrower,
@@ -50,6 +57,9 @@ pub const READER_KEYS: Keymap = &[
     (&["b"], Action::SaveToReadeck),
     (&["f"], Action::FetchFull),
     (&["A"], Action::MarkAllRead),
+    (&["v"], Action::ViewImages),
+    (&["/"], Action::Search),
+    (&["s"], Action::FlipOrder),
     (&["h"], Action::ToggleMode),
     (&["g", "p", "Tab", "Escape", "ArrowLeft"], Action::OpenPicker),
     (&["["], Action::Narrower),
@@ -63,6 +73,9 @@ pub const PICKER_KEYS: Keymap = &[
     (&["k", "ArrowUp"], Action::PickerMove(-1)),
     (&["Enter", "ArrowRight", "o"], Action::PickerChoose),
     (&["r"], Action::PickerRefresh),
+    (&["A"], Action::MarkAllRead),
+    (&["/"], Action::Search),
+    (&["s"], Action::FlipOrder),
     (&["h"], Action::ToggleMode),
     (&["?"], Action::Help),
     (&["Escape", "g", "p", "Tab"], Action::PickerClose),
@@ -85,6 +98,8 @@ pub fn button_action(button: &str) -> Option<Action> {
         "mode" => Action::ToggleMode,
         "settings" => Action::Settings,
         "help" => Action::Help,
+        "search" => Action::Search,
+        "order" => Action::FlipOrder,
         _ => return None,
     })
 }
@@ -142,7 +157,20 @@ pub const HELP: &[HelpRow] = &[
     row(&[Plain("o")], "open original in browser"),
     row(&[Plain("b")], "save to Readeck, then next"),
     row(&[Plain("f")], "fetch full article (again for feed version)"),
-    row(&[Plain("A")], "mark whole list read"),
+    HelpRow {
+        keys: &[Plain("A")],
+        action: "mark whole list read (in picker: the selected row)",
+        place: Where::Both,
+        picker_note: None,
+    },
+    row(&[Plain("v")], "view the article's images (← / → between them)"),
+    HelpRow { keys: &[Plain("/")], action: "search all feeds, read and unread", place: Where::Both, picker_note: None },
+    HelpRow {
+        keys: &[Plain("s")],
+        action: "unread oldest / newest first (remembered)",
+        place: Where::Both,
+        picker_note: None,
+    },
     HelpRow {
         keys: &[Plain("g"), Plain("p"), Plain("Tab"), Plain("Escape"), Plain("ArrowLeft")],
         action: "feeds picker",
@@ -271,7 +299,8 @@ mod tests {
         let lines = help_lines(false);
         let first: Vec<(&str, &str)> = lines.iter().take(3).map(|(k, a)| (k.as_str(), a.as_str())).collect();
         assert_eq!(first, [("j / ↓", "next (marks read)"), ("n", "skip (keeps unread)"), ("k / ↑", "previous")]);
-        assert!(lines.contains(&("Shift+A".into(), "mark whole list read".into())));
+        assert!(lines.contains(&("Shift+A".into(), "mark whole list read (in picker: the selected row)".into())));
+        assert!(lines.contains(&("/".into(), "search all feeds, read and unread".into())));
         assert!(lines.contains(&("g / p / Tab / Esc / ←".into(), "feeds picker (→ / o picks a row)".into())));
         assert!(lines.contains(&("r".into(), "refresh feeds (in picker)".into())));
         assert!(lines.contains(&("Space / Shift+Space".into(), "scroll; Space at the end = next".into())));

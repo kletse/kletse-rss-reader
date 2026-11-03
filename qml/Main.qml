@@ -41,7 +41,8 @@ ApplicationWindow {
         Component.onCompleted: start()
         onScrollPage: up => reader.scrollPage(up ? -1 : 1)
         onQuitRequested: Qt.quit()
-        onOverlayChanged: keys.forceActiveFocus()
+        // The search box takes the keyboard itself (SearchPanel.qml).
+        onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
     }
 
     // macOS: follow the system appearance and accent colour (it has no event for the accent, so on focus too).
@@ -138,7 +139,33 @@ ApplicationWindow {
             width: parent.width
         }
 
+        // The next article's images, loading while this one is read (bridge.rs `prefetch`). Same source and fill
+        // mode as in Blocks.qml, so the article finds them in Qt's image cache.
+        Repeater {
+            model: {
+                try {
+                    return JSON.parse(model.prefetchImages)
+                } catch (e) {
+                    return []
+                }
+            }
+            delegate: Image {
+                required property string modelData
+                visible: false
+                source: modelData
+                asynchronous: true
+                cache: true
+                fillMode: Image.PreserveAspectFit
+            }
+        }
+
+        Lightbox { ui: win; anchors.fill: parent; visible: model.overlay === "image" }
         Picker { ui: win; anchors.fill: parent; visible: model.overlay === "picker" }
+        Loader {
+            anchors.fill: parent
+            active: model.overlay === "search"
+            sourceComponent: SearchPanel { ui: win }
+        }
         Help { ui: win; anchors.fill: parent; visible: model.overlay === "help" }
         Confirm { ui: win; anchors.fill: parent; visible: model.overlay === "confirm" }
         Toast { ui: win; anchors.fill: parent }

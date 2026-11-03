@@ -30,7 +30,9 @@ T.Button {
 
     // Sized from the parts' natural widths only; the label elides when the button is given less room.
     contentItem: Item {
-        readonly property real iconWidth: (b.glyph !== "" ? glyphText.implicitWidth + 6 : 0) + (b.iconPath !== "" ? 20 : 0)
+        // An icon alone is just the icon; with a label, a gap after it.
+        readonly property real iconWidth: (b.glyph !== "" ? glyphText.implicitWidth + 6 : 0)
+            + (b.iconPath !== "" ? (b.text !== "" ? 20 : 14) : 0)
         implicitWidth: iconWidth + label.implicitWidth
         implicitHeight: Math.max(label.implicitHeight, 14)
 
@@ -63,6 +65,7 @@ T.Button {
             }
             Text {
                 id: label
+                visible: b.text !== ""
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.min(implicitWidth, b.contentItem.width - b.contentItem.iconWidth)
                 text: b.text

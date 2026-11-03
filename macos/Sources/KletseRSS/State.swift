@@ -10,16 +10,23 @@ struct Reply: Decodable {
 struct AppState: Decodable {
     /// "settings", "loading", "article", "end" or "empty".
     let screen: String
-    /// "none", "picker", "help", "confirm", "settings" or "onboarding".
+    /// "none", "picker", "help", "confirm", "settings", "onboarding", "search" or "image".
     let overlay: String
     let endTitle: String
     let windowTitle: String
     let selectionLabel: String
     let history: Bool
+    /// Reading search results.
+    let searching: Bool
     let position: String
     let readeck: Bool
     let article: ArticleInfo?
     let picker: PickerInfo
+    /// The search box starts from the last search.
+    let searchQuery: String
+    let viewer: ViewerInfo?
+    /// The next article's images, to load while this one is read.
+    let prefetchImages: [String]
     /// `[keys, action]` pairs.
     let help: [[String]]
     let confirmText: String
@@ -51,6 +58,17 @@ struct PickerInfo: Decodable {
     let rows: [PickerRow]
     let cursor: Int
     let history: Bool
+    /// Unread items come newest first.
+    let newestFirst: Bool
+}
+
+/// The image viewer: the image on screen, the link it's in, and where it is among the article's images.
+struct ViewerInfo: Decodable {
+    let src: String
+    let alt: String
+    let href: String?
+    let index: Int
+    let count: Int
 }
 
 struct PickerRow: Decodable {

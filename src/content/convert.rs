@@ -97,6 +97,8 @@ const TRANSPARENT: &[&str] = &[
 const MAX_DEPTH: usize = 256;
 /// The furthest an ordered list can start from 1, either way.
 const MAX_LIST_START: i64 = 1_000_000_000;
+/// The most columns or rows a table cell can span; browsers stop there too.
+pub const MAX_SPAN: u32 = 1000;
 
 pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
     convert_with(html, base_url, palette, false)
@@ -473,7 +475,9 @@ impl Converter<'_> {
                 if ce.name() != "td" && ce.name() != "th" {
                     continue;
                 }
-                let span = |attr: &str| ce.attr(attr).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&n| n > 1);
+                let span = |attr: &str| {
+                    ce.attr(attr).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&n| n > 1).map(|n| n.min(MAX_SPAN))
+                };
                 html.push('<');
                 html.push_str(ce.name());
                 if let Some(n) = span("colspan") {
@@ -651,6 +655,15 @@ mod tests {
         assert_eq!(start("start='9223372036854775807'"), 1_000_000_000);
         assert_eq!(start("start='-9223372036854775808'"), -1_000_000_000);
         assert_eq!(start("start='99999999999999999999'"), 1); // not even an i64
+    }
+
+    #[test]
+    fn cell_spans_are_kept_up_to_a_thousand() {
+        let b = blocks(
+            "<table><tr><td colspan='2' rowspan='4000000000'>a</td><td colspan='x' rowspan='1'>b</td></tr></table>",
+        );
+        let [Block::Table { html }] = &b[..] else { panic!("{b:?}") };
+        assert!(html.contains("<td colspan=\"2\" rowspan=\"1000\">a</td><td>b</td>"), "{html}");
     }
 
     #[test]

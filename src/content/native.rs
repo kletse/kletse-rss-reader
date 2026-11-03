@@ -2,7 +2,7 @@
 //! of styled text, so Swift builds attributed strings from data and never parses HTML. Tables become rows of
 //! cells. Whitespace collapses as it does in HTML, except in code.
 
-use super::convert::Block;
+use super::convert::{self, Block};
 use ego_tree::NodeRef;
 use scraper::{Html, Node};
 use serde::Serialize;
@@ -131,7 +131,7 @@ fn table(html: &str) -> Vec<Vec<Cell>> {
             if ce.name() != "td" && ce.name() != "th" {
                 continue;
             }
-            let colspan = ce.attr("colspan").and_then(|v| v.parse().ok()).unwrap_or(1);
+            let colspan = ce.attr("colspan").and_then(|v| v.parse().ok()).unwrap_or(1).clamp(1, convert::MAX_SPAN);
             let mut out = Runs::new(false);
             walk(cell, &Style::default(), &mut out);
             cells.push(Cell { header: ce.name() == "th", colspan, runs: out.runs });
@@ -297,6 +297,8 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0][0].header);
         assert_eq!(rows[0][0].colspan, 2);
+        let wide = table("<table><tr><td colspan=\"4000000000\">a</td><td colspan=\"0\">b</td></tr></table>");
+        assert_eq!((wide[0][0].colspan, wide[0][1].colspan), (1000, 1));
         assert_eq!(rows[1][0].runs.len(), 2);
         assert_eq!(rows[1][1].runs, vec![plain("c")]);
     }

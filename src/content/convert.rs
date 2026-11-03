@@ -147,7 +147,16 @@ fn collect_images(blocks: &[Block], found: &mut Vec<ImageRef>) {
 fn convert_with(html: &str, base_url: &str, palette: &Palette, plain: bool) -> Rendered {
     let doc = Html::parse_fragment(html);
     let base = Url::parse(base_url).ok();
-    let mut c = Converter { base, palette, plain, syntax_theme: None, stats: Stats::default(), link: None, depth: 0 };
+    let mut c = Converter {
+        base,
+        palette,
+        plain,
+        syntax_theme: None,
+        stats: Stats::default(),
+        link: None,
+        depth: 0,
+        in_cell: false,
+    };
     let mut blocks = Vec::new();
     let mut para = Para::default();
     for child in doc.root_element().children() {
@@ -189,6 +198,8 @@ struct Converter<'a> {
     link: Option<String>,
     /// How many elements deep `walk_children` is.
     depth: usize,
+    /// Inside a table cell, where Qt can't nest a table: one in there becomes lines of text.
+    in_cell: bool,
 }
 
 impl Converter<'_> {
@@ -284,6 +295,7 @@ impl Converter<'_> {
                 self.flush(out, para);
                 self.code(node, el, out);
             }
+            "table" if self.in_cell => self.table_inline(node, out, para),
             "table" => {
                 self.flush(out, para);
                 self.table(node, out);
@@ -479,18 +491,11 @@ impl Converter<'_> {
             "<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" style=\"border-collapse:collapse; border-color:{border}\">"
         );
         let mut rows = 0;
-        for row in node.descendants() {
-            let Node::Element(e) = row.value() else { continue };
-            if e.name() != "tr" {
-                continue;
-            }
+        for row in own_rows(node) {
             rows += 1;
             html.push_str("<tr>");
-            for cell in row.children() {
+            for cell in cells(row) {
                 let Node::Element(ce) = cell.value() else { continue };
-                if ce.name() != "td" && ce.name() != "th" {
-                    continue;
-                }
                 let span = |attr: &str| {
                     ce.attr(attr).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&n| n > 1).map(|n| n.min(MAX_SPAN))
                 };
@@ -503,7 +508,9 @@ impl Converter<'_> {
                     html.push_str(&format!(" rowspan=\"{n}\""));
                 }
                 html.push('>');
+                let outer = std::mem::replace(&mut self.in_cell, true);
                 html.push_str(&self.inline_flattened(cell));
+                self.in_cell = outer;
                 html.push_str("</");
                 html.push_str(ce.name());
                 html.push('>');
@@ -513,6 +520,23 @@ impl Converter<'_> {
         html.push_str("</table>");
         if rows > 0 {
             out.push(Block::Table { html });
+        }
+    }
+
+    /// A table inside a table cell: each of its rows a line, the cells set apart with a dot. (Qt's rich text can
+    /// nest tables, but the native layouts can't, and a table in a table is a layout, not data.)
+    fn table_inline(&mut self, node: NodeRef<'_, Node>, out: &mut Vec<Block>, para: &mut Para) {
+        self.flush(out, para);
+        for row in own_rows(node) {
+            let mut first = true;
+            for cell in cells(row) {
+                if !first {
+                    para.html.push_str(" · ");
+                }
+                first = false;
+                self.walk_children(cell, out, para);
+            }
+            self.flush(out, para);
         }
     }
 
@@ -570,6 +594,19 @@ impl Converter<'_> {
             _ => out.push(Block::Caption { html: caption }),
         }
     }
+}
+
+/// The rows of `table` itself (at any depth, with or without a tbody), not those of a table in one of its cells.
+fn own_rows<'a>(table: NodeRef<'a, Node>) -> impl Iterator<Item = NodeRef<'a, Node>> {
+    let is = |node: &NodeRef<'_, Node>, name: &str| matches!(node.value(), Node::Element(e) if e.name() == name);
+    table.descendants().filter(move |row| {
+        is(row, "tr") && row.ancestors().find(|a| is(a, "table")).is_some_and(|t| t.id() == table.id())
+    })
+}
+
+/// The cells of a row.
+fn cells<'a>(row: NodeRef<'a, Node>) -> impl Iterator<Item = NodeRef<'a, Node>> {
+    row.children().filter(|cell| matches!(cell.value(), Node::Element(e) if e.name() == "td" || e.name() == "th"))
 }
 
 /// The text of a `<pre>`, with `<br>` as a newline. Stops following elements at `MAX_DEPTH`, as `walk_children` does.
@@ -672,6 +709,19 @@ mod tests {
         assert_eq!(start("start='9223372036854775807'"), 1_000_000_000);
         assert_eq!(start("start='-9223372036854775808'"), -1_000_000_000);
         assert_eq!(start("start='99999999999999999999'"), 1); // not even an i64
+    }
+
+    #[test]
+    fn a_table_in_a_table_cell_becomes_lines_in_that_cell() {
+        let nested = "<table><tbody><tr><td>outer<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table></td>\
+                      </tr><tr><td>second</td></tr></tbody></table>";
+        let r = convert(nested, "https://example.com/", &Palette::default());
+        let [Block::Table { html }] = &r.blocks[..] else { panic!("{:?}", r.blocks) };
+        assert_eq!(html.matches("<tr>").count(), 2, "{html}");
+        assert!(html.contains("<td>outer<br>a · b<br>c</td>"), "{html}");
+        assert!(html.contains("<td>second</td>"), "{html}");
+        assert_eq!(r.stats.tables, 1);
+        assert!(r.stats.dropped.is_empty(), "{:?}", r.stats.dropped);
     }
 
     #[test]

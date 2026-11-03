@@ -59,6 +59,7 @@ Item {
             topPadding: 12
             bottomPadding: 4
             text: a.model.title
+            textFormat: Text.PlainText
             color: titleHover.hovered ? a.model.accent : a.model.fgBright
             wrapMode: Text.Wrap
             font.family: a.ui.headingFont

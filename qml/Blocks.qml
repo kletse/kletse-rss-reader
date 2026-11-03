@@ -128,6 +128,7 @@ Column {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 text: "image didn't load: " + (fig.b.alt || fig.b.src)
+                textFormat: Text.PlainText
                 color: root.ui.model.muted
                 font.family: root.ui.uiFont
                 font.pixelSize: 12
@@ -307,6 +308,7 @@ Column {
                     id: embedLabel
                     anchors.centerIn: parent
                     text: embedItem.b.label ?? ""
+                    textFormat: Text.PlainText
                     color: root.ui.model.accent
                     font.family: root.ui.uiFont
                     font.pixelSize: root.ui.articleSize * 0.8

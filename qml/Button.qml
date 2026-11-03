@@ -69,6 +69,7 @@ T.Button {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.min(implicitWidth, b.contentItem.width - b.contentItem.iconWidth)
                 text: b.text
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: b.primary ? b.ui.model.bg : (b.hovered ? b.ui.model.fgBright : b.ui.model.fg)
                 font: b.font

@@ -109,6 +109,7 @@ Panel {
                 x: row.modelData.depth === 1 ? 32 : 14
                 width: parent.width - x - count.width - 26
                 text: row.modelData.label
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: row.current || row.modelData.depth === 0 ? picker.model.fgBright : picker.model.fg
                 font.family: picker.ui.uiFont

@@ -57,6 +57,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: box.model.viewerAlt
+            textFormat: Text.PlainText
             color: box.model.fg
             wrapMode: Text.Wrap
             maximumLineCount: 3

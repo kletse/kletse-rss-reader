@@ -519,9 +519,10 @@ impl Converter<'_> {
                 }
                 Block::Code { html, .. } => parts.push(format!("<code>{html}</code>")),
                 Block::Embed { href, label } => parts.push(format!(
-                    "<a href=\"{}\" style=\"color:{}\">{label}</a>",
+                    "<a href=\"{}\" style=\"color:{}\">{}</a>",
                     highlight::escape(&href),
-                    self.palette.accent
+                    self.palette.accent,
+                    highlight::escape(&label)
                 )),
                 Block::Quote { .. } | Block::List { .. } | Block::Table { .. } | Block::Rule => {
                     *self.stats.dropped.entry("nested block in table cell".into()).or_default() += 1;
@@ -664,6 +665,18 @@ mod tests {
         );
         let [Block::Table { html }] = &b[..] else { panic!("{b:?}") };
         assert!(html.contains("<td colspan=\"2\" rowspan=\"1000\">a</td><td>b</td>"), "{html}");
+    }
+
+    #[test]
+    fn an_embeds_label_is_text_wherever_it_ends_up() {
+        // No host to show: the label says what the address was, and the address may contain anything.
+        let hostile = "http://[<b style=\"color:red\">boo";
+        let b = blocks(&format!("<iframe src='{hostile}'></iframe>"));
+        assert_eq!(b, vec![Block::Embed { href: hostile.into(), label: format!("▶ Embedded media · {hostile}") }]);
+        let b = blocks(&format!("<table><tr><td><iframe src='{hostile}'></iframe></td></tr></table>"));
+        let [Block::Table { html }] = &b[..] else { panic!("{b:?}") };
+        assert!(html.contains("· http://[&lt;b style=&quot;color:red&quot;&gt;boo</a>"), "{html}");
+        assert!(!html.contains("<b "), "{html}");
     }
 
     #[test]

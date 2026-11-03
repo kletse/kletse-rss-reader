@@ -2,7 +2,7 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, HistoryPage, Selection};
+use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 
 struct DemoFeed {
     id: i64,
@@ -131,27 +131,6 @@ pub fn entries(sel: Selection, status: EntryStatus, past: i64, limit: usize) -> 
     EntryPage { total, entries }
 }
 
-/// A page of the history, the way Miniflux pages it (see `HistoryPage`). Every demo article was read when it was
-/// published.
-pub fn history(sel: Selection, page: HistoryPage) -> EntryPage {
-    let mut all: Vec<Entry> = selection(sel).into_iter().map(|e| Entry { status: EntryStatus::Read, ..e }).collect();
-    let read = |e: &Entry| unix_seconds(&e.changed_at);
-    let limit = match page {
-        HistoryPage::ChangedBefore { before, limit } => {
-            all.retain(|e| before <= 0 || read(e) < before);
-            all.sort_by_key(|e| std::cmp::Reverse(read(e)));
-            limit
-        }
-        HistoryPage::AroundSecond { second, before_id, limit } => {
-            all.retain(|e| read(e) > second - 1 && read(e) < second + 1 && (before_id <= 0 || e.id < before_id));
-            all.sort_by_key(|e| std::cmp::Reverse(e.id));
-            limit
-        }
-    };
-    let total = all.len() as i64;
-    EntryPage { total, entries: all.into_iter().take(limit).collect() }
-}
-
 pub fn newest_unread_id(sel: Selection) -> i64 {
     selection(sel).iter().map(|e| e.id).max().unwrap_or(0)
 }
@@ -198,8 +177,6 @@ fn selection(sel: Selection) -> Vec<Entry> {
             author: e.author.into(),
             content: e.content.into(),
             published_at: e.published_at.into(),
-            // Read, in the demo's history, when it was published.
-            changed_at: e.published_at.into(),
             status: EntryStatus::Unread,
             reading_time: e.minutes,
             feed: EntryFeed { id: e.feed, title: feed(e.feed).title.into() },

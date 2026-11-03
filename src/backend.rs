@@ -6,7 +6,6 @@ use crate::config;
 use crate::demo;
 use crate::error::Error;
 use crate::miniflux::{self, EntryPage, EntryStatus, Selection};
-use crate::paging::Request;
 use crate::readeck;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -106,13 +105,11 @@ impl Backend {
         Ok(self.status())
     }
 
-    async fn page(&self, sel: Selection, request: Request) -> Result<EntryPage, Error> {
-        match request {
-            Request::Unread(r) if self.demo => Ok(demo::entries(sel, EntryStatus::Unread, r.past, r.limit)),
-            Request::Unread(r) => self.miniflux()?.entries(sel, EntryStatus::Unread, r.past, r.limit).await,
-            Request::History(page) if self.demo => Ok(demo::history(sel, page)),
-            Request::History(page) => self.miniflux()?.history(sel, page).await,
+    async fn entries(&self, sel: Selection, status: EntryStatus, past: i64, limit: usize) -> Result<EntryPage, Error> {
+        if self.demo {
+            return Ok(demo::entries(sel, status, past, limit));
         }
+        self.miniflux()?.entries(sel, status, past, limit).await
     }
 
     async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
@@ -126,17 +123,19 @@ impl Backend {
     pub async fn run(&self, effect: Effect) -> Option<Outcome> {
         let msg = |e: Error| e.message();
         Some(match effect {
-            Effect::OpenSelection { load, selection, request } => {
-                let page = self.page(selection, request);
-                let result = match request {
-                    Request::Unread(_) => tokio::try_join!(page, self.newest_unread_id(selection)),
-                    Request::History(_) => page.await.map(|page| (page, 0)),
+            Effect::OpenSelection { load, selection, mode, request } => {
+                let status = mode.status();
+                let page = self.entries(selection, status, request.past, request.limit);
+                let result = if status == EntryStatus::Unread {
+                    tokio::try_join!(page, self.newest_unread_id(selection))
+                } else {
+                    page.await.map(|page| (page, 0))
                 };
-                Outcome::Opened { load, request, result: result.map_err(msg) }
+                Outcome::Opened { load, result: result.map_err(msg) }
             }
-            Effect::LoadPage { load, selection, request, arrivals } => {
-                let result = self.page(selection, request).await;
-                Outcome::Page { load, request, arrivals, result: result.map_err(msg) }
+            Effect::LoadPage { load, selection, mode, request, arrivals } => {
+                let result = self.entries(selection, mode.status(), request.past, request.limit).await;
+                Outcome::Page { load, arrivals, result: result.map_err(msg) }
             }
             Effect::SetStatus { ids, status, revert, announce } => {
                 let result = if self.demo { Ok(()) } else { self.set_status(&ids, status).await };

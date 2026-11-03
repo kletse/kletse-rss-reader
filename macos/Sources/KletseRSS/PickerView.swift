@@ -15,7 +15,7 @@ struct PickerView: View {
                 Button { model.press("help") } label: { Image(systemName: "keyboard") }
                     .help("Keys (?)")
                 Button(history ? "Unread" : "History") { model.press("mode") }
-                    .help(history ? "Unread items (h)" : "Read items, last read first (h)")
+                    .help(history ? "Unread items (h)" : "Read items, newest first (h)")
                 Button { model.press("settings") } label: { Image(systemName: "gearshape") }
                     .help("Settings (,)")
             }

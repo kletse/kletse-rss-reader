@@ -1,4 +1,4 @@
-//! Kletse RSS: one unread article at a time, oldest first. Or, in history mode, read ones, last read first.
+//! Kletse RSS: one unread article at a time, oldest first. Or, in history mode, read ones, newest first.
 //!
 //! The window is Qt Quick (qml/), driven from Rust through one bridge object (bridge.rs, in the library). All
 //! behaviour lives in app.rs, which never waits on anything and is tested without Qt; backend.rs talks to the

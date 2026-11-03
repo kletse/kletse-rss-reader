@@ -141,7 +141,7 @@ so keep that in mind before sharing a screenshot.
 - **SwiftUI only draws and forwards**, like the QML: `Model.swift` holds the last reply. Every key goes through
   an `NSEvent` local monitor (`Keyboard.swift`) to the core first, named as `keyName()` in Main.qml names them,
   with ⌘ as `ctrl` and Control as `meta`. Keys the core doesn't use carry on (⌘Q, typing in a field). Overlays
-  map onto native presentation: the picker is a popover, help a sheet, confirm an alert. Their bindings only
+  map onto native presentation: the picker and help are sheets, confirm an alert. Their bindings only
   ask the core to close them.
 - **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
   are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
@@ -153,5 +153,5 @@ so keep that in mind before sharing a screenshot.
 - **The window must be told to open at launch** (`.defaultLaunchBehavior(.presented)`): macOS remembers a
   `Window` that was closed at the last quit, per bundle id, and otherwise starts with no window at all.
 - **Snapshots work as for Qt:** `KLETSE_RSS_DEMO=1 KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter ?"
-  "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. A popover or sheet
-  goes to `/tmp/shot-2.png`; alerts don't draw into a bitmap.
+  "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. An open sheet is drawn
+  over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap.

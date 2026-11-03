@@ -1,4 +1,4 @@
-// The feeds picker, in a popover from the toolbar: "All unread", categories, and their feeds with unread counts.
+// The feeds picker, in a sheet: "All unread", categories, and their feeds with unread counts.
 // In history mode the same, with read counts. The cursor and the rows come from the core; a click picks a row.
 import SwiftUI
 

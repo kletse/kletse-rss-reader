@@ -1,5 +1,5 @@
 // The window: the toolbar, the reader (an article, a message or the settings form), and what goes over it:
-// the feeds picker (a popover), the keys (a sheet), the confirm dialog (an alert) and toasts.
+// the feeds picker and the keys (sheets), the confirm dialog (an alert) and toasts.
 import SwiftUI
 
 struct ContentView: View {
@@ -21,7 +21,13 @@ struct ContentView: View {
         .navigationTitle(state?.windowTitle ?? "Kletse RSS")
         .toolbar(removing: .title)
         .toolbar { if state?.screen != "settings" { toolbar(state) } }
-        .sheet(isPresented: binding("help", dismiss: model.closeHelp)) { HelpView(model: model) }
+        // One sheet for both: SwiftUI shows one at a time, and the core goes from the picker to the keys directly.
+        .sheet(item: sheet) { sheet in
+            switch sheet {
+            case .picker: PickerView(model: model)
+            case .help: HelpView(model: model)
+            }
+        }
         .alert(
             state?.confirmText ?? "",
             isPresented: binding("confirm", dismiss: {}),
@@ -50,9 +56,6 @@ struct ContentView: View {
                     .labelStyle(.titleAndIcon)
             }
             .help("Feeds (p)")
-            .popover(isPresented: binding("picker", dismiss: model.pickerBackdrop), arrowEdge: .bottom) {
-                PickerView(model: model)
-            }
         }
         if let position = state?.position, !position.isEmpty {
             ToolbarItem(placement: .principal) {
@@ -75,7 +78,28 @@ struct ContentView: View {
         }
     }
 
-    /// Shown while the core has `overlay` up; a dismissal by the system (a click outside the popover) asks it.
+    private enum Sheet: String, Identifiable {
+        case picker, help
+        var id: String { rawValue }
+    }
+
+    /// The sheet for the core's overlay; a dismissal by the system asks the core, which may keep the picker up
+    /// (with nothing chosen yet, there is nothing to go back to).
+    private var sheet: Binding<Sheet?> {
+        Binding(
+            get: { model.state.flatMap { Sheet(rawValue: $0.overlay) } },
+            set: { shown in
+                guard shown == nil else { return }
+                switch model.state?.overlay {
+                case "picker": model.pickerBackdrop()
+                case "help": model.closeHelp()
+                default: break
+                }
+            }
+        )
+    }
+
+    /// Shown while the core has `overlay` up; a dismissal by the system asks it.
     private func binding(_ overlay: String, dismiss: @escaping () -> Void) -> Binding<Bool> {
         Binding(
             get: { model.state?.overlay == overlay },

@@ -32,9 +32,13 @@ pub mod qobject {
         // What fills the window: "settings", "loading", "article", "end" or "empty".
         #[qproperty(QString, screen)]
         #[qproperty(QString, end_title)]
+        // Where j goes from the end of the list.
+        #[qproperty(QString, end_hint)]
         #[qproperty(QString, window_title)]
         // "none", "picker", "help", "confirm", "settings", "onboarding", "search" or "image".
         #[qproperty(QString, overlay)]
+        // The picker is on screen: open, or behind the question Shift+A on a row asks.
+        #[qproperty(bool, picker_shown)]
         // Top bar
         #[qproperty(QString, selection_label)]
         #[qproperty(bool, history)]
@@ -204,8 +208,10 @@ struct Prefetched {
 pub struct ModelRust {
     screen: QString,
     end_title: QString,
+    end_hint: QString,
     window_title: QString,
     overlay: QString,
+    picker_shown: bool,
     selection_label: QString,
     history: bool,
     searching: bool,
@@ -290,6 +296,8 @@ impl Default for ModelRust {
         Self {
             screen: QString::from("empty"),
             end_title: QString::default(),
+            end_hint: QString::default(),
+            picker_shown: false,
             window_title: QString::from(crate::app::APP_NAME),
             overlay: QString::from("none"),
             selection_label: QString::default(),
@@ -525,7 +533,11 @@ impl qobject::Model {
     fn run(mut self: Pin<&mut Self>, fx: Vec<Effect>) {
         for effect in fx {
             match effect {
-                Effect::SavePrefs(p) => prefs::save(p),
+                Effect::SavePrefs(p) => {
+                    if !self.as_mut().state().backend.demo() {
+                        prefs::save(p);
+                    }
+                }
                 Effect::ScrollPage { up } => self.as_mut().scroll_page(up),
                 Effect::Quit => self.as_mut().quit_requested(),
                 effect => {
@@ -559,6 +571,7 @@ impl qobject::Model {
         let (screen, overlay) = (app.screen().name(), app.overlay().name());
         let (end_title, history, searching) = (app.end_title(), app.history_badge(), app.searching());
         let search_query = app.search_query().to_string();
+        let (end_hint, picker_shown) = (app.end_hint(), app.picker_shown());
         let viewer = app.viewer().map(|v| {
             let image = &v.images[v.index];
             let n = v.images.len();
@@ -574,6 +587,8 @@ impl qobject::Model {
         self.as_mut().set_screen(qs(screen));
         self.as_mut().set_overlay(qs(overlay));
         self.as_mut().set_end_title(qs(end_title));
+        self.as_mut().set_end_hint(qs(&end_hint));
+        self.as_mut().set_picker_shown(picker_shown);
         self.as_mut().set_window_title(qs(&window_title));
         self.as_mut().set_selection_label(qs(&label));
         self.as_mut().set_history(history);

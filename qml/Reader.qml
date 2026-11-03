@@ -211,7 +211,7 @@ Flickable {
         Message {
             ui: reader.ui
             title: reader.model.endTitle
-            text: "Press j or Enter for the feeds, k to go back."
+            text: reader.model.endHint
         }
     }
 }

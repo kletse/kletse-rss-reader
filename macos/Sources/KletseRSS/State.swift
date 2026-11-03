@@ -12,7 +12,11 @@ struct AppState: Decodable {
     let screen: String
     /// "none", "picker", "help", "confirm", "settings", "onboarding", "search" or "image".
     let overlay: String
+    /// The picker is on screen: open, or behind the question Shift+A on a row asks.
+    let pickerShown: Bool
     let endTitle: String
+    /// Where j goes from the end of the list.
+    let endHint: String
     let windowTitle: String
     let selectionLabel: String
     let history: Bool

@@ -564,6 +564,19 @@ impl App {
         }
     }
 
+    /// What the end screen says: where j goes next.
+    pub fn end_hint(&self) -> String {
+        match self.next_list() {
+            Some(next) => format!("Press j for {} ({}), Enter for the feeds, k to go back.", next.label, next.count),
+            None => "Press j or Enter for the feeds, k to go back.".into(),
+        }
+    }
+
+    /// The picker is on screen: open, or behind the question Shift+A on a row asks.
+    pub fn picker_shown(&self) -> bool {
+        self.overlay == Overlay::Picker || (self.overlay == Overlay::Confirm && self.before_confirm == Overlay::Picker)
+    }
+
     /// The top bar's History badge: reading read items.
     pub fn history_badge(&self) -> bool {
         self.mode == Mode::History && !self.searching() && !self.selection_label().is_empty()
@@ -735,8 +748,13 @@ impl App {
     }
 
     /// After moving on: the next page when it's near, or, just past the end of the unread list, new arrivals.
+    /// At the end, fresh counts too, for the end screen to say which list j goes on to.
     fn load_ahead(&mut self, fx: &mut Vec<Effect>) {
-        if self.current().is_none() && !self.has_more && self.mode == Mode::Unread && !self.searching() {
+        let at_end = self.current().is_none() && !self.has_more;
+        if at_end && !self.searching() {
+            fx.push(Effect::FeedCounts);
+        }
+        if at_end && self.mode == Mode::Unread && !self.searching() {
             self.check_for_arrivals(fx);
         } else {
             self.prefetch(fx);
@@ -789,10 +807,31 @@ impl App {
         true
     }
 
-    /// j, Space at the end, the ▼ button: the next article, or the picker once the queue is done.
+    /// j, Space at the end, the ▼ button: the next article; once the list is done, the next feed (or category)
+    /// with something in it, or the picker when there is none.
     fn advance(&mut self, mark_read: bool, fx: &mut Vec<Effect>) {
-        if !self.next(mark_read, fx) {
-            self.open_picker(None, fx);
+        if self.next(mark_read, fx) {
+            return;
+        }
+        match self.next_list() {
+            Some(next) => {
+                // The picker's cursor follows, so p shows where you are.
+                if let Some(row) = self.picker_items().iter().position(|i| i.selection == next.selection) {
+                    self.picker_cursor = row;
+                }
+                self.open_selection(next.selection, next.label, self.mode, fx);
+            }
+            None => self.open_picker(None, fx),
+        }
+    }
+
+    /// The list j goes on to from the end of this one (see `picker::next_after`); none after a search.
+    fn next_list(&self) -> Option<PickerItem> {
+        match (&self.opened, &self.picker_list) {
+            (Some(Opened::Feeds(selection)), PickerList::Ready(counts)) => {
+                picker::next_after(counts, self.mode, *selection)
+            }
+            _ => None,
         }
     }
 

@@ -53,6 +53,11 @@ impl Backend {
         *self.problem.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// `KLETSE_RSS_DEMO=1`: sample data, and nothing is saved, prefs included.
+    pub fn demo(&self) -> bool {
+        self.demo
+    }
+
     pub fn status(&self) -> Status {
         let cfg = self.config();
         Status { configured: self.demo || cfg.is_complete(), readeck: self.demo || cfg.readeck.is_some() }

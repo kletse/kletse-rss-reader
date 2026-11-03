@@ -45,7 +45,7 @@ struct ReaderView: View {
             ContentUnavailableView {
                 Label(model.state?.endTitle ?? "", systemImage: "checkmark.circle")
             } description: {
-                Text("Press j or Enter for the feeds, k to go back.")
+                Text(model.state?.endHint ?? "")
             }
             .padding(.top, 80)
         default:

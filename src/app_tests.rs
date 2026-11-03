@@ -1261,3 +1261,103 @@ fn the_article_after_this_one_is_known_ahead() {
     h.key("j");
     assert!(h.app.upcoming().is_none());
 }
+
+// ---- j at the end goes on to the next feed ----------------------------------------------
+
+/// Feeds Alpha and Beta in Dev, Gamma in Blogs. Rows: All unread, Blogs, Gamma, Dev, Alpha, Beta.
+fn three_feeds(beta_unread: i64) -> Vec<FeedCount> {
+    let feed = |id, title: &str, category: (i64, &str), unread| FeedCount {
+        feed: Feed { id, title: title.into(), category: Category { id: category.0, title: category.1.into() } },
+        unread,
+        read: 1,
+    };
+    vec![feed(1, "Alpha", (1, "Dev"), 2), feed(2, "Beta", (1, "Dev"), beta_unread), feed(3, "Gamma", (2, "Blogs"), 5)]
+}
+
+/// Opens the picker row called `label`.
+fn open_row(h: &mut Harness, label: &str) {
+    h.start();
+    let row = h.app.picker_items().iter().position(|i| i.label == label).unwrap();
+    for _ in 0..row {
+        h.key("j");
+    }
+    h.key("Enter");
+    assert_eq!(h.app.selection_label(), label);
+}
+
+#[test]
+fn j_at_the_end_of_a_feed_goes_on_to_the_next_feed_with_unread_items() {
+    let mut h = Harness::new(items(2));
+    h.counts = three_feeds(3);
+    open_row(&mut h, "Alpha");
+    h.key("j");
+    h.key("j");
+    assert!(h.caught_up());
+    assert_eq!(h.app.end_hint(), "Press j for Beta (3), Enter for the feeds, k to go back.");
+    h.key("j");
+    assert_eq!(h.app.selection_label(), "Beta");
+    assert!(matches!(
+        h.calls.iter().rfind(|c| matches!(c, Effect::OpenSelection { .. })),
+        Some(Effect::OpenSelection { selection: Selection::Feed { id: 2 }, mode: Mode::Unread, .. })
+    ));
+    assert_eq!(h.app.picker_items()[h.app.picker_cursor()].label, "Beta");
+}
+
+#[test]
+fn j_at_the_end_skips_feeds_with_nothing_and_starts_over_at_the_top() {
+    let mut h = Harness::new(items(1));
+    h.counts = three_feeds(0);
+    open_row(&mut h, "Alpha");
+    h.key("j");
+    assert_eq!(h.app.end_hint(), "Press j for Gamma (5), Enter for the feeds, k to go back.");
+    h.key("j");
+    assert_eq!(h.app.selection_label(), "Gamma");
+}
+
+#[test]
+fn j_at_the_end_of_all_unread_or_a_search_still_goes_to_the_feeds() {
+    let mut h = Harness::new(items(1));
+    h.counts = three_feeds(3);
+    h.open(false);
+    h.key("j");
+    assert_eq!(h.app.end_hint(), "Press j or Enter for the feeds, k to go back.");
+    h.key("j");
+    assert!(h.picker_loaded());
+
+    let mut h = Harness::new(mixed());
+    h.counts = three_feeds(3);
+    open_row(&mut h, "Alpha");
+    h.key("/");
+    let fx = h.app.search("Zig");
+    h.run(fx);
+    h.key("j");
+    assert!(h.caught_up());
+    h.key("j");
+    assert!(h.picker_loaded());
+}
+
+#[test]
+fn enter_at_the_end_still_opens_the_picker() {
+    let mut h = Harness::new(items(1));
+    h.counts = three_feeds(3);
+    open_row(&mut h, "Alpha");
+    h.key("j");
+    h.key("Enter");
+    assert!(h.picker_loaded());
+}
+
+#[test]
+fn the_picker_stays_on_screen_behind_the_question_shift_a_asks() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    assert!(h.app.picker_shown());
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert!(h.app.picker_shown());
+    h.key("n");
+    h.key("Escape"); // nothing open yet: the picker stays
+    h.key("Enter");
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert!(!h.app.picker_shown(), "asked from the reader");
+}

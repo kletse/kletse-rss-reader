@@ -183,7 +183,11 @@ struct Reply {
 struct State {
     screen: &'static str,
     overlay: &'static str,
+    /// The picker is on screen: open, or behind the question Shift+A on a row asks.
+    picker_shown: bool,
     end_title: &'static str,
+    /// Where j goes from the end of the list.
+    end_hint: String,
     window_title: String,
     selection_label: String,
     history: bool,
@@ -384,7 +388,11 @@ impl Core {
     fn run(&mut self, fx: Vec<Effect>, events: &mut Vec<&'static str>) {
         for effect in fx {
             match effect {
-                Effect::SavePrefs(p) => prefs::save(p),
+                Effect::SavePrefs(p) => {
+                    if !self.backend.demo() {
+                        prefs::save(p);
+                    }
+                }
                 Effect::ScrollPage { up } => events.push(if up { "scroll_up" } else { "scroll_down" }),
                 Effect::Quit => events.push("quit"),
                 effect => {
@@ -458,7 +466,9 @@ impl Core {
         State {
             screen: app.screen().name(),
             overlay: app.overlay().name(),
+            picker_shown: app.picker_shown(),
             end_title: app.end_title(),
+            end_hint: app.end_hint(),
             window_title: app.window_title(),
             selection_label: app.selection_label().to_string(),
             history: app.history_badge(),

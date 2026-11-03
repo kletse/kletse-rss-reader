@@ -5,6 +5,8 @@ Panel {
     id: confirm
 
     panelWidth: Math.min(480, width - 32)
+    // Over the picker (Shift+A on a row), lower down, clear of the top of the list it's about.
+    panelY: ui.model.pickerShown ? Math.max(height * 0.08, (height - panelHeight) / 2) : height * 0.08
 
     Column {
         x: 20

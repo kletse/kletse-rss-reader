@@ -35,15 +35,7 @@ struct ContentView: View {
             case .search: SearchView(model: model)
             }
         }
-        .alert(
-            state?.confirmText ?? "",
-            isPresented: binding("confirm", dismiss: {}),
-            actions: {
-                Button("Mark Read") { model.key("y") }
-                Button("Cancel", role: .cancel) { model.key("n") }
-            },
-            message: { Text("Enter or y to confirm, Esc or n to cancel.") }
-        )
+        .modifier(ConfirmAlert(model: model, overPicker: false))
         // Links in articles open through the core, which marks things read as it should.
         .environment(\.openURL, OpenURLAction { url in
             model.openLink(url.absoluteString)
@@ -97,7 +89,7 @@ struct ContentView: View {
     /// (with nothing chosen yet, there is nothing to go back to).
     private var sheet: Binding<Sheet?> {
         Binding(
-            get: { model.state.flatMap { Sheet(rawValue: $0.overlay) } },
+            get: { model.state.flatMap { $0.pickerShown ? .picker : Sheet(rawValue: $0.overlay) } },
             set: { shown in
                 guard shown == nil else { return }
                 switch model.state?.overlay {
@@ -109,12 +101,26 @@ struct ContentView: View {
             }
         )
     }
+}
 
-    /// Shown while the core has `overlay` up; a dismissal by the system asks it.
-    private func binding(_ overlay: String, dismiss: @escaping () -> Void) -> Binding<Bool> {
-        Binding(
-            get: { model.state?.overlay == overlay },
-            set: { shown in if !shown && model.state?.overlay == overlay { dismiss() } }
+/// The confirm dialog. Asked from the picker (Shift+A on a row), it comes up over the picker's sheet, which stays:
+/// a window can't show an alert of its own while a sheet is up.
+struct ConfirmAlert: ViewModifier {
+    let model: Model
+    let overPicker: Bool
+
+    func body(content: Content) -> some View {
+        content.alert(
+            model.state?.confirmText ?? "",
+            isPresented: Binding(
+                get: { model.state?.overlay == "confirm" && model.state?.pickerShown == overPicker },
+                set: { _ in }
+            ),
+            actions: {
+                Button("Mark Read") { model.key("y") }
+                Button("Cancel", role: .cancel) { model.key("n") }
+            },
+            message: { Text("Enter or y to confirm, Esc or n to cancel.") }
         )
     }
 }

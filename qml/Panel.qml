@@ -10,6 +10,8 @@ Item {
     default property alias content: body.data
     property alias actions: actionRow.data
     property real panelWidth: Math.min(560, width - 32)
+    property real panelY: height * 0.08
+    readonly property real panelHeight: panel.height
     /// A click outside the panel.
     signal backdrop()
 
@@ -26,7 +28,7 @@ Item {
     Rectangle {
         id: panel
         x: (overlay.width - width) / 2
-        y: overlay.height * 0.08
+        y: overlay.panelY
         width: overlay.panelWidth
         height: Math.min(column.implicitHeight + 2, overlay.height * 0.8)
         color: overlay.ui.model.bg

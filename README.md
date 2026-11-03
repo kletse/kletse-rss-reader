@@ -24,7 +24,7 @@
 
 Most feed readers give you three panes and a wall of headlines. Kletse RSS shows **just the article**.
 
-You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks Miniflux once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_ and you're back at the feed picker.
+You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks Miniflux once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_: **j** goes on to the next feed (or category) with unread items, and **Enter** takes you back to the feed picker.
 
 <p align="center">
   <img src="docs/screenshots/macos/article.png" alt="Reading an article" width="900">
@@ -186,7 +186,7 @@ CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and 
 
 **Releasing:** bump the version in `Cargo.toml` (then `cargo build`, to update `Cargo.lock`) and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
 
-**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved. It's handy for UI work and screenshots.
+**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved, not even the font size. It's handy for UI work and screenshots.
 
 ```text
 src/

@@ -15,6 +15,8 @@ Panel {
     }
 
     readonly property real rowHeight: Math.ceil(metrics.height) + 10
+    /// A narrow window: the text buttons on the title row become icons.
+    readonly property bool compact: panelWidth < 460
 
     FontMetrics {
         id: metrics
@@ -34,9 +36,10 @@ Panel {
         },
         Button {
             ui: picker.ui
-            visible: !picker.model.pickerHistory && picker.panelWidth >= 500
-            text: picker.model.newestFirst ? "Newest first" : "Oldest first"
-            tip: "Order of unread items (s)"
+            visible: !picker.model.pickerHistory
+            iconPath: picker.compact ? "M3 16l4 4 4-4 M7 20V4 M21 8l-4-4-4 4 M17 4v16" : ""
+            text: picker.compact ? "" : picker.model.newestFirst ? "Newest first" : "Oldest first"
+            tip: picker.model.newestFirst ? "Unread items newest first (s)" : "Unread items oldest first (s)"
             onClicked: picker.model.press("order")
         },
         Button { ui: picker.ui; text: "?"; tip: "Keys (?)"; onClicked: picker.model.press("help") },
@@ -49,7 +52,7 @@ Panel {
         Button {
             ui: picker.ui
             iconPath: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0z"
-            text: "Settings"
+            text: picker.compact ? "" : "Settings"
             tip: "Settings (,)"
             onClicked: picker.model.press("settings")
         }

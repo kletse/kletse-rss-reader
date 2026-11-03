@@ -160,7 +160,7 @@ ApplicationWindow {
         }
 
         Lightbox { ui: win; anchors.fill: parent; visible: model.overlay === "image" }
-        Picker { ui: win; anchors.fill: parent; visible: model.overlay === "picker" }
+        Picker { ui: win; anchors.fill: parent; visible: model.pickerShown }
         Loader {
             anchors.fill: parent
             active: model.overlay === "search"

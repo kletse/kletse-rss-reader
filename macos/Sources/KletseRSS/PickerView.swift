@@ -40,6 +40,7 @@ struct PickerView: View {
             }
         }
         .frame(width: 380)
+        .modifier(ConfirmAlert(model: model, overPicker: true))
     }
 
     private func rows(_ picker: PickerInfo) -> some View {

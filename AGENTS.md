@@ -77,12 +77,12 @@ Once the feeds load, it presses the keys one per 400 ms (default `Enter`, which 
 space as `Space`). It then waits 3 s for images, saves the window to the PNG and quits. Useful key sequences:
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
-`"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read).
+`"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j Enter j"` (the end of a feed, with where j goes next).
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
-so keep that in mind before sharing a screenshot. Likewise, keys that change prefs (`s`, `Ctrl +`, `[`) save to
-your real `prefs.toml`; put it back after a snapshot that pressed one.
+so keep that in mind before sharing a screenshot. Prefs (font size, width, order) are read from the real
+`prefs.toml` but never written in demo mode.
 
 `KLETSE_RSS_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
 

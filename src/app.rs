@@ -186,7 +186,10 @@ pub enum Effect {
     ReloadPickerAfter {
         millis: u64,
     },
+    /// `b`: saves the article at `index`; marks it read when done, and moves on if it's still on screen.
     SaveToReadeck {
+        index: usize,
+        id: i64,
         url: String,
     },
     OpenInBrowser {
@@ -260,7 +263,11 @@ pub enum Outcome {
     FeedCounts(Result<Vec<FeedCount>, String>),
     Refreshed(Result<(), String>),
     PickerReloadDue,
-    SavedToReadeck(Result<(), String>),
+    SavedToReadeck {
+        index: usize,
+        id: i64,
+        result: Result<(), String>,
+    },
     OpenedInBrowser {
         then: AfterOpen,
         result: Result<(), String>,
@@ -869,7 +876,7 @@ impl App {
     }
 
     fn save_to_readeck(&mut self, fx: &mut Vec<Effect>) {
-        let Some(url) = self.current().map(|e| e.url.clone()) else { return };
+        let Some((id, url)) = self.current().map(|e| (e.id, e.url.clone())) else { return };
         if !self.readeck {
             self.toast_info("Readeck isn't set up. Add it in Settings (press ,).");
             return;
@@ -878,15 +885,24 @@ impl App {
             return;
         }
         self.busy = true;
-        fx.push(Effect::SaveToReadeck { url });
+        fx.push(Effect::SaveToReadeck { index: self.index, id, url });
     }
 
-    fn saved_to_readeck(&mut self, result: Result<(), String>, fx: &mut Vec<Effect>) {
+    /// The saved article is read now. If it's still on screen, move on; if you've gone on meanwhile (or opened
+    /// another selection), it's marked where it is, and nothing else moves.
+    fn saved_to_readeck(&mut self, index: usize, id: i64, result: Result<(), String>, fx: &mut Vec<Effect>) {
         self.busy = false;
         match result {
             Ok(()) => {
                 self.toast_info("Saved to Readeck");
-                self.next(true, fx);
+                if !self.queue.get(index).is_some_and(|e| e.id == id) {
+                    return;
+                }
+                if self.index == index {
+                    self.next(true, fx);
+                } else {
+                    self.set_status(index, EntryStatus::Read, false, fx);
+                }
             }
             Err(message) => self.toast_error(message),
         }
@@ -1539,7 +1555,7 @@ impl App {
                     self.load_picker(&mut fx);
                 }
             }
-            Outcome::SavedToReadeck(result) => self.saved_to_readeck(result, &mut fx),
+            Outcome::SavedToReadeck { index, id, result } => self.saved_to_readeck(index, id, result, &mut fx),
             Outcome::OpenedInBrowser { then, result } => self.opened_in_browser(then, result, &mut fx),
             Outcome::UnreadCounted { load, selection, up_to, later, result } => {
                 self.unread_counted(load, selection, up_to, later, result);

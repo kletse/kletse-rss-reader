@@ -72,6 +72,7 @@ struct Harness {
     calls: Vec<Effect>,
     hold_next_page: bool,
     hold_fetch: bool,
+    hold_save: bool,
     held: Option<Effect>,
     fail_next_page: Option<String>,
     fail_next_status: Option<String>,
@@ -98,6 +99,7 @@ impl Harness {
             calls: Vec::new(),
             hold_next_page: false,
             hold_fetch: false,
+            hold_save: false,
             held: None,
             fail_next_page: None,
             fail_next_status: None,
@@ -198,7 +200,13 @@ impl Harness {
             Effect::FeedCounts => Some(Outcome::FeedCounts(Ok(self.counts.clone()))),
             Effect::RefreshFeeds => Some(Outcome::Refreshed(Ok(()))),
             Effect::ReloadPickerAfter { .. } | Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => None,
-            Effect::SaveToReadeck { .. } => Some(Outcome::SavedToReadeck(Ok(()))),
+            Effect::SaveToReadeck { index, id, .. } => {
+                if self.hold_save {
+                    self.held = Some(effect);
+                    return None;
+                }
+                Some(Outcome::SavedToReadeck { index, id, result: Ok(()) })
+            }
             Effect::OpenInBrowser { then, .. } => Some(Outcome::OpenedInBrowser { then, result: Ok(()) }),
             Effect::CountUnread { load, selection, up_to, later } => {
                 let count = i64::try_from(self.fake.unread_up_to(up_to).len()).unwrap();
@@ -220,6 +228,7 @@ impl Harness {
     /// Lets the held-back request answer now, with what the fake Miniflux holds by then.
     fn answer(&mut self) {
         self.hold_fetch = false;
+        self.hold_save = false;
         let effect = self.held.take().expect("a request was held");
         if let Some(pos) = self.calls.iter().rposition(|c| *c == effect) {
             self.calls.remove(pos); // `exec` records it again
@@ -722,9 +731,42 @@ fn b_needs_readeck_and_then_saves_and_moves_on() {
     h.status.readeck = true;
     h.open(false);
     h.key("b");
-    assert!(h.calls.contains(&Effect::SaveToReadeck { url: "https://example.com/1".into() }));
+    assert!(h.calls.contains(&Effect::SaveToReadeck { index: 0, id: 1, url: "https://example.com/1".into() }));
     assert_eq!(h.title(), Some("Second"));
     assert_eq!(h.status_calls(), [(vec![1], EntryStatus::Read)]);
+}
+
+#[test]
+fn a_save_that_lands_after_moving_on_marks_the_saved_article_read_and_nothing_else() {
+    let mut h = Harness::new(items(3));
+    h.status.readeck = true;
+    h.open(false);
+    h.hold_save = true;
+    h.key("b");
+    assert_eq!(h.title(), Some("Item 1"), "waiting for Readeck");
+    h.key("n"); // moved on meanwhile, keeping Item 1 unread
+    assert_eq!(h.title(), Some("Item 2"));
+    h.answer();
+    assert_eq!(h.toast(), Some("Saved to Readeck"));
+    assert_eq!(h.title(), Some("Item 2"), "stays where you are");
+    assert_eq!(h.status_calls(), [(vec![1], EntryStatus::Read)]);
+    assert_eq!(h.app.queue()[1].status, EntryStatus::Unread);
+
+    // Another list opened meanwhile: nothing here to mark.
+    let mut entries = items(3);
+    entries.push(entry_at(10, "Old", EntryStatus::Read, 10));
+    let mut h = Harness::new(entries);
+    h.status.readeck = true;
+    h.open(false);
+    h.hold_save = true;
+    h.key("b");
+    h.key("h");
+    h.key("Enter");
+    assert_eq!(h.title(), Some("Old"));
+    h.answer();
+    assert_eq!(h.toast(), Some("Saved to Readeck"));
+    assert_eq!(h.title(), Some("Old"));
+    assert_eq!(h.status_calls(), []);
 }
 
 #[test]

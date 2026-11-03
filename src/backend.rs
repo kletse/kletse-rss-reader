@@ -223,7 +223,7 @@ impl Backend {
                 tokio::time::sleep(Duration::from_millis(millis)).await;
                 Outcome::PickerReloadDue
             }
-            Effect::SaveToReadeck { url } => {
+            Effect::SaveToReadeck { index, id, url } => {
                 let result = if self.demo {
                     Ok(())
                 } else {
@@ -232,7 +232,7 @@ impl Backend {
                         None => Err(Error::Setup("Readeck is not set up. Add it in Settings.".into())),
                     }
                 };
-                Outcome::SavedToReadeck(result.map_err(msg))
+                Outcome::SavedToReadeck { index, id, result: result.map_err(msg) }
             }
             Effect::OpenInBrowser { url, then } => {
                 Outcome::OpenedInBrowser { then, result: open_in_browser(&url).map_err(msg) }

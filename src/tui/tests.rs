@@ -705,10 +705,10 @@ async fn pictures_are_decoded_from_data_uris_and_fit_again_for_a_new_size() {
     let images::Answer::Viewer { result, .. } = images::run(job, Arc::clone(&backend), picker.clone()).await else {
         panic!("not the viewer's answer");
     };
-    let (image, protocol) = result.unwrap();
+    let (bytes, protocol) = result.unwrap();
     assert!(protocol.size().width <= 10 && protocol.size().height <= 5);
 
-    let job = Job::Fit { src, image, size: Size::new(4, 2) };
+    let job = Job::Fit { src, bytes, size: Size::new(4, 2) };
     let images::Answer::Viewer { result, .. } = images::run(job, backend, picker).await else {
         panic!("not the viewer's answer");
     };

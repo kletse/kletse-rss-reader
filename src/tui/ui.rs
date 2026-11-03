@@ -5,19 +5,17 @@
 
 use super::article::{self, Header, Row, Slice, Target};
 use super::editor::Editor;
-use super::images::{Answer, Job};
+use super::images::{self, Answer, Job};
 use crate::app::{App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, display_title, status_name};
 use crate::content::{convert, native};
 use crate::keys::Action;
 use crate::miniflux::EntryStatus;
 use crate::prefs::{self, Prefs};
 use crate::theme::Palette;
-use image::DynamicImage;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Rect, Size};
-use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 use ratatui_image::sliced::SlicedProtocol;
@@ -58,7 +56,8 @@ pub enum Inline {
     /// It stays the line of text that stands for it.
     Failed,
     Here {
-        image: Arc<DynamicImage>,
+        bytes: images::Bytes,
+        dimensions: images::Dimensions,
         /// Encoded for this many cells.
         sliced: Option<(Size, SlicedProtocol)>,
         /// The size being encoded, so it isn't asked for twice.
@@ -75,7 +74,7 @@ pub struct Form {
 pub enum Picture {
     Loading,
     Failed(String),
-    Ready { image: Arc<DynamicImage>, protocol: Protocol, size: Size },
+    Ready { bytes: images::Bytes, protocol: Protocol, size: Size },
 }
 
 /// The picture in the viewer.
@@ -421,7 +420,7 @@ impl Ui {
                 let Some(shot) = self.shot.as_mut().filter(|s| s.src == src) else { return };
                 shot.fitting = None;
                 shot.picture = match result {
-                    Ok((image, protocol)) => Picture::Ready { image, protocol, size },
+                    Ok((bytes, protocol)) => Picture::Ready { bytes, protocol, size },
                     Err(message) => Picture::Failed(message),
                 };
                 self.repaint = true;
@@ -430,7 +429,7 @@ impl Ui {
                 // Unless you've moved on far enough for it to be dropped meanwhile.
                 let Some(picture) = self.pictures.get_mut(&src) else { return };
                 *picture = match result {
-                    Ok(image) => Inline::Here { image, sliced: None, fitting: None },
+                    Ok((bytes, dimensions)) => Inline::Here { bytes, dimensions, sliced: None, fitting: None },
                     Err(_) => Inline::Failed,
                 };
                 self.pictures_seen += 1;
@@ -571,9 +570,9 @@ impl Ui {
             let (font, pictures) = (self.picker.font_size(), &self.pictures);
             let room = self.column.height.max(1);
             let size_of = |src: &str, width: usize| match pictures.get(src) {
-                Some(Inline::Here { image, .. }) => {
+                Some(Inline::Here { dimensions, .. }) => {
                     let available = Size::new(u16::try_from(width).unwrap_or(u16::MAX), room);
-                    Some(Resize::Fit(None).size_for(image, font, available))
+                    Some(images::fit(*dimensions, font, available))
                 }
                 _ => None,
             };
@@ -604,13 +603,13 @@ impl Ui {
     fn sync_pictures(&mut self) {
         let Some(shown) = &self.shown else { return };
         for slice in shown.rows.iter().filter_map(|row| row.slice.as_ref()).filter(|slice| slice.row == 0) {
-            if let Some(Inline::Here { image, sliced, fitting }) = self.pictures.get_mut(&slice.src)
+            if let Some(Inline::Here { bytes, sliced, fitting, .. }) = self.pictures.get_mut(&slice.src)
                 && sliced.as_ref().map(|s| s.0) != Some(slice.size)
                 && *fitting != Some(slice.size)
             {
                 *fitting = Some(slice.size);
-                let (src, image) = (slice.src.clone(), Arc::clone(image));
-                self.jobs.push(Job::Slice { src, image, size: slice.size });
+                let (src, bytes) = (slice.src.clone(), Arc::clone(bytes));
+                self.jobs.push(Job::Slice { src, bytes, size: slice.size });
             }
         }
     }
@@ -664,18 +663,18 @@ impl Ui {
             let src = wanted.src.clone();
             self.repaint = true;
             self.jobs.push(match self.pictures.get(&src) {
-                Some(Inline::Here { image, .. }) => Job::Fit { src: src.clone(), image: Arc::clone(image), size },
+                Some(Inline::Here { bytes, .. }) => Job::Fit { src: src.clone(), bytes: Arc::clone(bytes), size },
                 _ => Job::Load { src: src.clone(), size },
             });
             self.shot = Some(Shot { src, picture: Picture::Loading, fitting: Some(size) });
         }
         let Some(shot) = self.shot.as_mut() else { return };
-        if let Picture::Ready { image, size: fitted, .. } = &shot.picture
+        if let Picture::Ready { bytes, size: fitted, .. } = &shot.picture
             && *fitted != size
             && shot.fitting != Some(size)
         {
             shot.fitting = Some(size);
-            self.jobs.push(Job::Fit { src: shot.src.clone(), image: Arc::clone(image), size });
+            self.jobs.push(Job::Fit { src: shot.src.clone(), bytes: Arc::clone(bytes), size });
         }
     }
 

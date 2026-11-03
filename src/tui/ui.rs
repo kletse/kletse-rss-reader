@@ -436,12 +436,19 @@ impl Ui {
                 self.pictures_seen += 1;
             }
             Answer::Sliced { src, size, result } => {
-                let Some(Inline::Here { sliced, fitting, .. }) = self.pictures.get_mut(&src) else { return };
+                let Some(picture) = self.pictures.get_mut(&src) else { return };
+                let Inline::Here { sliced, fitting, .. } = picture else { return };
                 if *fitting == Some(size) {
                     *fitting = None;
                 }
-                if let Ok(protocol) = result {
-                    *sliced = Some((size, protocol));
+                match result {
+                    Ok(protocol) => *sliced = Some((size, protocol)),
+                    // The terminal can't take it: back to the line of text, or the layout would ask again on
+                    // every draw.
+                    Err(_) => {
+                        *picture = Inline::Failed;
+                        self.pictures_seen += 1;
+                    }
                 }
             }
         }

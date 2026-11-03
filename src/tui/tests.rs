@@ -5,7 +5,7 @@
 
 use super::draw;
 use super::images::{self, Job};
-use super::ui::Ui;
+use super::ui::{Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status};
 use crate::backend::Backend;
 use crate::prefs::Prefs;
@@ -725,6 +725,20 @@ async fn demo_mode_stays_off_the_network_for_images() {
         panic!("not the viewer's answer");
     };
     assert_eq!(result.err().as_deref(), Some("Not loading https://example.com/a.png"));
+}
+
+#[test]
+fn a_picture_the_terminal_cant_encode_goes_back_to_its_line_and_isnt_asked_for_again() {
+    let mut s = with_picture(30);
+    let src = png_uri(200, 200);
+    let size = match s.ui.pictures.get(&src) {
+        Some(Inline::Here { sliced: Some((size, _)), .. }) => *size,
+        _ => panic!("the picture was fetched and encoded"),
+    };
+    s.ui.image(images::Answer::Sliced { src: src.clone(), size, result: Err("no sixel".into()) });
+    // Were it asked for again, settling would encode it again and it would be Here once more.
+    s.settle();
+    assert!(matches!(s.ui.pictures.get(&src), Some(Inline::Failed)));
 }
 
 #[test]

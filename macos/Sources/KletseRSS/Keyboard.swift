@@ -27,9 +27,11 @@ enum Keyboard {
         )
     }
 
-    /// A text field has the keyboard: its field editor is the first responder.
+    /// A text field has the keyboard: its field editor is the first responder. Selectable article text, once
+    /// clicked, gets one too, but that one isn't editable.
     private static func typing(in window: NSWindow?) -> Bool {
-        (window?.firstResponder as? NSTextView)?.isFieldEditor == true
+        guard let editor = window?.firstResponder as? NSTextView else { return false }
+        return editor.isFieldEditor && editor.isEditable
     }
 
     static func name(of event: NSEvent) -> String? {

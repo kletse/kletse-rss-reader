@@ -7,23 +7,29 @@ struct ReaderView: View {
     @State private var position = ScrollPosition(edge: .top)
     /// Where the scroll is: offset, visible height, content height.
     @State private var scroll = (y: CGFloat(0), height: CGFloat(0), content: CGFloat(0))
+    @State private var contentHeight = CGFloat(0)
 
     var body: some View {
         GeometryReader { outer in
+            let top: CGFloat = outer.size.width < 560 ? 24 : 40
+            // An article that fits is centred, with nothing to scroll.
+            let centred = model.state?.screen == "article" && contentHeight + 2 * top <= outer.size.height
             ScrollView {
                 content
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                     .padding(.horizontal, outer.size.width < 560 ? 16 : 24)
-                    .padding(.top, outer.size.width < 560 ? 24 : 40)
+                    .padding(.top, top)
                     // Room to scroll the last lines up to the middle, as the web version had.
-                    .padding(.bottom, outer.size.height * 0.3)
-                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, centred ? top : outer.size.height * 0.3)
+                    .frame(maxWidth: .infinity, minHeight: centred ? outer.size.height : nil)
             }
             .scrollPosition($position)
             .onScrollGeometryChange(for: [CGFloat].self) { g in
-                [g.contentOffset.y, g.containerSize.height, g.contentSize.height]
+                [g.contentOffset.y, g.containerSize.height, g.contentSize.height, g.visibleRect.maxY]
             } action: { _, g in
                 scroll = (g[0], g[1], g[2])
-                model.atBottom = g[0] + g[1] >= g[2] - 4
+                // Not offset + height: the toolbar's inset is in neither.
+                model.atBottom = g[3] >= g[2] - 4
             }
         }
         .onChange(of: model.scrollSerial) { page(up: model.scrollUp) }

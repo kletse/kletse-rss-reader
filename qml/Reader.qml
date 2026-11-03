@@ -10,6 +10,9 @@ Flickable {
     /// Scrolled to the end: Space moves on to the next article.
     readonly property bool atBottom: contentY + height >= contentHeight - 4
     readonly property real gutter: width < 560 ? 16 : 24
+    readonly property real topMargin: width < 560 ? 24 : 40
+    /// An article that fits is centred, with nothing to scroll.
+    readonly property bool centred: model.screen === "article" && content.height + 2 * topMargin <= height
 
     contentWidth: width
     contentHeight: page.height
@@ -170,17 +173,18 @@ Flickable {
         stopScrolling()
         contentY = 0
     }
+    onCentredChanged: if (centred) toTop()
 
     Item {
         id: page
         width: reader.width
         // Room to scroll the last lines up to the middle, as the web version had.
-        height: content.y + content.height + reader.height * 0.3
+        height: reader.centred ? reader.height : content.y + content.height + reader.height * 0.3
 
         Loader {
             id: content
             x: reader.gutter
-            y: reader.width < 560 ? 24 : 40
+            y: reader.centred ? (reader.height - height) / 2 : reader.topMargin
             width: page.width - 2 * reader.gutter
             sourceComponent: {
                 switch (reader.model.screen) {

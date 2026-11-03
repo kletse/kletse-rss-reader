@@ -223,6 +223,9 @@ Traps here:
 - **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
   are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
   toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
+- **A field editor doesn't mean typing.** A click on `.textSelection(.enabled)` text makes an `NSTextView` field
+  editor the first responder, a read-only one. `Keyboard.typing` also asks `isEditable`, or every key stops working
+  until something else takes the focus.
 - **Don't give menu items single-key shortcuts.** AppKit matches menu key equivalents before the text field
   sees the key, so typing `j` in the settings would go to the next article.
 - **A C callback must not be main-actor code.** A closure written inside a `@MainActor` type is inferred as

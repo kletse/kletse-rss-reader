@@ -24,6 +24,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      # The terminal version, without Qt: the binary people install.
+      - run: cargo clippy --all-targets --no-default-features --features tui --locked -- -D warnings
+      - run: cargo test --no-default-features --features tui --locked
       # QML is only checked when it runs. Render a few screens of the demo offscreen; any QML warning (a type that
       # doesn't resolve, a binding loop, a missing property) is fatal and fails the job.
       - name: Smoke test the window
@@ -65,6 +68,9 @@ jobs:
       # The library the native app links: its C interface and the macOS-only code, without Qt.
       - run: cargo clippy --all-targets --no-default-features --features ffi --locked -- -D warnings
       - run: cargo test --no-default-features --features ffi --locked
+      # The terminal version, which is all a Mac needs Rust for if it never builds the app.
+      - run: cargo clippy --all-targets --no-default-features --features tui --locked -- -D warnings
+      - run: cargo test --no-default-features --features tui --locked
       - run: packaging/macos/build-app.sh
 
   audit:

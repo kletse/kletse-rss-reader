@@ -5,11 +5,13 @@ and how to build it is in the [README](README.md).
 
 ## The shape of it
 
-- **Rust + Qt Quick via [cxx-qt](https://github.com/KDAB/cxx-qt) 0.10** on Linux, **SwiftUI** on macOS (`macos/`).
-  No web view, no Node. One crate at the repo root: a library (`src/lib.rs`, everything but the window) and the Qt
-  binary (`src/main.rs`). The `qt` feature (default) brings in cxx-qt and `bridge.rs`, which lives in the library
-  because cxx-qt links its C++ into every target of the crate; the `ffi` feature builds the C interface the Mac
-  app links (`src/ffi.rs`).
+- **Rust + Qt Quick via [cxx-qt](https://github.com/KDAB/cxx-qt) 0.10** on Linux, **SwiftUI** on macOS (`macos/`),
+  and **ratatui** in a terminal on both (`src/tui/`). No web view, no Node. One crate at the repo root: a library
+  (`src/lib.rs`, everything but the window) and two binaries, Qt (`src/main.rs`) and terminal (`src/tui_main.rs`).
+  The `qt` feature (default) brings in cxx-qt and `bridge.rs`, which lives in the library because cxx-qt links its
+  C++ into every target of the crate; the `ffi` feature builds the C interface the Mac app links (`src/ffi.rs`); the
+  `tui` feature builds the terminal version. Build `tui` with `--no-default-features`, or with `cargo tui`: with
+  `qt` on as well, the terminal binary links Qt for nothing.
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.
@@ -46,7 +48,14 @@ cargo test                                   # ~170 tests, no window
 cargo clippy --all-targets -- -D warnings    # CI is this strict
 cargo fmt
 KLETSE_RSS_DEMO=1 cargo run                  # sample data, no server, nothing marked read
+
+KLETSE_RSS_DEMO=1 cargo tui                  # the terminal version
+cargo test --no-default-features --features tui
+cargo clippy --all-targets --no-default-features --features tui -- -D warnings
 ```
+
+Plain `cargo test` and `cargo clippy` don't compile `src/tui/`: run the two lines above when you change it, or
+anything it uses. CI does.
 
 Qt is found through `qmake6`/`qmake` on the `PATH`. A first build compiles the C++ side of cxx-qt and takes a few
 minutes. After that, editing QML or Rust rebuilds in well under a minute.
@@ -139,6 +148,60 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
   `macos/` around it, with `MACOSX_DEPLOYMENT_TARGET` matching the package's macOS 15. macOS-only Rust
   (`src/theme/macos.rs`, `src/ffi.rs`) can't be compiled on Linux, so the macOS CI job is its only check. The Qt
   window still builds and runs on a Mac (`cargo run`, with Homebrew Qt), which is handy for comparing.
+
+## The terminal version (`src/tui/`)
+
+- **`tui/ui.rs` is to the terminal what `bridge.rs` is to QML**, and the same rule holds: it shows state and forwards
+  input, and what a key means stays in `app.rs`. What's here is only what a terminal needs and a window doesn't:
+  text fields (`editor.rs`), scrolling, hit-testing clicks, and fetching images (`images.rs`), which Qt's `Image`
+  does by itself. `mod.rs` runs the effects: the main thread waits on one channel, fed by a thread reading the
+  terminal and by the tokio runtime, and draws after each batch. `Ui::prepare` runs before each draw and can ask for
+  jobs and a repaint, so anything it decides is acted on in the same pass.
+- **Articles are laid out by `tui/article.rs`** from the same `NativeBlock`s Swift gets, into `Row`s of styled cells
+  that know which columns are clickable. It's our own word wrap because ratatui's can't report row counts or where
+  a link landed.
+- **Pictures in an article** go in steps, in `Ui::prepare`: `Job::Fetch` decodes one, which gives its size; the layout
+  then sets rows aside (`Slice`), where before there was a `▣` line; `Job::Slice` encodes it for those rows; `draw`
+  puts it there with ratatui-image's `SlicedImage`, which can cut it at the top and bottom of the screen. The article
+  moves when a picture arrives, so `lay_out` keeps your place by counting text rows, leaving out `Row::image` ones.
+  Only the pictures of this article, the next and the last are kept.
+- **Colours are the terminal's ANSI palette**, never truecolor: that's what follows the theme, and not every
+  terminal has truecolor. `article::palette()` gives each ANSI colour a fake hex code for the converter, and `ink()` turns
+  those back. Dim text is `Modifier::DIM`, not a grey.
+- **Ctrl never reaches `App::key`.** Ctrl + and − would set the window's font size in the shared `prefs.toml`.
+  `Ui::help_lines` takes those rows out, and swaps the Shift+Space row for the keys that work in a terminal.
+- **To see it**, there's no snapshot mode: tmux is one. Run it in a detached session and read the pane:
+
+  ```bash
+  tmux new-session -d -s k -x 100 -y 32 "KLETSE_RSS_DEMO=1 LANG=C.UTF-8 target/debug/kletse-rss-tui"
+  tmux send-keys -t k Enter; sleep 0.3; tmux capture-pane -p -t k; tmux kill-session -t k
+  ```
+
+  `tui/tests.rs` does the same on ratatui's `TestBackend`, with real key and mouse events against the demo. It
+  records browser links rather than opening them; `with_content` swaps in an article with a real picture, because
+  the demo's only image is an SVG, which the `image` crate can't decode.
+- **To see real pictures**, tmux won't do (half-blocks). Run foot itself and capture its window: `hyprctl dispatch`
+  an `exec_cmd` with `{ float = true, no_initial_focus = true, size = "1000 620" }`, then `grim -T <stableId from
+  hyprctl clients -j>`. It must be on a visible workspace: foot doesn't repaint on a hidden one, so a capture there
+  shows an empty window that says nothing. Point it at a fake Miniflux with `XDG_CONFIG_HOME` and `XDG_STATE_HOME`
+  set, so real feeds and prefs stay out of it.
+
+Traps here:
+
+- **Don't call `Terminal::clear`.** It asks the terminal for the cursor position, and the answer can't get past the
+  thread blocked in `event::read`, which holds crossterm's lock: a 2 s stall, then an error that ends the app. Use
+  `repaint` in `mod.rs`. `Terminal::resize` is fine.
+- **Mouse reporting is what stops the wheel marking articles read.** Without it terminals send the wheel as ↑ and ↓ on
+  the alternate screen, and ↓ is "next, mark read". A test holds this in place.
+- **`Picker::from_query_stdio` must run before the reader thread, and not under tmux.** Under tmux it runs
+  `tmux set -p allow-passthrough on` behind your back, and if nothing answers it leaves a thread reading stdin.
+- **Sixel and iTerm2 pictures linger.** They're pixels over the text, and ratatui's diff doesn't know: rows it leaves
+  alone keep them. So `sync_stale` sets `repaint` whenever a picture moves or something goes over it, and the loop
+  wraps that in a synchronized update to hide the clear. Kitty's are cells and half-blocks are text, so these don't.
+- **Blanks over a sixel must be written.** After a repaint ratatui leaves out blank cells, so a picture shows through
+  a panel's spaces. `solid` in `draw.rs` marks them; call it at the end of anything drawn over the article.
+- **A sixel must not reach the screen's last row.** The library places it by moving the cursor down and back up, the
+  terminal stops the cursor at the bottom, and the picture lands a row too high. `reader` keeps a row free.
 
 ## The macOS app (`macos/`)
 

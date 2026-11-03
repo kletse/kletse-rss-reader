@@ -15,11 +15,14 @@ _root() { realpath "$startdir/.."; }
 build() {
   cd "$(_root)"
   cargo build --release --locked
+  # The terminal version, built apart so that it doesn't link Qt.
+  cargo build --release --locked --no-default-features --features tui
 }
 
 package() {
   local root; root="$(_root)"
   install -Dm755 "$root/target/release/kletse-rss" "$pkgdir/usr/bin/kletse-rss"
+  install -Dm755 "$root/target/release/kletse-rss-tui" "$pkgdir/usr/bin/kletse-rss-tui"
   install -Dm644 "$root/packaging/kletse-rss.desktop" "$pkgdir/usr/share/applications/kletse-rss.desktop"
   install -Dm644 "$root/packaging/kletse-rss.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/kletse-rss.svg"
   install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

@@ -1,5 +1,6 @@
 //! Kletse RSS without a window: what the app does (app.rs), the servers it talks to and how articles are
-//! converted. The Qt window (main.rs, bridge.rs) and the native macOS app (macos/, through ffi.rs) both drive it.
+//! converted. The Qt window (main.rs, bridge.rs), the native macOS app (macos/, through ffi.rs) and the terminal
+//! version (tui_main.rs, tui/) all drive it.
 
 pub mod app;
 pub mod backend;
@@ -21,3 +22,5 @@ pub mod picker;
 pub mod prefs;
 pub mod readeck;
 pub mod theme;
+#[cfg(feature = "tui")]
+pub mod tui;

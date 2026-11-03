@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>One unread article at a time. Oldest first. Keyboard all the way.</b><br>
-  A small desktop reader for <a href="https://miniflux.app">Miniflux</a>, for <a href="https://omarchy.org">Omarchy</a> and macOS.
+  A small desktop reader for <a href="https://miniflux.app">Miniflux</a>, for <a href="https://omarchy.org">Omarchy</a> and macOS, and for any terminal.
 </p>
 
 <p align="center">
@@ -35,6 +35,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 - **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes. On macOS: light or dark mode and your accent colour, the moment you change them.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
+- **In a terminal too.** `kletse-rss-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
 - **Native, no web view.** The window is Qt Quick, driven from Rust: articles are laid out as native text and images, not in a browser engine.
 
 ## Screenshots
@@ -143,6 +144,38 @@ cp -r "packaging/Kletse RSS.app" /Applications/
 
 Your settings live outside the app bundle (see [Set up](#set-up)), so replacing it keeps them. To uninstall, delete `/Applications/Kletse RSS.app` and, if you want, `~/Library/Application Support/kletse-rss`.
 
+## In a terminal
+
+`kletse-rss-tui` is the same app without a window: it fills the terminal, and gives it back as it was when you quit. It needs neither Qt nor a desktop, so it also runs over SSH. It shares your [settings](#set-up) and everything you've read with the window, because Miniflux keeps track of that.
+
+**Install.** With a current stable [Rust](https://rustup.rs), on Linux or macOS:
+
+```bash
+git clone https://github.com/kletse/kletse-rss-reader.git
+cd kletse-rss-reader
+cargo install --path . --no-default-features --features tui --locked
+```
+
+That puts `kletse-rss-tui` in `~/.cargo/bin`. The Arch package installs it as well, as `/usr/bin/kletse-rss-tui`, and each release has a `kletse-rss-tui-<version>-x86_64` binary.
+
+**Keys.** The same as the window, with these differences, which <kbd>?</kbd> shows too:
+
+| Key                                                                        | Action                                                          |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| <kbd>PgDn</kbd> / <kbd>PgUp</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>U</kbd> | Scroll a page. Most terminals can't tell <kbd>Shift</kbd>+<kbd>Space</kbd> from <kbd>Space</kbd>, so these go up |
+| <kbd>J</kbd> / <kbd>K</kbd>                                                | Scroll a little                                                 |
+| <kbd>Home</kbd> / <kbd>End</kbd>                                           | Top / end of the article                                        |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd>                                               | Draw the screen again                                           |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd>                                               | Quit, from anywhere                                             |
+
+Font size is your terminal's business, so the app has no keys for it. <kbd>[</kbd> and <kbd>]</kbd> set the column width, shared with the window.
+
+**The mouse.** The wheel scrolls, and a click opens a link, an image or a picker row. The app has the mouse to do that, so to select text hold <kbd>Shift</kbd> while you drag (<kbd>⌥</kbd> in iTerm2).
+
+**Colours** are your terminal's own, so it follows your theme, dark or light, on Omarchy and on macOS.
+
+**Images** appear in the article, as in the window: at their natural size, no wider than the column, and those of the next article load ahead. Press <kbd>v</kbd>, or click one, to see it full screen. Terminals with sixel, kitty or iTerm2 graphics (foot, Ghostty, kitty, WezTerm, iTerm2) show the image itself; others, such as Alacritty and Terminal, and anything inside tmux, draw it in half-block characters. JPEG, PNG, GIF and WebP work. An SVG or AVIF stays a line in the article, `▣` and its description: open that with <kbd>v</kbd>, then <kbd>o</kbd> for your browser.
+
 ## Set up
 
 The first time you start Kletse RSS, a welcome screen asks for:
@@ -170,6 +203,7 @@ token = "…"
 
 ```bash
 cargo run          # the app (KLETSE_RSS_DEMO=1 cargo run: with built-in sample data, no server needed)
+cargo tui          # the terminal version, without Qt (KLETSE_RSS_DEMO=1 works here too)
 cargo test         # everything the app does, driven by key presses against a fake Miniflux; no Qt window needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt
@@ -194,6 +228,7 @@ src/
   app.rs             everything the app does: queue, paging, picker, overlays, settings, keys (no Qt, no network)
   app_tests.rs       its tests: key presses against a fake Miniflux
   bridge.rs          the QObject the QML sees; runs effects on tokio, copies state into properties
+  tui_main.rs, tui/  the terminal version: runs effects, keeps the scroll position, draws cells (ratatui)
   backend.rs         the server side of effects: Miniflux, Readeck, the config file, opening links
   keys.rs            the keymaps and the help overlay's text, checked against each other and the README
   paging.rs          where the next page starts (a publication time, not an offset)

@@ -144,6 +144,18 @@ impl Backend {
         self.miniflux()?.newest_unread_id(sel).await
     }
 
+    /// The image at `url`, for a window that fetches its own images: the terminal's viewer. Demo mode has
+    /// `data:` images only, and stays off the network.
+    #[cfg(feature = "tui")]
+    pub async fn fetch_image(&self, url: &str) -> Result<Vec<u8>, Error> {
+        if self.demo || !reqwest::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+            return Err(Error::Refused(format!("Not loading {url}")));
+        }
+        let failed = |source| Error::Unexpected { context: "The image didn't load".into(), source: Some(source) };
+        let response = self.http.get(url).send().await.and_then(|r| r.error_for_status()).map_err(failed)?;
+        Ok(response.bytes().await.map_err(failed)?.to_vec())
+    }
+
     /// Runs a server effect. The window's own effects (scrolling, prefs, quitting) aren't for here.
     pub async fn run(&self, effect: Effect) -> Option<Outcome> {
         let msg = |e: Error| e.message();
@@ -335,6 +347,22 @@ mod tests {
         ] {
             assert!(!is_openable(bad), "{bad}");
         }
+    }
+
+    #[cfg(feature = "tui")]
+    #[tokio::test]
+    async fn images_come_over_http_and_only_http() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/a.png"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(*b"png"))
+            .mount(&server)
+            .await;
+        let backend = Backend::new(false);
+        assert_eq!(backend.fetch_image(&format!("{}/a.png", server.uri())).await.unwrap_or_default(), b"png");
+        assert!(backend.fetch_image(&format!("{}/missing.png", server.uri())).await.is_err());
+        assert!(backend.fetch_image("file:///etc/passwd").await.is_err());
     }
 
     fn values(url: &str, readeck_url: &str, readeck_token: &str) -> SettingsValues {

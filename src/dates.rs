@@ -35,6 +35,18 @@ pub fn unix_millis(s: &str) -> Option<i64> {
     Some(secs * 1000 + millis)
 }
 
+/// "24 Oct 2026, 08:12", as the article header shows it in the terminal: at the offset the server gave, which is
+/// the time zone set in Miniflux.
+#[cfg(feature = "tui")]
+pub fn display(s: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    unix_millis(s)?; // it is a date
+    let (year, month, day) = (s.get(0..4)?, s.get(5..7)?, s.get(8..10)?);
+    let month = MONTHS.get(month.parse::<usize>().ok()?.checked_sub(1)?)?;
+    let day = day.trim_start_matches('0');
+    Some(format!("{day} {month} {year}, {}", s.get(11..16)?))
+}
+
 /// Days since 1970-01-01 (Howard Hinnant's algorithm).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -67,6 +79,15 @@ pub fn rfc3339_utc(millis: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn display_reads_as_written_at_the_servers_offset() {
+        assert_eq!(display("2026-10-04T08:12:00+02:00").as_deref(), Some("4 Oct 2026, 08:12"));
+        assert_eq!(display("2026-01-31T23:59:59.5Z").as_deref(), Some("31 Jan 2026, 23:59"));
+        assert_eq!(display("yesterday"), None);
+        assert_eq!(display("2026-13-04T08:12:00Z"), None);
+    }
 
     #[test]
     fn parses_offsets_and_fractions() {

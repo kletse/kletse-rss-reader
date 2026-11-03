@@ -4,7 +4,8 @@
 #
 # Usage: arch-build.sh WORK_DIR
 #   WORK_DIR/src.tar  the source, as made by `git archive --prefix=kletse-rss-reader/`
-#   WORK_DIR/out/     receives kletse-rss-<version>-1-x86_64.pkg.tar.zst and kletse-rss-<version>-x86_64
+#   WORK_DIR/out/     receives kletse-rss-<version>-1-x86_64.pkg.tar.zst, kletse-rss-<version>-x86_64 and
+#                     kletse-rss-tui-<version>-x86_64
 set -euo pipefail
 
 work=${1:?usage: arch-build.sh WORK_DIR}
@@ -25,3 +26,4 @@ root=/home/builder/kletse-rss-reader
 version=$(sed -n 's/^pkgver=//p' "$root/packaging/PKGBUILD")
 cp "$root"/packaging/*.pkg.tar.zst "$work/out/"
 cp "$root/target/release/kletse-rss" "$work/out/kletse-rss-$version-x86_64"
+cp "$root/target/release/kletse-rss-tui" "$work/out/kletse-rss-tui-$version-x86_64"

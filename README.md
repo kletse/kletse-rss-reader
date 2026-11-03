@@ -108,9 +108,9 @@ This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</
 
 ### macOS
 
-There's no macOS download: build it from source, it takes a few minutes.
+There's no macOS download: build it from source, it takes a few minutes. On the Mac the app is native SwiftUI over the same Rust core, so it needs no Qt: the whole app is under 10 MB, and needs macOS 15 or later.
 
-You need Xcode's command line tools (`xcode-select --install`), a current stable [Rust](https://rustup.rs) and Qt 6 from [Homebrew](https://brew.sh) (`brew install qt`).
+You need Xcode or its command line tools (`xcode-select --install`) and a current stable [Rust](https://rustup.rs).
 
 ```bash
 git clone https://github.com/kletse/kletse-rss-reader.git
@@ -119,9 +119,7 @@ packaging/macos/build-app.sh
 cp -r "packaging/Kletse RSS.app" /Applications/
 ```
 
-The script copies the Qt it needs into the app (with Homebrew's `macdeployqt`), so later Homebrew updates don't break it.
-
-Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd> and <kbd>⌘</kbd><kbd>H</kbd> work.
+Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading, and the toolbar shows where you are in the list. The feeds picker opens as a popover from the toolbar, the keys as a sheet. Text is set in New York, headings in SF, code in SF Mono, and scrolling is the system's own. Size and position are remembered between launches. The app follows the system light/dark mode and accent colour, the **Article** menu has the reading actions, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd>, <kbd>⌘</kbd><kbd>H</kbd> and <kbd>⌘</kbd><kbd>,</kbd> work.
 
 **Updating from source:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 

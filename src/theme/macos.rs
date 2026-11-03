@@ -17,8 +17,13 @@ const ROUNDING: i64 = 10;
 
 pub fn load() -> Theme {
     let dark = is_dark();
+    theme(dark, accent(read_default("AppleAccentColor"), dark))
+}
+
+/// The theme for an appearance and accent colour (`#rrggbb`).
+pub fn theme(dark: bool, accent: &str) -> Theme {
     Theme {
-        colors: palette(dark, accent(read_default("AppleAccentColor"), dark)),
+        colors: palette(dark, accent),
         rounding: ROUNDING,
         font: Some("Menlo".into()), // the system monospace font Terminal and Xcode default to
     }

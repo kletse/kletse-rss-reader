@@ -20,6 +20,12 @@ pub struct Backend {
     demo: bool,
 }
 
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Backend { .. }")
+    }
+}
+
 impl Backend {
     pub fn new(demo: bool) -> Self {
         let http = reqwest::Client::builder()

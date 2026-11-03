@@ -9,11 +9,27 @@ repository = "https://github.com/kletse/kletse-rss-reader"
 authors = ["Ward Werbrouck <ward@kletse.be>"]
 publish = false
 
+[features]
+default = ["qt"]
+# The Qt Quick window (main.rs, bridge.rs, qml/): the Linux app, and `cargo run` anywhere.
+qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build"]
+# The C interface the native macOS app (macos/) links against, as a static library:
+# `cargo rustc --lib --release --no-default-features --features ffi --crate-type staticlib`.
+ffi = []
+
+[lib]
+name = "kletse_rss"
+
+[[bin]]
+name = "kletse-rss"
+path = "src/main.rs"
+required-features = ["qt"]
+
 [dependencies]
 # The window: Qt Quick, driven from Rust.
-cxx = "1"
-cxx-qt = "0.10"
-cxx-qt-lib = { version = "0.10", features = ["qt_gui", "qt_qml"] }
+cxx = { version = "1", optional = true }
+cxx-qt = { version = "0.10", optional = true }
+cxx-qt-lib = { version = "0.10", features = ["qt_gui", "qt_qml"], optional = true }
 # Servers and the config file.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
@@ -35,7 +51,7 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 notify = "8" # follows the Omarchy theme directory
 
 [build-dependencies]
-cxx-qt-build = "0.10"
+cxx-qt-build = { version = "0.10", optional = true }
 
 [dev-dependencies]
 wiremock = "0.6"

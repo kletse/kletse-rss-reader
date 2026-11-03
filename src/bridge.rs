@@ -5,10 +5,10 @@
 #![allow(unsafe_code)] // the generated FFI; nothing hand-written here is unsafe
 #![allow(clippy::too_many_arguments)] // `key` takes one flag per modifier, as QML has them
 
-use crate::app::{App, Effect, KeyPress, Overlay, PickerList, Screen, SettingsValues, ToastKind};
+use crate::app::{App, Effect, KeyPress, PickerList, SettingsValues, ToastKind};
 use crate::backend::Backend;
 use crate::content::convert;
-use crate::keys::Action;
+use crate::keys;
 use crate::paging::Mode;
 use crate::theme::{self, Palette};
 use crate::{prefs, theme::Theme};
@@ -330,19 +330,6 @@ fn palette_hash(p: &Palette) -> u64 {
     hash(&format!("{p:?}"))
 }
 
-fn button_action(button: &str) -> Option<Action> {
-    Some(match button {
-        "next" => Action::Next { mark_read: true },
-        "prev" => Action::Prev,
-        "picker" => Action::OpenPicker,
-        "readeck" => Action::SaveToReadeck,
-        "mode" => Action::ToggleMode,
-        "settings" => Action::Settings,
-        "help" => Action::Help,
-        _ => return None,
-    })
-}
-
 impl qobject::Model {
     fn state(self: Pin<&mut Self>) -> &mut ModelRust {
         self.rust_mut().get_mut()
@@ -411,7 +398,7 @@ impl qobject::Model {
     }
 
     pub fn press(mut self: Pin<&mut Self>, button: &QString) {
-        if let Some(action) = button_action(&button.to_string()) {
+        if let Some(action) = keys::button_action(&button.to_string()) {
             let fx = self.as_mut().state().app.action(action);
             self.run(fx);
         }
@@ -499,23 +486,8 @@ impl qobject::Model {
     fn sync_chrome(mut self: Pin<&mut Self>) {
         let s = self.as_mut().state();
         let app = &s.app;
-        let screen = match app.screen() {
-            Screen::Settings => "settings",
-            Screen::Loading => "loading",
-            Screen::Article => "article",
-            Screen::End => "end",
-            Screen::Empty => "empty",
-        };
-        let overlay = match app.overlay() {
-            Overlay::None => "none",
-            Overlay::Picker => "picker",
-            Overlay::Help => "help",
-            Overlay::Confirm => "confirm",
-            Overlay::Settings => "settings",
-            Overlay::Onboarding => "onboarding",
-        };
-        let end_title = if app.mode() == Mode::History { "End of history" } else { "All caught up" };
-        let history = app.mode() == Mode::History && !app.selection_label().is_empty();
+        let (screen, overlay) = (app.screen().name(), app.overlay().name());
+        let (end_title, history) = (app.end_title(), app.history_badge());
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
         let confirm = app.confirm_text().to_string();

@@ -35,6 +35,20 @@ pub enum Overlay {
     Onboarding,
 }
 
+impl Overlay {
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Overlay::None => "none",
+            Overlay::Picker => "picker",
+            Overlay::Help => "help",
+            Overlay::Confirm => "confirm",
+            Overlay::Settings => "settings",
+            Overlay::Onboarding => "onboarding",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickerList {
     Loading,
@@ -66,7 +80,7 @@ pub struct Status {
 }
 
 /// The settings form, flat. Empty Readeck fields mean "not set up".
-/// No `Debug` on purpose: it holds the API key and token.
+/// Its `Debug` shows nothing on purpose: it holds the API key and token.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct SettingsValues {
     pub miniflux_url: String,
@@ -75,6 +89,13 @@ pub struct SettingsValues {
     pub readeck_token: String,
 }
 
+impl std::fmt::Debug for SettingsValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SettingsValues { .. }")
+    }
+}
+
+#[derive(Debug)]
 pub struct SettingsForm {
     /// What the form starts from; the window keeps what is typed until it submits.
     pub values: SettingsValues,
@@ -187,6 +208,12 @@ pub enum Outcome {
     SettingsSaved(Result<Status, String>),
 }
 
+impl std::fmt::Debug for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Outcome { .. }")
+    }
+}
+
 /// A key press, named as the web names keys (see `keys.rs`), plus what only the window knows.
 #[derive(Debug, Clone, Default)]
 pub struct KeyPress {
@@ -261,6 +288,12 @@ pub struct App {
     prefs: Prefs,
     /// Whether the help says ⌘ or Ctrl.
     mac: bool,
+}
+
+impl std::fmt::Debug for App {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("App { .. }")
+    }
 }
 
 impl App {
@@ -403,6 +436,16 @@ impl App {
             }
             _ => APP_NAME.to_string(),
         }
+    }
+
+    /// The heading of the screen at the end of the list.
+    pub fn end_title(&self) -> &'static str {
+        if self.mode == Mode::History { "End of history" } else { "All caught up" }
+    }
+
+    /// The top bar's History badge: reading read items.
+    pub fn history_badge(&self) -> bool {
+        self.mode == Mode::History && !self.selection_label().is_empty()
     }
 
     /// What fills the window under the top bar.
@@ -1189,6 +1232,19 @@ pub enum Screen {
     /// "All caught up" / "End of history".
     End,
     Empty,
+}
+
+impl Screen {
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Screen::Settings => "settings",
+            Screen::Loading => "loading",
+            Screen::Article => "article",
+            Screen::End => "end",
+            Screen::Empty => "empty",
+        }
+    }
 }
 
 /// An article title as shown, in the article and the window title.

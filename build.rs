@@ -1,7 +1,9 @@
 //! Generates the C++ side of the Qt bridge (src/bridge.rs), compiles the QML ahead of time and embeds it, with
-//! the fonts, in the binary.
+//! the fonts, in the binary. Without the `qt` feature (the macOS app's static library) there is nothing to do.
+#[cfg(feature = "qt")]
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
+#[cfg(feature = "qt")]
 const QML: &[&str] = &[
     "qml/Main.qml",
     "qml/TopBar.qml",
@@ -20,6 +22,7 @@ const QML: &[&str] = &[
     "qml/Button.qml",
 ];
 
+#[cfg(feature = "qt")]
 const FONTS: &[&str] = &[
     "assets/fonts/literata-latin-wght-normal.woff2",
     "assets/fonts/literata-latin-wght-italic.woff2",
@@ -27,6 +30,10 @@ const FONTS: &[&str] = &[
     "assets/fonts/inter-latin-wght-italic.woff2",
 ];
 
+#[cfg(not(feature = "qt"))]
+fn main() {}
+
+#[cfg(feature = "qt")]
 fn main() {
     CxxQtBuilder::new_qml_module(QmlModule::new("be.kletse.rss").qml_files(QML.iter().copied()))
         .qt_module("Network")

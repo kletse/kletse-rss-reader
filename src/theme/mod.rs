@@ -32,12 +32,25 @@ pub fn load() -> Theme {
     provider::load()
 }
 
+/// The macOS theme for an appearance and accent colour (`#rrggbb`). The native app reads both from AppKit,
+/// which knows them better than `defaults` does, and is told when they change.
+#[cfg(target_os = "macos")]
+pub fn macos(dark: bool, accent: &str) -> Theme {
+    provider::theme(dark, accent)
+}
+
 /// Follows theme changes for as long as the returned watcher lives.
 pub fn watch(on_change: OnChange) -> Watcher {
     Watcher(provider::watch(on_change))
 }
 
 pub struct Watcher(provider::Watcher);
+
+impl std::fmt::Debug for Watcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Watcher { .. }")
+    }
+}
 
 impl Watcher {
     /// The window regained focus or the system appearance changed: check again. Only macOS needs this; on

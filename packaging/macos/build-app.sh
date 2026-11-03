@@ -1,19 +1,23 @@
 #!/bin/bash
-# Builds "Kletse RSS.app" for macOS from this checkout: the release binary, the icon and an Info.plist.
-# With Homebrew's Qt (`brew install qt`), macdeployqt then copies the Qt frameworks and QML modules the app
-# uses into the bundle, so it keeps working when Homebrew updates or removes Qt.
+# Builds "Kletse RSS.app" for macOS from this checkout: the Rust core as a static library (src/ffi.rs), the
+# SwiftUI app around it (macos/), the icon and an Info.plist. Needs Xcode (or its command line tools) and Rust;
+# no Qt.
 #
 # Usage: packaging/macos/build-app.sh            → packaging/Kletse RSS.app
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-cargo build --release --locked
+# The Swift app's minimum; the library is built for the same one, or the linker warns about every object.
+export MACOSX_DEPLOYMENT_TARGET=15.0
+
+cargo rustc --lib --release --locked --no-default-features --features ffi --crate-type staticlib
+swift build -c release --package-path macos
 version=$(packaging/check-version.sh)
 app="packaging/Kletse RSS.app"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/kletse-rss "$app/Contents/MacOS/kletse-rss"
+cp "$(swift build -c release --package-path macos --show-bin-path)/KletseRSS" "$app/Contents/MacOS/kletse-rss"
 cp packaging/macos/icon.icns "$app/Contents/Resources/icon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -29,21 +33,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.news</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>$MACOSX_DEPLOYMENT_TARGET</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict>
 </plist>
 PLIST
-
-if command -v macdeployqt >/dev/null; then
-  # Homebrew splits Qt into separate kegs (qtbase, qtdeclarative, qtsvg, …), so macdeployqt doesn't find QtSvg,
-  # QtPdf and the like on its own. A plugin needing one then loads Homebrew's copy through the binary's
-  # /opt/homebrew/lib rpath, and with it a second QtCore. Point it at Homebrew's lib, where they're all linked.
-  libpath=()
-  command -v brew >/dev/null && libpath=("-libpath=$(brew --prefix)/lib")
-  macdeployqt "$app" -qmldir=qml -always-overwrite ${libpath[@]+"${libpath[@]}"}
-else
-  echo "macdeployqt not found: the app uses the Qt it was built against (fine on this Mac)." >&2
-fi
+# Signed ad hoc, as the linker signs the bare binary, so the bundle's seal matches what is in it.
+codesign --force --sign - "$app"
 echo "Built $app"

@@ -4,5 +4,7 @@ packaging/src/
 packaging/*.pkg.tar.*
 packaging/release/
 packaging/*.app/
+# SwiftPM's build directory for the macOS app.
+macos/.build/
 # Written by the cxx-qt build for the QML language server, with this machine's paths.
 .qmlls.ini

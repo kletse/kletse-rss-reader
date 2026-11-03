@@ -5,8 +5,11 @@ and how to build it is in the [README](README.md).
 
 ## The shape of it
 
-- **Rust + Qt Quick via [cxx-qt](https://github.com/KDAB/cxx-qt) 0.10.** No web view, no Node. One crate at the
-  repo root.
+- **Rust + Qt Quick via [cxx-qt](https://github.com/KDAB/cxx-qt) 0.10** on Linux, **SwiftUI** on macOS (`macos/`).
+  No web view, no Node. One crate at the repo root: a library (`src/lib.rs`, everything but the window) and the Qt
+  binary (`src/main.rs`). The `qt` feature (default) brings in cxx-qt and `bridge.rs`, which lives in the library
+  because cxx-qt links its C++ into every target of the crate; the `ffi` feature builds the C interface the Mac
+  app links (`src/ffi.rs`).
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.
@@ -117,7 +120,38 @@ so keep that in mind before sharing a screenshot.
 
 - **Omarchy/Arch** is the main target. The theme comes from `~/.local/state/omarchy/current/theme/colors.toml`,
   watched with `notify`, plus `hyprctl` for rounding and `omarchy font current`.
-- **macOS** is build-from-source (`packaging/macos/build-app.sh`, Homebrew Qt). macOS-only Rust
-  (`src/theme/macos.rs`) can't be compiled on Linux, so the macOS CI job is its only check. It also builds the
-  app bundle. On macOS the theme is re-checked when the window gains focus and when the system colour scheme
-  changes (`model.recheckTheme()`).
+- **macOS** is build-from-source and native: `packaging/macos/build-app.sh` builds the library as a static lib
+  (`cargo rustc --lib --no-default-features --features ffi --crate-type staticlib`) and the Swift package in
+  `macos/` around it, with `MACOSX_DEPLOYMENT_TARGET` matching the package's macOS 15. macOS-only Rust
+  (`src/theme/macos.rs`, `src/ffi.rs`) can't be compiled on Linux, so the macOS CI job is its only check. The Qt
+  window still builds and runs on a Mac (`cargo run`, with Homebrew Qt), which is handy for comparing.
+
+## The macOS app (`macos/`)
+
+- **`src/ffi.rs` is to Swift what `bridge.rs` is to QML.** Three C functions (`macos/Sources/CKletse/kletse.h`):
+  `kr_new`, `kr_send` (a JSON command in, a JSON reply out: whether a key was used, events such as
+  `scroll_down` and `quit`, and the whole state) and `kr_free_string`. Effects run on tokio; when an answer is
+  in, the core calls `notify` from that thread, and Swift sends `pump` on the main thread, which applies it. The
+  app never changes off the main thread. The article's blocks go out only when converted again (as `Rendered`
+  in bridge.rs), and `article.serial` changes only for a new article or new text.
+- **Articles reach Swift as styled runs, not HTML:** `src/content/native.rs` turns the inline HTML convert.rs
+  leaves in each block into runs (bold, link, code, colour…), and tables into rows of cells. Swift builds
+  `AttributedString`s from them (`BlocksView.swift`). Code colours still come from the palette, which Swift
+  feeds with the real appearance and accent colour (`theme` command), so a theme change re-renders.
+- **SwiftUI only draws and forwards**, like the QML: `Model.swift` holds the last reply. Every key goes through
+  an `NSEvent` local monitor (`Keyboard.swift`) to the core first, named as `keyName()` in Main.qml names them,
+  with ⌘ as `ctrl` and Control as `meta`. Keys the core doesn't use carry on (⌘Q, typing in a field). Overlays
+  map onto native presentation: the picker is a popover, help a sheet, confirm an alert. Their bindings only
+  ask the core to close them.
+- **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
+  are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
+  toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
+- **Don't give menu items single-key shortcuts.** AppKit matches menu key equivalents before the text field
+  sees the key, so typing `j` in the settings would go to the next article.
+- **A C callback must not be main-actor code.** A closure written inside a `@MainActor` type is inferred as
+  isolated to it and traps when tokio calls it; `wake` in `Core.swift` is a top-level function for that reason.
+- **The window must be told to open at launch** (`.defaultLaunchBehavior(.presented)`): macOS remembers a
+  `Window` that was closed at the last quit, per bundle id, and otherwise starts with no window at all.
+- **Snapshots work as for Qt:** `KLETSE_RSS_DEMO=1 KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter ?"
+  "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. A popover or sheet
+  goes to `/tmp/shot-2.png`; alerts don't draw into a bitmap.

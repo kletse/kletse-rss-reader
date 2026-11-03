@@ -49,7 +49,7 @@ jobs:
           if-no-files-found: ignore
 
   macos:
-    name: macOS clippy, tests and the app bundle
+    name: macOS clippy, tests and the native app
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +61,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      # The library the native app links: its C interface and the macOS-only code, without Qt.
+      - run: cargo clippy --all-targets --no-default-features --features ffi --locked -- -D warnings
+      - run: cargo test --no-default-features --features ffi --locked
       - run: packaging/macos/build-app.sh
 
   audit:

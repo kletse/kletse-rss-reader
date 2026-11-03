@@ -75,6 +75,20 @@ pub const MODIFIER_KEYS: Keymap =
 /// Keys that work in the reader and in the picker.
 pub const GLOBAL_KEYS: Keymap = &[(&[","], Action::Settings)];
 
+/// What a button in the window does, by the name the window gives it.
+pub fn button_action(button: &str) -> Option<Action> {
+    Some(match button {
+        "next" => Action::Next { mark_read: true },
+        "prev" => Action::Prev,
+        "picker" => Action::OpenPicker,
+        "readeck" => Action::SaveToReadeck,
+        "mode" => Action::ToggleMode,
+        "settings" => Action::Settings,
+        "help" => Action::Help,
+        _ => return None,
+    })
+}
+
 pub fn lookup(keymap: Keymap, key: &str) -> Option<Action> {
     keymap.iter().find(|(keys, _)| keys.contains(&key)).map(|&(_, action)| action)
 }
@@ -104,6 +118,7 @@ pub enum Where {
     Both,
 }
 
+#[derive(Debug)]
 pub struct HelpRow {
     pub keys: &'static [Chord],
     pub action: &'static str,

@@ -1,25 +1,11 @@
 //! Kletse RSS: one unread article at a time, oldest first. Or, in history mode, read ones, last read first.
 //!
-//! The window is Qt Quick (qml/), driven from Rust through one bridge object (bridge.rs). All behaviour lives in
-//! app.rs, which never waits on anything and is tested without Qt; backend.rs talks to the servers.
-
-mod app;
-mod backend;
-mod bridge;
-mod config;
-mod content;
-mod dates;
-mod demo;
-mod error;
-mod keys;
-mod miniflux;
-mod paging;
-mod picker;
-mod prefs;
-mod readeck;
-mod theme;
+//! The window is Qt Quick (qml/), driven from Rust through one bridge object (bridge.rs, in the library). All
+//! behaviour lives in app.rs, which never waits on anything and is tested without Qt; backend.rs talks to the
+//! servers.
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
+use kletse_rss::app;
 
 fn main() {
     let mut app = QGuiApplication::new();

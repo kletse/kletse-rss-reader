@@ -65,6 +65,7 @@ impl Stats {
     }
 }
 
+#[derive(Debug)]
 pub struct Rendered {
     pub blocks: Vec<Block>,
     pub stats: Stats,

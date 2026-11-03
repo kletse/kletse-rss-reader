@@ -1,0 +1,5 @@
+module CKletse [system] {
+    header "kletse.h"
+    link "kletse_rss"
+    export *
+}

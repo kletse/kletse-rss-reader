@@ -382,7 +382,7 @@ fn code(runs: &[Run], lang: Option<&str>, width: usize) -> Vec<Row> {
 }
 
 fn list(ordered: bool, start: i64, items: &[Vec<NativeBlock>], width: usize, size_of: SizeOf<'_>) -> Vec<Row> {
-    let number = |i: usize| start + i64::try_from(i).unwrap_or(0);
+    let number = |i: usize| start.saturating_add(i64::try_from(i).unwrap_or(0));
     let marker = |i: usize| if ordered { format!("{}. ", number(i)) } else { "• ".to_string() };
     let indent = (0..items.len()).map(|i| marker(i).width()).max().unwrap_or(2);
     let inner = width.saturating_sub(indent);

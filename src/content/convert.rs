@@ -95,6 +95,8 @@ const TRANSPARENT: &[&str] = &[
 /// by itself, so a feed with thousands of unclosed tags would otherwise take the recursion, and the stack, as deep
 /// as it likes; the article is converted ahead on a thread with 2 MB of it. Browsers stop at 512.
 const MAX_DEPTH: usize = 256;
+/// The furthest an ordered list can start from 1, either way.
+const MAX_LIST_START: i64 = 1_000_000_000;
 
 pub fn convert(html: &str, base_url: &str, palette: &Palette) -> Rendered {
     convert_with(html, base_url, palette, false)
@@ -402,7 +404,9 @@ impl Converter<'_> {
         }
         if !items.is_empty() {
             let ordered = el.name() == "ol";
-            let start = el.attr("start").and_then(|s| s.trim().parse().ok()).unwrap_or(1);
+            // Clamped: the windows add the item's number to it, and Swift traps on an overflow.
+            let start = el.attr("start").and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(1);
+            let start = start.clamp(-MAX_LIST_START, MAX_LIST_START);
             out.push(Block::List { ordered, start, items });
         }
     }
@@ -632,6 +636,21 @@ mod tests {
         // Nothing of the sort happens to an ordinary article.
         let quote = blocks("<blockquote><p>One</p><blockquote><p>Two</p></blockquote></blockquote>");
         assert_eq!(quote, vec![Block::Quote { blocks: vec![para("One"), Block::Quote { blocks: vec![para("Two")] }] }]);
+    }
+
+    #[test]
+    fn a_lists_start_is_taken_as_written_within_reason() {
+        let start = |attr: &str| match &blocks(&format!("<ol {attr}><li>a</li><li>b</li></ol>"))[..] {
+            [Block::List { ordered: true, start, .. }] => *start,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(start("start='7'"), 7);
+        assert_eq!(start("start=' -5 '"), -5);
+        assert_eq!(start(""), 1);
+        assert_eq!(start("start='soon'"), 1);
+        assert_eq!(start("start='9223372036854775807'"), 1_000_000_000);
+        assert_eq!(start("start='-9223372036854775808'"), -1_000_000_000);
+        assert_eq!(start("start='99999999999999999999'"), 1); // not even an i64
     }
 
     #[test]

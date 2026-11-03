@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Install Rust, Qt 6 and a font
         run: pacman -Syu --noconfirm --needed base-devel git rust qt6-base qt6-declarative qt6-svg qt6-imageformats ttf-dejavu
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Same version in every file that carries it
         run: packaging/check-version.sh
@@ -52,7 +52,7 @@ jobs:
     name: macOS clippy, tests and the native app
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Qt 6
         run: brew install qt
       - uses: dtolnay/rust-toolchain@stable
@@ -73,7 +73,7 @@ jobs:
       contents: read
       checks: write # rustsec/audit-check posts its result as a check run
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

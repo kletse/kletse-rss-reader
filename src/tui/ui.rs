@@ -392,10 +392,10 @@ impl Ui {
             }
             // The server choice: either arrow, or Space, switches.
             KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus == CHOICE => {
-                form.server = match form.server {
-                    Server::Miniflux => Server::GReader,
-                    Server::GReader => Server::Miniflux,
-                };
+                let kinds = Server::ALL.len();
+                let at = Server::ALL.iter().position(|&kind| kind == form.server).unwrap_or(0);
+                let by = if event.code == KeyCode::Left { kinds - 1 } else { 1 };
+                form.server = Server::ALL[(at + by) % kinds];
             }
             _ if form.focus == CHOICE => {}
             _ => form.fields[form.focus].key(event),

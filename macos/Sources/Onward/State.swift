@@ -95,6 +95,8 @@ struct ToastInfo: Decodable {
 }
 
 struct SettingsInfo: Decodable {
+    /// What the form offers.
+    let kinds: [ServerKind]
     let problem: String
     let error: String
     let checking: Bool
@@ -103,8 +105,14 @@ struct SettingsInfo: Decodable {
     let values: SettingsValues?
 }
 
+struct ServerKind: Decodable, Identifiable {
+    let name: String
+    let label: String
+    var id: String { name }
+}
+
 struct SettingsValues: Decodable, Equatable {
-    /// "miniflux" or "greader". The other kind's fields are kept, for switching back.
+    /// A `name` from `SettingsInfo.kinds`. The other kinds' fields are kept, for switching back.
     var server: String
     var minifluxUrl: String
     var minifluxApiKey: String

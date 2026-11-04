@@ -11,6 +11,7 @@
 
 use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsValues, ToastKind};
 use crate::backend::Backend;
+use crate::config::Server;
 use crate::content::{convert, native};
 use crate::keys;
 use crate::paging::Mode;
@@ -147,7 +148,7 @@ enum Command {
         url: String,
     },
     SubmitSettings {
-        /// "miniflux" or "greader".
+        /// A `name` from the form's `kinds`.
         #[serde(default)]
         server: String,
         #[serde(default)]
@@ -284,6 +285,8 @@ struct ToastState {
 
 #[derive(Serialize)]
 struct Settings {
+    /// What the form offers.
+    kinds: Vec<ServerKind>,
     problem: String,
     error: String,
     checking: bool,
@@ -291,6 +294,12 @@ struct Settings {
     serial: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     values: Option<Values>,
+}
+
+#[derive(Serialize)]
+struct ServerKind {
+    name: &'static str,
+    label: &'static str,
 }
 
 #[derive(Serialize)]
@@ -613,6 +622,7 @@ impl Core {
             readeck_token: form.values.readeck_token.clone(),
         });
         let settings = Settings {
+            kinds: Server::ALL.map(|k| ServerKind { name: k.name(), label: k.short_label() }).into(),
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
             checking: form.checking,

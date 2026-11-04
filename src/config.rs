@@ -37,6 +37,33 @@ pub enum Server {
 }
 
 impl Server {
+    /// Every kind, in the order the settings form offers them.
+    pub const ALL: [Server; 2] = [Server::Miniflux, Server::GReader];
+
+    /// As the settings form offers it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Server::Miniflux => "Miniflux",
+            Server::GReader => "Google Reader API (FreshRSS, …)",
+        }
+    }
+
+    /// As the Mac's settings offer it, where the help below the picker names the servers.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Server::Miniflux => "Miniflux",
+            Server::GReader => "Google Reader API",
+        }
+    }
+
+    /// Where the kind stands in `ALL`. A new kind stops the build here, and belongs in `ALL` as well.
+    const fn place(self) -> usize {
+        match self {
+            Server::Miniflux => 0,
+            Server::GReader => 1,
+        }
+    }
+
     /// As the config file and the windows name it.
     pub fn name(self) -> &'static str {
         match self {
@@ -54,6 +81,14 @@ impl Server {
         }
     }
 }
+
+const _: () = {
+    let mut at = 0;
+    while at < Server::ALL.len() {
+        assert!(Server::ALL[at].place() == at, "Server::ALL lists every kind, in the order of `place`");
+        at += 1;
+    }
+};
 
 /// `Debug` leaves out the API key.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -645,8 +680,9 @@ mod tests {
 
     #[test]
     fn a_name_that_is_no_kind_of_server_is_not_taken_for_one() {
-        assert_eq!(Server::from_name(Server::Miniflux.name()), Some(Server::Miniflux));
-        assert_eq!(Server::from_name(Server::GReader.name()), Some(Server::GReader));
+        for kind in Server::ALL {
+            assert_eq!(Server::from_name(kind.name()), Some(kind));
+        }
         for name in ["", "Miniflux", "feedbin"] {
             assert_eq!(Server::from_name(name), None, "{name:?}");
         }

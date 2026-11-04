@@ -213,17 +213,14 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
                 let style = if on { BOLD } else { DIM };
                 Span::styled(format!("{} {name}", if on { "●" } else { "○" }), style)
             };
-            let greader = fields.server == crate::config::Server::GReader;
-            rows.push(Row {
-                line: Line::from(vec![
-                    Span::raw("  "),
-                    mark,
-                    option(!greader, "Miniflux"),
-                    Span::raw("   "),
-                    option(greader, "Google Reader API (FreshRSS, …)"),
-                ]),
-                ..Row::default()
-            });
+            let mut line = vec![Span::raw("  "), mark];
+            for (n, kind) in crate::config::Server::ALL.into_iter().enumerate() {
+                if n > 0 {
+                    line.push(Span::raw("   "));
+                }
+                line.push(option(kind == fields.server, kind.label()));
+            }
+            rows.push(Row { line: Line::from(line), ..Row::default() });
             rows.push(Row::default());
             continue;
         }

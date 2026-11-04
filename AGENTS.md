@@ -128,6 +128,9 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   `width: Math.min(implicitWidth, availableWidth)` inside a Button's `contentItem`, quietly collapses to nothing.
   Compute `implicitWidth` from children's implicit widths only. Binding loops on `height` show up as warnings, so
   watch for them.
+- **Use `s.model` in `Settings.qml`, not a bare `model`.** A binding on the root's own properties with a bare `model`
+  (`property var kinds: JSON.parse(model.serverKinds)`) crashed at startup with a null pointer and no message, on Qt
+  6.10.2, even though the form wasn't on screen. Written as `s.model`, like the rest of the file, it's fine.
 - **`grabToImage` doesn't work on `window.contentItem`** ("no QML engine"). Grab an item you declared instead
   (`Main.qml` grabs its root `FocusScope`, which paints the window colour).
 - **Components loaded with `sourceComponent`** are created in the declaring file's context. Inside them, `parent`

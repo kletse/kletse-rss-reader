@@ -7,6 +7,7 @@
 
 use crate::app::{App, Effect, KeyPress, PickerList, SettingsValues, ToastKind};
 use crate::backend::Backend;
+use crate::config::Server;
 use crate::content::convert;
 use crate::keys;
 use crate::paging::Mode;
@@ -95,8 +96,10 @@ pub mod qobject {
         #[qproperty(QString, settings_problem)]
         #[qproperty(QString, settings_error)]
         #[qproperty(bool, settings_checking)]
-        // "miniflux" or "greader".
+        // Which kind of server the form starts on: a `name` from `server_kinds`.
         #[qproperty(QString, server)]
+        // What the form offers: `[{ name, label }, …]`, as JSON.
+        #[qproperty(QString, server_kinds)]
         #[qproperty(QString, miniflux_url)]
         #[qproperty(QString, miniflux_api_key)]
         #[qproperty(QString, greader_url)]
@@ -274,6 +277,7 @@ pub struct ModelRust {
     settings_error: QString,
     settings_checking: bool,
     server: QString,
+    server_kinds: QString,
     miniflux_url: QString,
     miniflux_api_key: QString,
     greader_url: QString,
@@ -372,6 +376,7 @@ impl Default for ModelRust {
             settings_error: QString::default(),
             settings_checking: false,
             server: QString::default(),
+            server_kinds: QString::from("[]"),
             miniflux_url: QString::default(),
             miniflux_api_key: QString::default(),
             greader_url: QString::default(),
@@ -438,6 +443,8 @@ impl qobject::Model {
     pub fn start(mut self: Pin<&mut Self>) {
         let help = serde_json::to_string(&self.as_mut().state().app.help_lines()).unwrap_or_else(|_| "[]".into());
         self.as_mut().set_help_lines(qs(&help));
+        let kinds: Vec<_> = Server::ALL.map(|k| serde_json::json!({ "name": k.name(), "label": k.label() })).to_vec();
+        self.as_mut().set_server_kinds(qs(&serde_json::Value::from(kinds).to_string()));
         self.as_mut().apply_theme(theme::load());
 
         let qt = self.qt_thread();

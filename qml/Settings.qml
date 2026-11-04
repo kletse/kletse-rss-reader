@@ -8,9 +8,10 @@ Item {
     required property var ui
     readonly property var model: ui.model
     readonly property bool firstRun: model.overlay === "onboarding"
-    // "miniflux" or "greader": which fields show. The other kind's are kept, for switching back.
+    // The kinds of server on offer (src/config.rs), and which one's fields show. The others' are kept, for switching
+    // back.
+    readonly property var kinds: JSON.parse(s.model.serverKinds)
     property string server: "miniflux"
-    readonly property bool greader: server === "greader"
 
     height: form.visible ? form.height : 0
 
@@ -34,7 +35,8 @@ Item {
     }
     // The chosen server's first empty field, or its last.
     function focusFirst() {
-        const fields = s.greader ? [greaderUrl, greaderUser, greaderPassword] : [minifluxUrl, minifluxKey]
+        const fields = ({ miniflux: [minifluxUrl, minifluxKey],
+                          greader: [greaderUrl, greaderUser, greaderPassword] })[s.server]
         const first = fields.find(f => f.text === "") ?? fields[fields.length - 1]
         first.input.forceActiveFocus()
     }
@@ -105,22 +107,20 @@ Item {
             note: "where your feeds are"
             Row {
                 spacing: 8
-                Button {
-                    ui: s.ui
-                    primary: !s.greader
-                    text: "Miniflux"
-                    onClicked: { s.server = "miniflux"; s.focusFirst() }
-                }
-                Button {
-                    ui: s.ui
-                    primary: s.greader
-                    text: "Google Reader API (FreshRSS, …)"
-                    onClicked: { s.server = "greader"; s.focusFirst() }
+                Repeater {
+                    model: s.kinds
+                    delegate: Button {
+                        required property var modelData
+                        ui: s.ui
+                        primary: s.server === modelData.name
+                        text: modelData.label
+                        onClicked: { s.server = modelData.name; s.focusFirst() }
+                    }
                 }
             }
         }
         Fieldset {
-            visible: !s.greader
+            visible: s.server === "miniflux"
             title: "Miniflux"
             note: "required"
             Field {
@@ -142,7 +142,7 @@ Item {
             }
         }
         Fieldset {
-            visible: s.greader
+            visible: s.server === "greader"
             title: "Google Reader API"
             note: "required"
             Field {

@@ -126,7 +126,11 @@ impl Backend {
         Status {
             configured: self.demo || cfg.is_complete(),
             readeck: self.demo || cfg.readeck.is_some(),
-            fetches: self.demo || cfg.server() == config::Server::Miniflux,
+            fetches: self.demo
+                || match cfg.server() {
+                    config::Server::Miniflux => true,
+                    config::Server::GReader => false,
+                },
         }
     }
 
@@ -148,13 +152,14 @@ impl Backend {
     }
 
     /// A client for the server in `cfg`.
-    fn client_for(&self, cfg: &config::Config) -> Server {
-        match (cfg.server(), &cfg.greader) {
-            (config::Server::GReader, Some(greader)) => {
+    fn client_for(&self, cfg: &config::Config) -> Result<Server, Error> {
+        Ok(match cfg.server() {
+            config::Server::Miniflux => Server::Miniflux(miniflux::Client::new(self.http.clone(), &cfg.miniflux)),
+            config::Server::GReader => {
+                let greader = cfg.greader.as_ref().ok_or_else(|| Error::Setup(config::GREADER_INCOMPLETE.into()))?;
                 Server::GReader(greader::Client::new(self.http.clone(), greader))
             }
-            _ => Server::Miniflux(miniflux::Client::new(self.http.clone(), &cfg.miniflux)),
-        }
+        })
     }
 
     /// The configured server's client, the same one each time until the config changes.
@@ -164,7 +169,12 @@ impl Backend {
             return Err(Error::Setup("The feed server is not set up yet".into()));
         }
         let mut kept = self.server.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(kept.get_or_insert_with(|| Arc::new(self.client_for(&cfg))).clone())
+        if let Some(server) = &*kept {
+            return Ok(Arc::clone(server));
+        }
+        let server = Arc::new(self.client_for(&cfg)?);
+        *kept = Some(Arc::clone(&server));
+        Ok(server)
     }
 
     /// Validates the settings against the real servers, then saves and applies them. A feed server that fails
@@ -210,7 +220,7 @@ impl Backend {
         }
         let readeck = cfg.readeck.take();
         cfg.validate()?;
-        let username = if self.demo { None } else { Some(self.client_for(&cfg).check().await?) };
+        let username = if self.demo { None } else { Some(self.client_for(&cfg)?.check().await?) };
         let (readeck, readeck_problem) = match self.check_readeck(readeck, half_filled).await {
             Ok(readeck) => (readeck, None),
             Err(e) => (self.config().readeck, Some(e.message())),
@@ -714,6 +724,14 @@ mod tests {
         assert!(matches!(*backend.server().unwrap(), Server::GReader(_)));
         let same = Arc::ptr_eq(&backend.server().unwrap(), &backend.server().unwrap());
         assert!(same, "the client, its login and its streams are kept");
+    }
+
+    #[test]
+    fn a_google_reader_config_without_its_section_gets_no_miniflux_client() {
+        let backend = Backend::new(true);
+        let cfg = config::Config { server: Some(config::Server::GReader), ..config::Config::default() };
+        let err = backend.client_for(&cfg).unwrap_err();
+        assert_eq!(err.message(), config::GREADER_INCOMPLETE);
     }
 
     #[tokio::test]

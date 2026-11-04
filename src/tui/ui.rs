@@ -72,6 +72,14 @@ pub enum Inline {
     },
 }
 
+/// The fields of a kind of server.
+fn own_fields(server: Server) -> &'static [usize] {
+    match server {
+        Server::Miniflux => &MINIFLUX_FIELDS,
+        Server::GReader => &GREADER_FIELDS,
+    }
+}
+
 /// The settings form's fields. The form starts from the saved values once, then keeps what is typed.
 pub struct Form {
     pub server: Server,
@@ -83,11 +91,7 @@ pub struct Form {
 impl Form {
     /// What's on screen, top to bottom: the server choice, its fields, then Readeck's.
     pub fn shown(&self) -> Vec<usize> {
-        let server: &[usize] = match self.server {
-            Server::Miniflux => &MINIFLUX_FIELDS,
-            Server::GReader => &GREADER_FIELDS,
-        };
-        std::iter::once(CHOICE).chain(server.iter().copied()).chain(READECK_FIELDS).collect()
+        std::iter::once(CHOICE).chain(own_fields(self.server).iter().copied()).chain(READECK_FIELDS).collect()
     }
 
     /// Tab and Shift+Tab, round the fields on screen.
@@ -572,7 +576,7 @@ impl Ui {
                         &v.readeck_token,
                     ];
                     // The first empty field of the chosen server, or its last.
-                    let own: &[usize] = if v.server == Server::GReader { &GREADER_FIELDS } else { &MINIFLUX_FIELDS };
+                    let own = own_fields(v.server);
                     let focus = own.iter().copied().find(|&i| fields[i].is_empty()).unwrap_or(own[own.len() - 1]);
                     self.form = Some(Form { server: v.server, fields: fields.map(|text| Editor::new(text)), focus });
                 }

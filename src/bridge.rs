@@ -545,8 +545,11 @@ impl qobject::Model {
         readeck_url: &QString,
         readeck_token: &QString,
     ) {
+        let Some(server) = self.as_mut().state().app.server_named(&server.to_string()) else {
+            return self.sync();
+        };
         let values = SettingsValues {
-            server: crate::config::Server::from_name(&server.to_string()),
+            server,
             miniflux_url: miniflux_url.to_string(),
             miniflux_api_key: miniflux_api_key.to_string(),
             greader_url: greader_url.to_string(),

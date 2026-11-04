@@ -22,7 +22,7 @@ Item {
     // The form starts from the saved values once (the serial says when they are in); after that it keeps what
     // is typed, also when a check fails.
     function fill() {
-        s.server = s.model.server === "greader" ? "greader" : "miniflux"
+        s.server = s.model.server
         minifluxUrl.text = s.model.minifluxUrl
         minifluxKey.text = s.model.minifluxApiKey
         greaderUrl.text = s.model.greaderUrl

@@ -45,9 +45,13 @@ impl Server {
         }
     }
 
-    /// The other way round; anything else is Miniflux.
-    pub fn from_name(name: &str) -> Self {
-        if name == "greader" { Server::GReader } else { Server::Miniflux }
+    /// The other way round; `None` for a name that isn't a kind of server, which must not pass for one.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "miniflux" => Some(Server::Miniflux),
+            "greader" => Some(Server::GReader),
+            _ => None,
+        }
     }
 }
 
@@ -186,12 +190,12 @@ impl Config {
         {
             return Err(Error::Setup(GREADER_INCOMPLETE.into()));
         }
-        match self.server() {
-            Server::Miniflux if !self.is_complete() => {
-                return Err(Error::Setup("The Miniflux URL and API key are required.".into()));
-            }
-            Server::GReader if !self.is_complete() => return Err(Error::Setup(GREADER_INCOMPLETE.into())),
-            _ => {}
+        if !self.is_complete() {
+            let missing = match self.server() {
+                Server::Miniflux => "The Miniflux URL and API key are required.",
+                Server::GReader => GREADER_INCOMPLETE,
+            };
+            return Err(Error::Setup(missing.into()));
         }
         if self.miniflux.is_complete() {
             validate_url(&self.miniflux.url)?;
@@ -206,7 +210,7 @@ impl Config {
     }
 }
 
-const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
+pub(crate) const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
 
 fn clean_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
@@ -637,6 +641,23 @@ mod tests {
         assert_eq!(named.server(), Server::GReader);
         assert!(!named.is_complete(), "the named server has no settings");
         assert!(named.validate().unwrap_err().message().contains("Google Reader"));
+    }
+
+    #[test]
+    fn a_name_that_is_no_kind_of_server_is_not_taken_for_one() {
+        assert_eq!(Server::from_name(Server::Miniflux.name()), Some(Server::Miniflux));
+        assert_eq!(Server::from_name(Server::GReader.name()), Some(Server::GReader));
+        for name in ["", "Miniflux", "feedbin"] {
+            assert_eq!(Server::from_name(name), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_config_file_naming_an_unknown_server_is_refused_not_read_as_miniflux() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "server = \"feedbin\"\n[miniflux]\nurl = \"https://m\"\napi_key = \"k\"\n").unwrap();
+        assert!(read_from(&path).unwrap_err().message().contains("feedbin"));
     }
 
     #[test]

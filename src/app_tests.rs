@@ -1961,6 +1961,18 @@ fn a_refresh_the_server_turns_down_is_a_toast() {
 }
 
 #[test]
+fn a_kind_of_server_the_core_doesnt_know_stops_the_save_and_the_form_says_so() {
+    let mut h = Harness::new(items(1));
+    h.start();
+    h.key(",");
+    assert_eq!(h.app.server_named("greader"), Some(Server::GReader));
+    assert_eq!(h.app.settings().unwrap().error, "");
+    assert_eq!(h.app.server_named("feedbin"), None);
+    assert!(h.app.settings().unwrap().error.contains("feedbin"));
+    assert!(!h.app.settings().unwrap().checking);
+}
+
+#[test]
 fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
     let mut h = Harness::new(items(3));
     h.status = Status { configured: true, readeck: false, fetches: false };

@@ -225,7 +225,7 @@ Traps here:
 - **SwiftUI only draws and forwards**, like the QML: `Model.swift` holds the last reply. Every key goes through
   an `NSEvent` local monitor (`Keyboard.swift`) to the core first, named as `keyName()` in Main.qml names them,
   with ⌘ as `ctrl` and Control as `meta`. Keys the core doesn't use carry on (⌘Q, typing in a field). Overlays
-  map onto native presentation: the picker and help are sheets, confirm an alert. Their bindings only
+  map onto native presentation: the picker, help and search float in the window, and confirm is an alert. Their bindings only
   ask the core to close them.
 - **Settings is a window beside the reader** (`App::use_settings_window`, set by `ffi.rs` only), the stock `Settings`
   scene with toolbar tabs. There the form isn't an overlay: the reader keeps working, and the core asks for the window
@@ -247,8 +247,16 @@ Traps here:
 - **The icon and the colours are the logo's.** `packaging/logo/AppIcon.icon` holds a light and a dark version, and
   `build-app.sh` compiles it with `actool` into `Assets.car`, so macOS 26+ switches by itself. `macos/icon.icns` is the
   light one for older systems, made by the same `actool` run: redo it when the icon changes. The orange icon in Settings
-  is `AppIcon` in `Brand.swift`. The palette in `src/theme/macos.rs` and `Brand` in Swift must agree. On Omarchy and in a
-  terminal the logo takes the theme's accent, since following the theme is the point there.
+  is `AppIcon` in `Brand.swift`. The palette in `src/theme/macos.rs` and `Brand` in Swift must agree. Settings also offers the original look (neutral
+  colours, system accent): Swift then sends `accent` with the theme, and leaves it out for the logo's colours.
+  `KLETSE_RSS_APPEARANCE=light` or `dark` forces the appearance for snapshots, and `-colours original` tries that look. On Omarchy the logo takes
+  the accent, and Settings offers System (the default, the live theme) or Onward Dark and Light (`Prefs::colours`,
+  applied by `Theme::in_colours` in bridge.rs; the font and rounding stay Omarchy's). A terminal stays on its ANSI colours.
+- **The picker, the keys and the search box float in the window (`Floating`), they aren't sheets.** A sheet disables the
+  red button (AppKit undoes `isEnabled` on it), ignores clicks beside it and refuses a quit from the Dock. The confirm
+  alert is still one, briefly.
+- **Don't branch on a setting at the root of a window.** `if`/`else` there makes two views, so a change tears the content
+  down, and for Settings `onDisappear` then closes the form. `BrandStyle` keeps one modifier chain for this reason.
 - **Snapshots work as for Qt:** `KLETSE_RSS_DEMO=1 KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter ?"
   "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. An open sheet is drawn
   over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap.

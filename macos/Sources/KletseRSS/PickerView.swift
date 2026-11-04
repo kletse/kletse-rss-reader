@@ -5,6 +5,8 @@ import SwiftUI
 struct PickerView: View {
     let model: Model
 
+    @State private var hovered: Int?
+
     var body: some View {
         let picker = model.state?.picker
         let history = picker?.history == true
@@ -35,8 +37,14 @@ struct PickerView: View {
             Divider()
             footer(picker, history: history)
         }
-        .frame(width: 380)
+        .frame(idealWidth: 380, maxWidth: 380)
         .modifier(ConfirmAlert(model: model, overPicker: true))
+    }
+
+    /// The row keys are on, or the one under the mouse, more faintly: hovering doesn't move the keys' place.
+    private func rowFill(_ row: Int, current: Bool) -> Color {
+        if current { return Brand.accent }
+        return hovered == row ? Color.primary.opacity(0.08) : .clear
     }
 
     /// Shows which list this is, and changes it.
@@ -95,8 +103,11 @@ struct PickerView: View {
                         .foregroundStyle(current ? AnyShapeStyle(Brand.onAccent) : AnyShapeStyle(.primary))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(current ? Brand.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
+                        .background(rowFill(i, current: current), in: RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
+                        .onHover { inside in
+                            if inside { hovered = i } else if hovered == i { hovered = nil }
+                        }
                         .onTapGesture { model.chooseRow(i) }
                         .padding(.top, row.depth == 0 && i > 0 ? 6 : 0)
                         .id(i)
@@ -147,7 +158,7 @@ struct SearchView: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(idealWidth: 440, maxWidth: 440)
         .onAppear {
             query = model.state?.searchQuery ?? ""
             focused = true
@@ -180,6 +191,6 @@ struct HelpView: View {
             }
         }
         .padding(20)
-        .frame(width: 560)
+        .frame(idealWidth: 560, maxWidth: 560)
     }
 }

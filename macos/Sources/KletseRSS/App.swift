@@ -11,9 +11,7 @@ struct KletseApp: App {
         Window("Kletse RSS", id: "main") {
             ContentView()
                 .frame(minWidth: 360, minHeight: 300)
-                .background(Brand.background)
-                .toolbarBackground(Brand.background, for: .windowToolbar)
-                .tint(Brand.accent)
+                .modifier(BrandStyle())
         }
         .defaultSize(width: 900, height: 1000)
         // Also when it was closed at the last quit; there is only this one window.
@@ -56,7 +54,7 @@ struct KletseApp: App {
 
         Settings {
             SettingsWindow(model: Model.shared)
-                .tint(Brand.accent)
+                .modifier(BrandStyle())
         }
         .windowResizability(.contentSize)
     }
@@ -65,6 +63,12 @@ struct KletseApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            // For screenshots: the system's own setting can't be overridden from outside.
+            switch ProcessInfo.processInfo.environment["KLETSE_RSS_APPEARANCE"] {
+            case "light": NSApp.appearance = NSAppearance(named: .aqua)
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+            default: break
+            }
             AppIcon.applyAtLaunch()
             Model.shared.start()
         }

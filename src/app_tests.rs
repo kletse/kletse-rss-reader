@@ -808,9 +808,9 @@ fn font_size_and_width_keys_change_and_save_the_prefs() {
     let mut h = first_second();
     let ctrl = |key: &str| KeyPress { key: key.into(), ctrl: true, ..KeyPress::default() };
     let (_, fx) = h.app.key(&ctrl("="));
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 40, newest_first: false })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, ..Prefs::default() })]);
     let (_, fx) = h.app.key(&KeyPress { key: "[".into(), ..KeyPress::default() });
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36, newest_first: false })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36, ..Prefs::default() })]);
     let (_, fx) = h.app.key(&ctrl("0"));
     assert_eq!(fx, [Effect::SavePrefs(Prefs::default())]);
     let (used, fx) = h.app.key(&ctrl("0"));
@@ -1594,4 +1594,12 @@ fn history_with_counts_the_server_doesnt_know_lists_every_feed_and_says_where_j_
     h.press_through(&["j"]);
     assert!(h.caught_up());
     assert_eq!(h.app.end_hint(), "Press j for Beta, Enter for the feeds, k to go back.");
+}
+
+#[test]
+fn choosing_colours_saves_them_once() {
+    let mut app = App::new(Prefs::default(), false);
+    let chosen = app.set_colours(Colours::OnwardLight);
+    assert!(matches!(chosen.as_slice(), [Effect::SavePrefs(p)] if p.colours == Colours::OnwardLight));
+    assert!(app.set_colours(Colours::OnwardLight).is_empty(), "nothing changed, nothing to save");
 }

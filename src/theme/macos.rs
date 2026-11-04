@@ -1,7 +1,7 @@
-//! Follows the macOS appearance, light or dark mode, with two palettes taken from the logo. The accent is the logo's
-//! orange; in light mode a deeper one, since the logo's own is too faint for text on a light background.
+//! Follows the macOS appearance, light or dark mode, in the logo's colours. The window can ask for the original look
+//! instead: neutral colours and the system accent.
 
-use super::{OnChange, Theme};
+use super::{OnChange, Theme, onward};
 use std::{
     collections::HashMap,
     process::Command,
@@ -14,17 +14,15 @@ use std::{
 
 /// Corner radius of macOS windows and controls.
 const ROUNDING: i64 = 10;
-const ACCENT_LIGHT: &str = "#bf3f0c";
-const ACCENT_DARK: &str = "#ff8a3d";
 
 pub fn load() -> Theme {
-    theme(is_dark())
+    theme(is_dark(), None)
 }
 
-/// The theme for an appearance.
-pub fn theme(dark: bool) -> Theme {
+/// The theme for an appearance: the logo's colours, or with a system accent (`#rrggbb`) the original look.
+pub fn theme(dark: bool, system_accent: Option<&str>) -> Theme {
     Theme {
-        colors: palette(dark),
+        colors: palette(dark, system_accent),
         rounding: ROUNDING,
         font: Some("Menlo".into()), // the system monospace font Terminal and Xcode default to
     }
@@ -85,85 +83,44 @@ fn is_dark() -> bool {
     read_default("AppleInterfaceStyle").is_some_and(|s| s == "Dark")
 }
 
-/// The same keys an Omarchy `colors.toml` has, so the rest of the app needs no platform branch.
-fn palette(dark: bool) -> HashMap<String, String> {
-    let pairs: &[(&str, &str)] = if dark {
-        &[
-            ("mode", "dark"),
-            ("background", "#1e130d"),
-            ("lighter_background", "#2d1f17"),
-            ("dark_background", "#160d09"),
-            ("foreground", "#e2dcd3"),
-            ("dark_foreground", "#a09488"),
-            ("bright_foreground", "#ffffff"),
-            ("muted", "#7c7065"),
-            ("selection", "#4a3325"),
-            ("red", "#ff6b6b"),
-            ("yellow", "#f2c94c"),
-            ("green", "#7bd88f"),
-            ("cyan", "#5ac8fa"),
-            ("blue", "#6fa8ff"),
-            ("magenta", "#c792ea"),
-            ("orange", "#ffa657"),
-        ]
-    } else {
-        &[
-            ("mode", "light"),
-            ("background", "#f7f4ec"),
-            ("lighter_background", "#ece8dd"),
-            ("dark_background", "#e4dfd2"),
-            ("foreground", "#2f2e2b"),
-            ("dark_foreground", "#6f6c66"),
-            ("bright_foreground", "#141311"),
-            ("muted", "#8f8b83"),
-            ("selection", "#d9d5cc"),
-            ("red", "#c4432b"),
-            ("yellow", "#9a6b00"),
-            ("green", "#3b7a2a"),
-            ("cyan", "#0b7285"),
-            ("blue", "#1c5fb4"),
-            ("magenta", "#7b3fa0"),
-            ("orange", "#b85c1a"),
-        ]
-    };
-    let mut colors: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    colors.insert("accent".into(), if dark { ACCENT_DARK } else { ACCENT_LIGHT }.into());
+/// The logo's colours, or the original look over them when there's a system accent.
+fn palette(dark: bool, system_accent: Option<&str>) -> HashMap<String, String> {
+    let mut colors = onward::colors(dark);
+    if let Some(accent) = system_accent {
+        let original: &[(&str, &str)] = if dark {
+            &[
+                ("background", "#1e1e20"),
+                ("lighter_background", "#2b2b2f"),
+                ("dark_background", "#161618"),
+                ("foreground", "#d6d6dc"),
+                ("dark_foreground", "#8e8e96"),
+                ("muted", "#6b6b73"),
+                ("selection", "#3a3a40"),
+                ("accent", accent),
+            ]
+        } else {
+            &[
+                ("background", "#f7f6f3"),
+                ("lighter_background", "#eceae5"),
+                ("dark_background", "#e4e1da"),
+                ("accent", accent),
+            ]
+        };
+        colors.extend(original.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    }
     colors
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
-    fn palettes_have_every_key_the_app_reads() {
-        for dark in [true, false] {
-            let p = palette(dark);
-            for key in [
-                "mode",
-                "background",
-                "lighter_background",
-                "dark_background",
-                "foreground",
-                "dark_foreground",
-                "bright_foreground",
-                "accent",
-                "muted",
-                "selection",
-                "red",
-                "yellow",
-                "green",
-                "cyan",
-                "blue",
-                "magenta",
-                "orange",
-            ] {
-                assert!(p.contains_key(key), "{key} missing from {} palette", if dark { "dark" } else { "light" });
-            }
-            assert_eq!(p["accent"], if dark { ACCENT_DARK } else { ACCENT_LIGHT });
-        }
-        assert_eq!(palette(true)["mode"], "dark");
-        assert_eq!(palette(false)["mode"], "light");
+    fn the_original_look_has_its_own_colours_and_the_system_accent() {
+        let original = palette(true, Some("#0a84ff"));
+        assert_eq!(original["background"], "#1e1e20");
+        assert_eq!(original["accent"], "#0a84ff");
+        assert_eq!(palette(false, Some("#0a84ff"))["background"], "#f7f6f3");
+        assert_eq!(palette(true, None)["background"], "#1e130d");
     }
 }

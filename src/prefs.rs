@@ -1,4 +1,4 @@
-//! Article font size, column width and the order of unread items, remembered between runs. The width is in
+//! Article font size, column width, the order of unread items and the colours, remembered between runs. The width is in
 //! multiples of the font size.
 //! Kept apart from config.toml, which is yours to edit: this file is the app's own and may be rewritten anytime.
 
@@ -15,6 +15,31 @@ struct Range {
     step: i32,
 }
 
+/// The window's colours on Linux. `System` is the Omarchy theme, and follows it. On macOS, Swift keeps this choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Colours {
+    #[default]
+    System,
+    OnwardDark,
+    OnwardLight,
+}
+
+impl Colours {
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Colours::System => "system",
+            Colours::OnwardDark => "onward-dark",
+            Colours::OnwardLight => "onward-light",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Colours::System, Colours::OnwardDark, Colours::OnwardLight].into_iter().find(|c| c.name() == name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -24,11 +49,12 @@ pub struct Prefs {
     pub width_factor: i32,
     /// Unread items newest first (`s`), instead of oldest first.
     pub newest_first: bool,
+    pub colours: Colours,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { font_size: FONT.initial, width_factor: WIDTH.initial, newest_first: false }
+        Self { font_size: FONT.initial, width_factor: WIDTH.initial, newest_first: false, colours: Colours::System }
     }
 }
 
@@ -57,9 +83,9 @@ impl Prefs {
         *self = Self { width_factor: self.width_factor - WIDTH.step, ..*self }.clamped();
     }
 
-    /// Ctrl+0 resets the size and width; the order stays.
+    /// Ctrl+0 resets the size and width; the order and the colours stay.
     pub fn reset(&mut self) {
-        *self = Self { newest_first: self.newest_first, ..Self::default() };
+        *self = Self { newest_first: self.newest_first, colours: self.colours, ..Self::default() };
     }
 
     pub fn flip_order(&mut self) {
@@ -99,20 +125,31 @@ mod tests {
 
     #[test]
     fn steps_stay_in_range() {
-        let mut p = Prefs { font_size: 31, width_factor: 78, newest_first: true };
+        let mut p = Prefs { font_size: 31, width_factor: 78, newest_first: true, colours: Colours::OnwardLight };
         p.bigger();
         p.bigger();
         p.wider();
-        assert_eq!(p, Prefs { font_size: 32, width_factor: 80, newest_first: true });
+        assert_eq!(p, Prefs { font_size: 32, width_factor: 80, newest_first: true, colours: Colours::OnwardLight });
         p.reset();
         p.narrower();
         p.smaller();
-        assert_eq!(p, Prefs { font_size: 17, width_factor: 36, newest_first: true });
+        assert_eq!(p, Prefs { font_size: 17, width_factor: 36, newest_first: true, colours: Colours::OnwardLight });
     }
 
     #[test]
     fn a_file_out_of_range_or_partial_is_made_sensible() {
         let p: Prefs = toml::from_str("font_size = 99").unwrap_or_default();
-        assert_eq!(p.clamped(), Prefs { font_size: 32, width_factor: 40, newest_first: false });
+        assert_eq!(p.clamped(), Prefs { font_size: 32, ..Prefs::default() });
+    }
+
+    #[test]
+    fn colours_are_saved_by_name_and_default_to_the_system() {
+        let saved = toml::to_string(&Prefs { colours: Colours::OnwardDark, ..Prefs::default() }).unwrap_or_default();
+        assert!(saved.contains(r#"colours = "onward-dark""#), "{saved}");
+        let older: Prefs = toml::from_str("font_size = 20").unwrap_or_default();
+        assert_eq!(older.colours, Colours::System);
+        for colours in [Colours::System, Colours::OnwardDark, Colours::OnwardLight] {
+            assert_eq!(Colours::from_name(colours.name()), Some(colours));
+        }
     }
 }

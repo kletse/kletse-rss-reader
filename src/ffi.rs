@@ -109,10 +109,13 @@ impl std::fmt::Debug for Core {
 enum Command {
     Start {
         dark: bool,
+        /// The system accent, for the original look; left out, the logo's colours.
+        accent: Option<String>,
     },
-    /// The system appearance changed.
+    /// The system appearance or accent colour changed, or the choice of colours.
     Theme {
         dark: bool,
+        accent: Option<String>,
     },
     Key {
         key: String,
@@ -327,23 +330,23 @@ impl Core {
         }
     }
 
-    fn set_theme(&mut self, dark: bool) {
-        self.palette = Palette::from(&theme::macos(dark));
+    fn set_theme(&mut self, dark: bool, accent: Option<&str>) {
+        self.palette = Palette::from(&theme::macos(dark, accent));
     }
 
     fn handle(&mut self, command: Command) -> Reply {
         let mut events = Vec::new();
         let mut used = true;
         let fx = match command {
-            Command::Start { dark } => {
-                self.set_theme(dark);
+            Command::Start { dark, accent } => {
+                self.set_theme(dark, accent.as_deref());
                 // Loading the grammars takes a moment; better now than on the first code block.
                 std::thread::spawn(crate::content::highlight::warm_up);
                 let status = self.backend.status();
                 self.app.start(status)
             }
-            Command::Theme { dark } => {
-                self.set_theme(dark);
+            Command::Theme { dark, accent } => {
+                self.set_theme(dark, accent.as_deref());
                 Vec::new()
             }
             Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom } => {

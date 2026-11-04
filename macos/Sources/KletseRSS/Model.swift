@@ -39,7 +39,7 @@ final class Model {
         Snapshot.startIfAsked(model: self)
     }
 
-    /// The system appearance changed.
+    /// The system appearance or accent colour changed, or the choice of colours in Settings.
     func themeChanged() {
         var command = theme()
         command["cmd"] = "theme"
@@ -48,7 +48,7 @@ final class Model {
 
     private func theme() -> [String: Any] {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return ["dark": dark]
+        return Brand.original ? ["dark": dark, "accent": NSColor.controlAccentColor.hex] : ["dark": dark]
     }
 
     func pump() {
@@ -88,7 +88,7 @@ final class Model {
         ])
     }
 
-    /// AppKit won't quit while a sheet is up, and the picker is one, so they go first.
+    /// AppKit won't quit while a sheet is up, as a confirm alert is, so they go first.
     func quit() {
         for window in NSApp.windows.reversed() {
             if let sheet = window.attachedSheet { window.endSheet(sheet) }
@@ -127,3 +127,11 @@ final class Model {
     }
 }
 
+extension NSColor {
+    /// `#rrggbb` in sRGB.
+    var hex: String {
+        guard let c = usingColorSpace(.sRGB) else { return "#0a84ff" }
+        let v = [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
+        return String(format: "#%02x%02x%02x", v[0], v[1], v[2])
+    }
+}

@@ -11,7 +11,10 @@ use crate::content::convert;
 use crate::keys;
 use crate::paging::Mode;
 use crate::theme::{self, Palette};
-use crate::{prefs, theme::Theme};
+use crate::{
+    prefs::{self, Colours},
+    theme::Theme,
+};
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use std::hash::{Hash, Hasher};
@@ -100,6 +103,8 @@ pub mod qobject {
         // Prefs
         #[qproperty(i32, article_size)]
         #[qproperty(i32, width_factor)]
+        // "system", "onward-dark" or "onward-light".
+        #[qproperty(QString, colours)]
         // Theme
         #[qproperty(QString, bg)]
         #[qproperty(QString, bg_light)]
@@ -178,6 +183,8 @@ pub mod qobject {
         /// The window regained focus or the system appearance changed (macOS follows the theme this way).
         #[qinvokable]
         fn recheck_theme(self: Pin<&mut Model>);
+        #[qinvokable]
+        fn choose_colours(self: Pin<&mut Model>, name: &QString);
 
         #[qsignal]
         fn scroll_page(self: Pin<&mut Model>, up: bool);
@@ -270,6 +277,7 @@ pub struct ModelRust {
     readeck_token: QString,
     article_size: i32,
     width_factor: i32,
+    colours: QString,
     bg: QString,
     bg_light: QString,
     bg_dark: QString,
@@ -291,6 +299,8 @@ pub struct ModelRust {
     app: App,
     backend: Arc<Backend>,
     palette: Palette,
+    /// The desktop's theme as last heard, for switching back to it.
+    system_theme: Theme,
     watcher: Option<theme::Watcher>,
     rendered: Option<Rendered>,
     prefetched: Option<Prefetched>,
@@ -363,6 +373,7 @@ impl Default for ModelRust {
             readeck_token: QString::default(),
             article_size: 18,
             width_factor: 40,
+            colours: QString::default(),
             bg: QString::default(),
             bg_light: QString::default(),
             bg_dark: QString::default(),
@@ -383,6 +394,7 @@ impl Default for ModelRust {
             app: App::new(prefs::load(), mac),
             backend: Arc::new(Backend::new(demo)),
             palette: Palette::default(),
+            system_theme: Theme::default(),
             watcher: None,
             rendered: None,
             prefetched: None,
@@ -435,7 +447,9 @@ impl qobject::Model {
     }
 
     fn apply_theme(mut self: Pin<&mut Self>, theme: Theme) {
-        let p = Palette::from(&theme);
+        self.as_mut().state().system_theme = theme.clone();
+        let colours = self.as_mut().state().app.prefs().colours;
+        let p = Palette::from(&theme.in_colours(colours));
         self.as_mut().set_bg(qs(&p.bg));
         self.as_mut().set_bg_light(qs(&p.bg_light));
         self.as_mut().set_bg_dark(qs(&p.bg_dark));
@@ -453,6 +467,14 @@ impl qobject::Model {
         self.as_mut().state().palette = p;
         // Code colours and link colours are baked into the rendered article.
         self.sync();
+    }
+
+    pub fn choose_colours(mut self: Pin<&mut Self>, name: &QString) {
+        let Some(colours) = Colours::from_name(&name.to_string()) else { return };
+        let fx = self.as_mut().state().app.set_colours(colours);
+        let theme = self.as_mut().state().system_theme.clone();
+        self.as_mut().apply_theme(theme);
+        self.run(fx);
     }
 
     pub fn recheck_theme(mut self: Pin<&mut Self>) {
@@ -641,6 +663,7 @@ impl qobject::Model {
             }
             None => self.as_mut().set_toast_message(QString::default()),
         }
+        self.as_mut().set_colours(qs(prefs.colours.name()));
         self.as_mut().set_article_size(prefs.font_size);
         self.set_width_factor(prefs.width_factor);
     }

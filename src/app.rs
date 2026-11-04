@@ -19,7 +19,7 @@ use crate::keys::{self, Action};
 use crate::miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
-use crate::prefs::Prefs;
+use crate::prefs::{Colours, Prefs};
 use std::collections::HashMap;
 
 pub const APP_NAME: &str = "Kletse RSS";
@@ -1420,6 +1420,13 @@ impl App {
     }
 
     // ---- Prefs -----------------------------------------------------------
+
+    /// The window's colours, from Settings. Unlike the servers there's nothing to check, so it applies at once.
+    pub fn set_colours(&mut self, colours: Colours) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        self.change_prefs(|p| p.colours = colours, &mut fx);
+        fx
+    }
 
     fn change_prefs(&mut self, change: impl FnOnce(&mut Prefs), fx: &mut Vec<Effect>) {
         let before = self.prefs;

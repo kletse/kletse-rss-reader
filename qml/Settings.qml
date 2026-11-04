@@ -200,6 +200,32 @@ Item {
                 onAccepted: s.submit()
             }
         }
+        Fieldset {
+            visible: !s.firstRun
+            title: "Colours"
+            note: "applied at once"
+            Row {
+                spacing: 8
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "system"
+                    text: "System"
+                    onClicked: s.model.chooseColours("system")
+                }
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "onward-dark"
+                    text: "Onward Dark"
+                    onClicked: s.model.chooseColours("onward-dark")
+                }
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "onward-light"
+                    text: "Onward Light"
+                    onClicked: s.model.chooseColours("onward-light")
+                }
+            }
+        }
 
         Text {
             width: parent.width

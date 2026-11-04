@@ -1,12 +1,18 @@
-// The window: the toolbar, the reader (an article or a message; on first run, onboarding), and what goes over it:
-// the feeds picker, the keys and the search box (sheets), the confirm dialog (an alert), the image viewer and
-// toasts.
+// The window: the toolbar, the reader (an article or a message; on first run, onboarding), and what goes over it: the
+// feeds picker, the keys and the search box (`Floating`), the confirm dialog (an alert), the image viewer and toasts.
+// The floating ones aren't sheets: a sheet disables the window's red button, ignores clicks beside it and holds up a
+// quit from the Dock.
 import SwiftUI
 
 struct ContentView: View {
     @State private var model = Model.shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openSettings) private var openSettings
+
+    /// Something floats over the reader.
+    private var floating: Bool {
+        model.state?.pickerShown == true || ["help", "search"].contains(model.state?.overlay)
+    }
 
     var body: some View {
         let state = model.state
@@ -15,6 +21,26 @@ struct ContentView: View {
                 OnboardingView(model: model)
             } else {
                 ReaderView(model: model)
+            }
+        }
+        .allowsHitTesting(!floating)
+        .overlay {
+            if state?.pickerShown == true {
+                Floating(dismiss: model.pickerBackdrop) {
+                    ViewThatFits(in: .vertical) {
+                        PickerView(model: model)
+                        ScrollView { PickerView(model: model) }
+                    }
+                }
+            } else if state?.overlay == "help" {
+                Floating(dismiss: model.closeHelp) {
+                    ViewThatFits(in: .vertical) {
+                        HelpView(model: model)
+                        ScrollView { HelpView(model: model) }
+                    }
+                }
+            } else if state?.overlay == "search" {
+                Floating(dismiss: model.cancelSearch) { SearchView(model: model) }
             }
         }
         .overlay {
@@ -28,14 +54,6 @@ struct ContentView: View {
         .navigationTitle(state?.windowTitle ?? "Kletse RSS")
         .toolbar(removing: .title)
         .toolbar { if state?.screen != "settings" { toolbar(state) } }
-        // One sheet for both: SwiftUI shows one at a time, and the core goes from the picker to the keys directly.
-        .sheet(item: sheet) { sheet in
-            switch sheet {
-            case .picker: PickerView(model: model)
-            case .help: HelpView(model: model)
-            case .search: SearchView(model: model)
-            }
-        }
         .modifier(ConfirmAlert(model: model, overPicker: false))
         // Links in articles open through the core, which marks things read as it should.
         .environment(\.openURL, OpenURLAction { url in
@@ -60,19 +78,21 @@ struct ContentView: View {
                     .labelStyle(.titleAndIcon)
             }
             .help("Feeds (p)")
+            .disabled(floating && state?.pickerShown != true)
         }
-        if let position = state?.position, !position.isEmpty {
-            ToolbarItem(placement: .principal) {
-                Text(state?.history == true ? "History · \(position)"
-                    : state?.searching == true ? "Search · \(position)" : position)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
+        // Always there, also with nothing in it: without a middle item the buttons on the right slide over to the left.
+        ToolbarItem(placement: .principal) {
+            let position = state?.position ?? ""
+            Text(position.isEmpty ? " " : state?.history == true ? "History · \(position)"
+                : state?.searching == true ? "Search · \(position)" : position)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             if state?.readeck == true {
                 Button { model.press("readeck") } label: { Label("Readeck", systemImage: "bookmark") }
                     .help("Save to Readeck (b)")
+                    .disabled(floating)
             }
             ControlGroup {
                 Button { model.press("prev") } label: { Label("Previous", systemImage: "chevron.up") }
@@ -80,34 +100,32 @@ struct ContentView: View {
                 Button { model.press("next") } label: { Label("Next", systemImage: "chevron.down") }
                     .help("Next, mark read (j)")
             }
+            .disabled(floating)
         }
-    }
-
-    private enum Sheet: String, Identifiable {
-        case picker, help, search
-        var id: String { rawValue }
-    }
-
-    /// The sheet for the core's overlay; a dismissal by the system asks the core, which may keep the picker up
-    /// (with nothing chosen yet, there is nothing to go back to).
-    private var sheet: Binding<Sheet?> {
-        Binding(
-            get: { model.state.flatMap { $0.pickerShown ? .picker : Sheet(rawValue: $0.overlay) } },
-            set: { shown in
-                guard shown == nil else { return }
-                switch model.state?.overlay {
-                case "picker": model.pickerBackdrop()
-                case "help": model.closeHelp()
-                case "search": model.cancelSearch()
-                default: break
-                }
-            }
-        )
     }
 }
 
-/// The confirm dialog. Asked from the picker (Shift+A on a row), it comes up over the picker's sheet, which stays:
-/// a window can't show an alert of its own while a sheet is up.
+/// A panel over the dimmed reader, in the middle of the window. A click beside it is `dismiss`.
+private struct Floating<Content: View>: View {
+    let dismiss: () -> Void
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture(perform: dismiss)
+            content
+                .background(Brand.panel)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.separator))
+                .shadow(radius: 24, y: 8)
+                .padding(12)
+        }
+    }
+}
+
+/// The confirm dialog. Asked from the picker (Shift+A on a row), it comes up with the picker still there.
 struct ConfirmAlert: ViewModifier {
     let model: Model
     let overPicker: Bool

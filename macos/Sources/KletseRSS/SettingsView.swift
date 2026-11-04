@@ -20,11 +20,17 @@ private enum Field {
 }
 
 /// Applies at once, unlike the servers: there's nothing to check.
-private struct AppIconPane: View {
+private struct AppearancePane: View {
+    @AppStorage(Brand.key) private var colours = Brand.onward
     @AppStorage(AppIcon.key) private var icon = AppIcon.automatic
 
     var body: some View {
         Form {
+            Picker("Colours", selection: $colours) {
+                Text("Onward").tag(Brand.onward)
+                Text("Original, with the system accent colour").tag(Brand.originalLook)
+            }
+            .pickerStyle(.radioGroup)
             Picker("App icon", selection: $icon) {
                 Text("Light or dark, as the system").tag(AppIcon.automatic)
                 Text("Orange").tag(AppIcon.orange)
@@ -34,6 +40,7 @@ private struct AppIconPane: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: colours) { Model.shared.themeChanged() }
         .onChange(of: icon) { AppIcon.change() }
     }
 }
@@ -55,8 +62,8 @@ struct SettingsWindow: View {
             Tab("Readeck", systemImage: "bookmark") {
                 pane(settings) { ReadeckSection(values: $values) }
             }
-            Tab("App Icon", systemImage: "app") {
-                AppIconPane()
+            Tab("Appearance", systemImage: "paintpalette") {
+                AppearancePane()
             }
         }
         .frame(width: 480)

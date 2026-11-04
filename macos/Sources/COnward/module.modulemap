@@ -1,0 +1,5 @@
+module COnward [system] {
+    header "onward.h"
+    link "onward"
+    export *
+}

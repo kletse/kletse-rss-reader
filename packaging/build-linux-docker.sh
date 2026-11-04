@@ -12,7 +12,7 @@ out="$root/packaging/release"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-git -C "$root" archive --format=tar --prefix=kletse-rss-reader/ -o "$work/src.tar" "$ref"
+git -C "$root" archive --format=tar --prefix=onward-rss-reader/ -o "$work/src.tar" "$ref"
 cp "$root/packaging/arch-build.sh" "$work/"
 docker run --rm --platform linux/amd64 -v "$work:/work" archlinux:latest bash /work/arch-build.sh /work
 mkdir -p "$out"

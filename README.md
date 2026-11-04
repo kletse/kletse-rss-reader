@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="packaging/kletse-rss.svg" width="96" alt="Kletse RSS icon">
+  <img src="packaging/onward.svg" width="96" alt="Onward icon">
 </p>
 
-<h1 align="center">Kletse RSS</h1>
+<h1 align="center">Onward</h1>
 
 <p align="center">
   <b>One unread article at a time. Oldest first. Keyboard all the way.</b><br>
@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-B7410E?logo=rust&logoColor=white">
   <img alt="Qt Quick" src="https://img.shields.io/badge/Qt_Quick-6-41CD52?logo=qt&logoColor=white">
-  <a href="https://github.com/kletse/kletse-rss-reader/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/kletse/kletse-rss-reader?color=7aa2f7"></a>
+  <a href="https://github.com/kletse/onward-rss-reader/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/kletse/onward-rss-reader?color=7aa2f7"></a>
   <img alt="Arch package" src="https://img.shields.io/badge/Arch-PKGBUILD-1793D1?logo=archlinux&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-from_source-000000?logo=apple&logoColor=white">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-green">
@@ -22,7 +22,7 @@
 
 ## The idea
 
-Most feed readers give you three panes and a wall of headlines. Kletse RSS shows **just the article**.
+Most feed readers give you three panes and a wall of headlines. Onward shows **just the article**.
 
 You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks the server once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_: **j** goes on to the next feed (or category) with unread items, and **Enter** takes you back to the feed picker.
 
@@ -35,7 +35,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 - **Your feed server does the heavy lifting.** [Miniflux](https://miniflux.app), or any server that speaks the Google Reader API: [FreshRSS](https://freshrss.org), Inoreader, BazQux, The Old Reader, or Miniflux's own Google Reader integration. It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes, or pick Onward Dark or Onward Light in **Settings** to keep the logo's colours instead. On macOS: light or dark mode, the moment you change it, along with the app icon.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
-- **In a terminal too.** `kletse-rss-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
+- **In a terminal too.** `onward-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
 - **Native, no web view.** The window is Qt Quick, driven from Rust: articles are laid out as native text and images, not in a browser engine.
 
 ## Screenshots
@@ -56,7 +56,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | **Keys (<kbd>?</kbd>)**                                                                  | **First-run setup**                                                                                                          |                                                                                                             |
 | <img src="docs/screenshots/omarchy/help.png" alt="Keyboard shortcut overlay on Omarchy"> | <img src="docs/screenshots/omarchy/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details, on Omarchy"> |                                                                                                             |
 
-<sub>Screenshots use the built-in demo data (`KLETSE_RSS_DEMO=1`): macOS in dark mode, Omarchy with the Tokyo Night theme. The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
+<sub>Screenshots use the built-in demo data (`ONWARD_DEMO=1`): macOS in dark mode, Omarchy with the Tokyo Night theme. The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
 
 ## Keys
 
@@ -102,21 +102,21 @@ Press <kbd>v</kbd>, or click an image, to see the article's images one at a time
 
 ### Arch / Omarchy
 
-**From a release** (quickest): download `kletse-rss-<version>-x86_64.pkg.tar.zst` from [Releases](https://github.com/kletse/kletse-rss-reader/releases) and run
+**From a release** (quickest): download `onward-<version>-x86_64.pkg.tar.zst` from [Releases](https://github.com/kletse/onward-rss-reader/releases) and run
 
 ```bash
-sudo pacman -U kletse-rss-*-x86_64.pkg.tar.zst
+sudo pacman -U onward-*-x86_64.pkg.tar.zst
 ```
 
 **From source**, on Arch / Omarchy with `rust` (or `rustup` and `lld`) and Qt 6 (`qt6-base qt6-declarative qt6-svg qt6-imageformats`):
 
 ```bash
-git clone https://github.com/kletse/kletse-rss-reader.git
-cd kletse-rss-reader/packaging
+git clone https://github.com/kletse/onward-rss-reader.git
+cd onward-rss-reader/packaging
 makepkg -si
 ```
 
-This installs `/usr/bin/kletse-rss`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → _Kletse RSS_) and the icon. To uninstall, run `sudo pacman -R kletse-rss`.
+This installs `/usr/bin/onward`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → _Onward_) and the icon. To uninstall, run `sudo pacman -R onward`.
 
 ### macOS
 
@@ -125,10 +125,10 @@ There's no macOS download: build it from source, it takes a few minutes. On the 
 You need Xcode or its command line tools (`xcode-select --install`) and a current stable [Rust](https://rustup.rs).
 
 ```bash
-git clone https://github.com/kletse/kletse-rss-reader.git
-cd kletse-rss-reader
+git clone https://github.com/kletse/onward-rss-reader.git
+cd onward-rss-reader
 packaging/macos/build-app.sh
-cp -r "packaging/Kletse RSS.app" /Applications/
+cp -r "packaging/Onward.app" /Applications/
 ```
 
 Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading, and the toolbar shows where you are in the list. The feeds picker, the keys and the search box float over the article: click beside them to close them. Text is set in New York, headings in SF, code in SF Mono, and scrolling is the system's own. Size and position are remembered between launches. The app follows the system light/dark mode, in the colours of its logo, and on macOS 26 or later the Dock icon follows too. **Settings** has an orange icon, and the original look with your system accent colour, if you prefer them. The **Article** menu has the reading actions, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd>, <kbd>⌘</kbd><kbd>H</kbd> and <kbd>⌘</kbd><kbd>,</kbd> work.
@@ -138,25 +138,25 @@ Open it from Spotlight or the Dock. The window title, shown in Mission Control a
 ```bash
 git pull
 packaging/macos/build-app.sh
-rm -rf "/Applications/Kletse RSS.app"
-cp -r "packaging/Kletse RSS.app" /Applications/
+rm -rf "/Applications/Onward.app"
+cp -r "packaging/Onward.app" /Applications/
 ```
 
-Your settings live outside the app bundle (see [Set up](#set-up)), so replacing it keeps them. To uninstall, delete `/Applications/Kletse RSS.app` and, if you want, `~/Library/Application Support/kletse-rss`.
+Your settings live outside the app bundle (see [Set up](#set-up)), so replacing it keeps them. Coming from Kletse RSS, delete `/Applications/Kletse RSS.app` as well: Onward picks up your servers and preferences by itself on its first run. To uninstall, delete `/Applications/Onward.app` and, if you want, `~/Library/Application Support/onward`.
 
 ## In a terminal
 
-`kletse-rss-tui` is the same app without a window: it fills the terminal, and gives it back as it was when you quit. It needs neither Qt nor a desktop, so it also runs over SSH. It shares your [settings](#set-up) and everything you've read with the window, because your feed server keeps track of that.
+`onward-tui` is the same app without a window: it fills the terminal, and gives it back as it was when you quit. It needs neither Qt nor a desktop, so it also runs over SSH. It shares your [settings](#set-up) and everything you've read with the window, because your feed server keeps track of that.
 
 **Install.** With a current stable [Rust](https://rustup.rs), on Linux or macOS:
 
 ```bash
-git clone https://github.com/kletse/kletse-rss-reader.git
-cd kletse-rss-reader
+git clone https://github.com/kletse/onward-rss-reader.git
+cd onward-rss-reader
 cargo install --path . --no-default-features --features tui --locked
 ```
 
-That puts `kletse-rss-tui` in `~/.cargo/bin`. The Arch package installs it as well, as `/usr/bin/kletse-rss-tui`, and each release has a `kletse-rss-tui-<version>-x86_64` binary.
+That puts `onward-tui` in `~/.cargo/bin`. The Arch package installs it as well, as `/usr/bin/onward-tui`, and each release has a `onward-tui-<version>-x86_64` binary.
 
 **Keys.** The same as the window, with these differences, which <kbd>?</kbd> shows too:
 
@@ -178,7 +178,7 @@ Font size is your terminal's business, so the app has no keys for it. <kbd>[</kb
 
 ## Set up
 
-The first time you start Kletse RSS, a welcome screen asks for:
+The first time you start Onward, a welcome screen asks for:
 
 |                                                     |                                                                                                                                                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -188,7 +188,7 @@ The first time you start Kletse RSS, a welcome screen asks for:
 
 **Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
 
-The settings are stored in `~/.config/kletse-rss/config.toml` on Linux and `~/Library/Application Support/kletse-rss/config.toml` on macOS (mode `600`), which you can also edit by hand:
+The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`), which you can also edit by hand:
 
 ```toml
 [miniflux]
@@ -222,12 +222,12 @@ password = "…"     # FreshRSS: the API password, not the one you log in with
 ## Develop
 
 ```bash
-cargo run          # the app (KLETSE_RSS_DEMO=1 cargo run: with built-in sample data, no server needed)
-cargo tui          # the terminal version, without Qt (KLETSE_RSS_DEMO=1 works here too)
+cargo run          # the app (ONWARD_DEMO=1 cargo run: with built-in sample data, no server needed)
+cargo tui          # the terminal version, without Qt (ONWARD_DEMO=1 works here too)
 cargo test         # everything the app does, driven by key presses against a fake Miniflux; no Qt window needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt
-cargo build --release   # → target/release/kletse-rss
+cargo build --release   # → target/release/onward
 ```
 
 You need Rust and Qt 6 (see [Install](#install)); `qmake6` (or `qmake`) must be on the `PATH`, which is how the build finds Qt.
@@ -240,7 +240,7 @@ CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and 
 
 **Releasing:** bump the version in `Cargo.toml` (then `cargo build`, to update `Cargo.lock`) and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
 
-**Demo mode:** start with `KLETSE_RSS_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved, not even the font size. It's handy for UI work and screenshots.
+**Demo mode:** start with `ONWARD_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved, not even the font size. It's handy for UI work and screenshots.
 
 ```text
 src/
@@ -261,8 +261,8 @@ src/
   miniflux.rs        Miniflux API client
   greader.rs         Google Reader API client (FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's integration)
   readeck.rs         Readeck "save bookmark"
-  config.rs          ~/.config/kletse-rss/config.toml (macOS: ~/Library/Application Support/kletse-rss/)
-  demo.rs            sample data for KLETSE_RSS_DEMO=1
+  config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
+  demo.rs            sample data for ONWARD_DEMO=1
 qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings
 assets/fonts/        Literata and Inter (SIL Open Font License), compiled into the binary
 packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, release scripts
@@ -271,7 +271,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 ### How it handles articles
 
 - Article HTML is turned into native blocks: paragraphs, headings, images with captions, code, quotes, lists, tables and rules. Only a small set of tags and attributes makes it through, so scripts, styles, forms and tracking attributes are gone, and nothing in an article can run.
-- Iframes, videos and audio become a plain _▶ Embedded media_ link. Inline SVG and MathML aren't shown (run with `KLETSE_RSS_DEBUG=1` to see on stderr when an article had some).
+- Iframes, videos and audio become a plain _▶ Embedded media_ link. Inline SVG and MathML aren't shown (run with `ONWARD_DEBUG=1` to see on stderr when an article had some).
 - Images load (through Miniflux's media proxy if you have it enabled). While you read, the next article is already converted and its images loaded, so <kbd>j</kbd> doesn't wait for them.
 - Every link opens in your default browser, never inside the app.
 - Code blocks are highlighted with syntect using the theme's own colours.

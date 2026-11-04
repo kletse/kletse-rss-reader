@@ -29,10 +29,10 @@ if git ls-remote --exit-code --tags origin "$tag" >/dev/null; then
 fi
 
 echo "==> Draft release $tag"
-gh release create "$tag" --draft --target "$sha" --title "Kletse RSS $version" --notes-file "$notes"
+gh release create "$tag" --draft --target "$sha" --title "Onward $version" --notes-file "$notes"
 
 echo "==> Tag $tag: GitHub Actions builds the Linux downloads"
-git tag -a "$tag" "$sha" -m "Kletse RSS $version"
+git tag -a "$tag" "$sha" -m "Onward $version"
 git push -q origin "$tag"
 
 echo "==> Waiting for the Linux build"

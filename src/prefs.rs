@@ -93,9 +93,9 @@ impl Prefs {
     }
 }
 
-/// `~/.local/state/kletse-rss/prefs.toml` on Linux, `~/Library/Application Support/kletse-rss/prefs.toml` on macOS.
+/// `~/.local/state/onward/prefs.toml` on Linux, `~/Library/Application Support/onward/prefs.toml` on macOS.
 fn path() -> Option<PathBuf> {
-    dirs::state_dir().or_else(dirs::data_local_dir).map(|dir| dir.join("kletse-rss").join("prefs.toml"))
+    dirs::state_dir().or_else(dirs::data_local_dir).map(|dir| crate::moved::dir(&dir).join("prefs.toml"))
 }
 
 /// What was saved, or the defaults when nothing (readable) was.
@@ -115,7 +115,7 @@ pub fn save(prefs: Prefs) {
         && std::fs::create_dir_all(dir).is_ok()
         && let Err(e) = std::fs::write(&path, text)
     {
-        eprintln!("kletse-rss: could not save {}: {e}", path.display());
+        eprintln!("onward: could not save {}: {e}", path.display());
     }
 }
 

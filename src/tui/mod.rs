@@ -1,4 +1,4 @@
-//! Kletse RSS in a terminal, filling it (the alternate screen, so your shell is back as it was afterwards). Works
+//! Onward in a terminal, filling it (the alternate screen, so your shell is back as it was afterwards). Works
 //! wherever a terminal does: Linux and macOS, locally and over SSH, without Qt.
 //!
 //! It's a third face on `App`, alongside bridge.rs and ffi.rs: this file runs the terminal and the effects, ui.rs
@@ -204,7 +204,7 @@ pub fn run() -> io::Result<()> {
     if !(io::stdin().is_terminal() && stdout().is_terminal()) {
         return Err(io::Error::other("this needs a terminal to run in"));
     }
-    let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+    let demo = std::env::var("ONWARD_DEMO").is_ok_and(|v| v == "1");
     // Before the screen changes: it says on stderr what was wrong with the config file.
     let backend = Arc::new(Backend::new(demo));
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;

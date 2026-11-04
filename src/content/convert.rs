@@ -47,7 +47,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    /// One line for `KLETSE_RSS_DEBUG=1`; empty when everything carried over.
+    /// One line for `ONWARD_DEBUG=1`; empty when everything carried over.
     pub fn summary(&self) -> String {
         let list =
             |m: &BTreeMap<String, usize>| m.iter().map(|(k, v)| format!("{k}×{v}")).collect::<Vec<_>>().join(" ");

@@ -24,7 +24,7 @@ Rectangle {
 
             Button {
                 ui: bar.ui
-                glyph: "☰"
+                logo: true
                 text: bar.model.selectionLabel !== "" ? bar.model.selectionLabel : "Feeds"
                 width: Math.min(implicitWidth, bar.width * 0.4)
                 tip: "Feeds (p)"

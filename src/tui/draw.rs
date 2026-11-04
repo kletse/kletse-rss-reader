@@ -65,7 +65,8 @@ fn top_bar(ui: &Ui, frame: &mut Frame, area: Rect) {
     }
     let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1).intersection(area);
     let label = if app.selection_label().is_empty() { "Feeds" } else { app.selection_label() };
-    let mut left = vec![Span::raw("☰ "), Span::raw(fitted(label, usize::from(area.width) * 2 / 5))];
+    let mut left =
+        vec![Span::styled(LOGO, ACCENTED), Span::raw(" "), Span::raw(fitted(label, usize::from(area.width) * 2 / 5))];
     if app.searching() {
         left.extend([Span::raw("  "), Span::styled("SEARCH", ACCENTED)]);
     } else if app.history_badge() {
@@ -153,7 +154,7 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let w = usize::from(width);
 
     let mut rows = vec![Row::default()];
-    let title = if first_run { "Welcome to Kletse RSS" } else { "Settings" };
+    let title = if first_run { "Welcome to Onward" } else { "Settings" };
     rows.extend(article::plain(title, BOLD, w));
     rows.push(Row::default());
     let intro = if first_run {

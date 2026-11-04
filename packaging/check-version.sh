@@ -13,7 +13,7 @@ files=(
 )
 versions=(
   "$(awk -F'"' '/^\[/ { pkg = ($0 == "[package]") } pkg && /^version *=/ { print $2; exit }' Cargo.toml)"
-  "$(awk -F'"' '/^name = "kletse-rss"$/ { found = 1; next } found && /^version = / { print $2; exit }' Cargo.lock)"
+  "$(awk -F'"' '/^name = "onward"$/ { found = 1; next } found && /^version = / { print $2; exit }' Cargo.lock)"
   "$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
 )
 

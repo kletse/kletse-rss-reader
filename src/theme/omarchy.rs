@@ -67,12 +67,12 @@ pub fn watch(on_change: OnChange) -> Watcher {
         let mut watcher = match notify::recommended_watcher(tx) {
             Ok(watcher) => watcher,
             Err(e) => {
-                eprintln!("kletse-rss: not following theme changes: {e}");
+                eprintln!("onward: not following theme changes: {e}");
                 return;
             }
         };
         if let Err(e) = watcher.watch(&parent, RecursiveMode::Recursive) {
-            eprintln!("kletse-rss: not following theme changes in {}: {e}", parent.display());
+            eprintln!("onward: not following theme changes in {}: {e}", parent.display());
             return;
         }
         let mut last = load();

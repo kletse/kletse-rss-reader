@@ -121,7 +121,7 @@ pub mod qobject {
         #[qproperty(i32, rounding)]
         #[qproperty(bool, dark)]
         #[qproperty(bool, mac)]
-        // `KLETSE_RSS_SNAPSHOT`: render the first article to this PNG and quit (screenshots, the CI smoke test).
+        // `ONWARD_SNAPSHOT`: render the first article to this PNG and quit (screenshots, the CI smoke test).
         #[qproperty(QString, snapshot_path)]
         // Keys to press first, space-separated ("Enter n ?"); by default Enter opens the first row of the picker.
         #[qproperty(QString, snapshot_keys)]
@@ -198,14 +198,14 @@ pub mod qobject {
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        .thread_name("kletse-rss-io")
+        .thread_name("onward-io")
         .enable_all()
         .build()
         .expect("a tokio runtime starts on any supported platform")
 });
 
-/// `KLETSE_RSS_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
-static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("KLETSE_RSS_DEBUG").is_ok_and(|v| v == "1"));
+/// `ONWARD_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
+static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("ONWARD_DEBUG").is_ok_and(|v| v == "1"));
 
 /// What the article on screen was rendered from, to render it again only when that changes.
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -219,7 +219,7 @@ struct Rendered {
 struct Prefetched {
     key: Rendered,
     json: String,
-    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    /// What the converter dropped, for `ONWARD_DEBUG=1`.
     lost: String,
     images: Vec<String>,
 }
@@ -319,7 +319,7 @@ impl std::fmt::Debug for ModelRust {
 impl Default for ModelRust {
     fn default() -> Self {
         let mac = cfg!(target_os = "macos");
-        let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+        let demo = std::env::var("ONWARD_DEMO").is_ok_and(|v| v == "1");
         Self {
             screen: QString::from("empty"),
             end_title: QString::default(),
@@ -389,8 +389,8 @@ impl Default for ModelRust {
             rounding: 0,
             dark: true,
             mac,
-            snapshot_path: QString::from(&std::env::var("KLETSE_RSS_SNAPSHOT").unwrap_or_default()),
-            snapshot_keys: QString::from(&std::env::var("KLETSE_RSS_SNAPSHOT_KEYS").unwrap_or_else(|_| "Enter".into())),
+            snapshot_path: QString::from(&std::env::var("ONWARD_SNAPSHOT").unwrap_or_default()),
+            snapshot_keys: QString::from(&std::env::var("ONWARD_SNAPSHOT_KEYS").unwrap_or_else(|_| "Enter".into())),
             app: App::new(prefs::load(), mac),
             backend: Arc::new(Backend::new(demo)),
             palette: Palette::default(),
@@ -685,7 +685,7 @@ impl qobject::Model {
                 }
             };
             if *DEBUG && !lost.is_empty() {
-                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+                eprintln!("onward: entry {}: {lost}", entry.id);
             }
             s.rendered = Some(key);
             let new_article = previous.is_none_or(|p| p.id != key.id || p.content != key.content);

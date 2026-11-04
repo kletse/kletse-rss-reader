@@ -1,14 +1,18 @@
-// Kletse RSS for macOS: the reader's window, its toolbar, the menus and the Settings window. Everything it shows comes from the Rust core
+// Onward for macOS: the reader's window, its toolbar, the menus and the Settings window. Everything it shows comes from the Rust core
 // (src/ffi.rs) through `Model`; keys and clicks go back to it.
 import AppKit
 import SwiftUI
 
 @main
-struct KletseApp: App {
+struct OnwardApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
+    init() {
+        AppDefaults.moveFromOldName()
+    }
+
     var body: some Scene {
-        Window("Kletse RSS", id: "main") {
+        Window("Onward", id: "main") {
             ContentView()
                 .frame(minWidth: 360, minHeight: 300)
                 .modifier(BrandStyle())
@@ -44,7 +48,7 @@ struct KletseApp: App {
                 Button("Oldest or Newest First (s)") { Model.shared.press("order") }
             }
             CommandGroup(replacing: .appTermination) {
-                Button("Quit Kletse RSS") { Model.shared.quit() }
+                Button("Quit Onward") { Model.shared.quit() }
                     .keyboardShortcut("q")
             }
             CommandGroup(replacing: .help) {
@@ -64,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             // For screenshots: the system's own setting can't be overridden from outside.
-            switch ProcessInfo.processInfo.environment["KLETSE_RSS_APPEARANCE"] {
+            switch ProcessInfo.processInfo.environment["ONWARD_APPEARANCE"] {
             case "light": NSApp.appearance = NSAppearance(named: .aqua)
             case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
             default: break

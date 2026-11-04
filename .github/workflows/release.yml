@@ -35,7 +35,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           mkdir -p /work
-          git archive --format=tar --prefix=kletse-rss-reader/ -o /work/src.tar HEAD
+          git archive --format=tar --prefix=onward-rss-reader/ -o /work/src.tar HEAD
           bash packaging/arch-build.sh /work
       - uses: actions/upload-artifact@v4
         with:
@@ -62,6 +62,6 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --verify-tag --title "Kletse RSS ${TAG#v}" --notes ""
+            gh release create "$TAG" --draft --verify-tag --title "Onward ${TAG#v}" --notes ""
           fi
           gh release upload "$TAG" out/* --clobber

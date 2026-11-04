@@ -51,7 +51,7 @@ struct ContentView: View {
         .overlay(alignment: .bottom) { ToastView(model: model) }
         // The title is the article, for Mission Control and the Window menu; the toolbar leaves it out, as the
         // article's own heading is right below. Where you are sits in the middle, as in the Qt top bar.
-        .navigationTitle(state?.windowTitle ?? "Kletse RSS")
+        .navigationTitle(state?.windowTitle ?? "Onward")
         .toolbar(removing: .title)
         .toolbar { if state?.screen != "settings" { toolbar(state) } }
         .modifier(ConfirmAlert(model: model, overPicker: false))
@@ -70,12 +70,20 @@ struct ContentView: View {
         ToolbarItem(placement: .navigation) {
             let label = state?.selectionLabel ?? ""
             Button { model.press("picker") } label: {
-                // Reading read items or search results: the button says so with its icon, the middle of the bar
-                // with a word.
-                Label(label.isEmpty ? "Feeds" : label,
-                      systemImage: state?.history == true ? "clock.arrow.circlepath"
-                          : state?.searching == true ? "magnifyingglass" : "list.bullet")
-                    .labelStyle(.titleAndIcon)
+                // The logo, except reading read items or search results: the button says so with its icon, the
+                // middle of the bar with a word.
+                Label {
+                    Text(label.isEmpty ? "Feeds" : label)
+                } icon: {
+                    if state?.history == true {
+                        Image(systemName: "clock.arrow.circlepath")
+                    } else if state?.searching == true {
+                        Image(systemName: "magnifyingglass")
+                    } else {
+                        LogoMark(width: 22)
+                    }
+                }
+                .labelStyle(.titleAndIcon)
             }
             .help("Feeds (p)")
             .disabled(floating && state?.pickerShown != true)

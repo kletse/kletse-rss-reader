@@ -3,9 +3,9 @@
 # Used by .github/workflows/release.yml (native runner) and build-linux-docker.sh (local Docker).
 #
 # Usage: arch-build.sh WORK_DIR
-#   WORK_DIR/src.tar  the source, as made by `git archive --prefix=kletse-rss-reader/`
-#   WORK_DIR/out/     receives kletse-rss-<version>-1-x86_64.pkg.tar.zst, kletse-rss-<version>-x86_64 and
-#                     kletse-rss-tui-<version>-x86_64
+#   WORK_DIR/src.tar  the source, as made by `git archive --prefix=onward-rss-reader/`
+#   WORK_DIR/out/     receives onward-<version>-1-x86_64.pkg.tar.zst, onward-<version>-x86_64 and
+#                     onward-tui-<version>-x86_64
 set -euo pipefail
 
 work=${1:?usage: arch-build.sh WORK_DIR}
@@ -19,11 +19,11 @@ pacman -Syu --noconfirm --needed base-devel rust qt6-base qt6-declarative qt6-sv
 # makepkg refuses to run as root.
 useradd -m builder
 tar -xf "$work/src.tar" -C /home/builder
-chown -R builder /home/builder/kletse-rss-reader
-su builder -c 'cd ~/kletse-rss-reader/packaging && makepkg -f --noconfirm'
+chown -R builder /home/builder/onward-rss-reader
+su builder -c 'cd ~/onward-rss-reader/packaging && makepkg -f --noconfirm'
 
-root=/home/builder/kletse-rss-reader
+root=/home/builder/onward-rss-reader
 version=$(sed -n 's/^pkgver=//p' "$root/packaging/PKGBUILD")
 cp "$root"/packaging/*.pkg.tar.zst "$work/out/"
-cp "$root/target/release/kletse-rss" "$work/out/kletse-rss-$version-x86_64"
-cp "$root/target/release/kletse-rss-tui" "$work/out/kletse-rss-tui-$version-x86_64"
+cp "$root/target/release/onward" "$work/out/onward-$version-x86_64"
+cp "$root/target/release/onward-tui" "$work/out/onward-tui-$version-x86_64"

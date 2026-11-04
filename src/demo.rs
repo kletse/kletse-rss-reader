@@ -1,4 +1,4 @@
-//! Demo mode (`KLETSE_RSS_DEMO=1`): built-in sample feeds and articles, no server needed.
+//! Demo mode (`ONWARD_DEMO=1`): built-in sample feeds and articles, no server needed.
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 

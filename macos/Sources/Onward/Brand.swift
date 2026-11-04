@@ -110,3 +110,14 @@ enum AppIcon {
         return NSImage(contentsOfFile: path)
     }
 }
+
+/// The app was Kletse RSS, under another bundle id. Before anything reads them, the colours, the icon and the window's
+/// size come over, once.
+enum AppDefaults {
+    static func moveFromOldName() {
+        let defaults = UserDefaults.standard
+        guard let id = Bundle.main.bundleIdentifier, defaults.persistentDomain(forName: id) == nil,
+              let old = defaults.persistentDomain(forName: "be.kletse.rss") else { return }
+        defaults.setPersistentDomain(old, forName: id)
+    }
+}

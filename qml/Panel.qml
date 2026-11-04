@@ -13,6 +13,7 @@ Item {
     property alias titleControls: titleControlRow.data
     /// Things along the bottom, under a line; they place themselves in the row.
     property alias footer: footerRow.data
+    property real titleHeight: 40
     property real panelWidth: Math.min(560, width - 32)
     property real panelY: height * 0.08
     readonly property real panelHeight: panel.height
@@ -51,7 +52,7 @@ Item {
             Item {
                 visible: overlay.title !== "" || titleControlRow.children.length > 0
                 width: parent.width
-                height: 40
+                height: overlay.titleHeight
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     x: 14

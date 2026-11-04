@@ -710,23 +710,23 @@ fn esc_opens_the_picker_and_closes_it_again_once_there_is_a_queue() {
 #[test]
 fn the_window_title_shows_the_article_and_just_the_app_name_elsewhere() {
     let mut h = first_second();
-    assert_eq!(h.app.window_title(), "First — Kletse RSS");
+    assert_eq!(h.app.window_title(), "First — Onward");
     h.key("Escape");
-    assert_eq!(h.app.window_title(), "Kletse RSS");
+    assert_eq!(h.app.window_title(), "Onward");
     h.key("Escape");
-    assert_eq!(h.app.window_title(), "First — Kletse RSS");
+    assert_eq!(h.app.window_title(), "First — Onward");
     h.key("n");
-    assert_eq!(h.app.window_title(), "Second — Kletse RSS");
+    assert_eq!(h.app.window_title(), "Second — Onward");
     h.key("n");
     assert!(h.caught_up());
-    assert_eq!(h.app.window_title(), "Kletse RSS");
+    assert_eq!(h.app.window_title(), "Onward");
 }
 
 #[test]
 fn an_untitled_article_is_untitled_in_the_window_title_too() {
     let mut h = Harness::new(vec![entry(1, "")]);
     h.open(false);
-    assert_eq!(h.app.window_title(), "(untitled) — Kletse RSS");
+    assert_eq!(h.app.window_title(), "(untitled) — Onward");
 }
 
 #[test]
@@ -1095,7 +1095,7 @@ fn saving_settings_starts_over_from_the_picker() {
 
 #[test]
 fn onboarding_says_why_the_config_file_wasnt_used() {
-    let problem = "Couldn't use /home/me/.config/kletse-rss/config.toml. Line 3: string values must be quoted.";
+    let problem = "Couldn't use /home/me/.config/onward/config.toml. Line 3: string values must be quoted.";
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, fetches: true };
     h.problem = Some(problem.into());

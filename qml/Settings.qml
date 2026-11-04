@@ -55,7 +55,7 @@ Item {
         Text {
             width: parent.width
             bottomPadding: 8
-            text: s.firstRun ? "Welcome to Kletse RSS" : "Settings"
+            text: s.firstRun ? "Welcome to Onward" : "Settings"
             color: s.model.fgBright
             font.family: s.ui.headingFont
             font.pixelSize: 28

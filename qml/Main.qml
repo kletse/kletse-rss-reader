@@ -4,7 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtCore as Core
-import be.kletse.rss
+import be.kletse.onward
 
 ApplicationWindow {
     id: win
@@ -52,10 +52,10 @@ ApplicationWindow {
         function onColorSchemeChanged() { model.recheckTheme() }
     }
 
-    FontLoader { id: literata; source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/literata-latin-wght-normal.woff2" }
-    FontLoader { source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/literata-latin-wght-italic.woff2" }
-    FontLoader { id: inter; source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/inter-latin-wght-normal.woff2" }
-    FontLoader { source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/inter-latin-wght-italic.woff2" }
+    FontLoader { id: literata; source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/literata-latin-wght-normal.woff2" }
+    FontLoader { source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/literata-latin-wght-italic.woff2" }
+    FontLoader { id: inter; source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/inter-latin-wght-normal.woff2" }
+    FontLoader { source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/inter-latin-wght-italic.woff2" }
 
     // Mac apps reopen where they were left; under a tiling compositor the window manager decides.
     Core.Settings {
@@ -205,7 +205,7 @@ ApplicationWindow {
         return ""
     }
 
-    // KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in, press KLETSE_RSS_SNAPSHOT_KEYS (Enter: open the first
+    // ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (Enter: open the first
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
     // loads and draws.
     Timer {

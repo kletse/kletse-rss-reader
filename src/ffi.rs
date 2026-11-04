@@ -25,14 +25,14 @@ use std::sync::{Arc, LazyLock, mpsc};
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        .thread_name("kletse-rss-io")
+        .thread_name("onward-io")
         .enable_all()
         .build()
         .expect("a tokio runtime starts on any supported platform")
 });
 
-/// `KLETSE_RSS_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
-static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("KLETSE_RSS_DEBUG").is_ok_and(|v| v == "1"));
+/// `ONWARD_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
+static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("ONWARD_DEBUG").is_ok_and(|v| v == "1"));
 
 /// Called from a background thread when answers are waiting: Swift then sends `pump` on the main thread.
 pub type Notify = extern "C" fn(ctx: *mut c_void);
@@ -69,7 +69,7 @@ struct Rendered {
 struct Prefetched {
     key: Rendered,
     blocks: Vec<native::NativeBlock>,
-    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    /// What the converter dropped, for `ONWARD_DEBUG=1`.
     lost: String,
     images: Vec<String>,
 }
@@ -309,7 +309,7 @@ fn hash(value: &impl Hash) -> u64 {
 
 impl Core {
     fn new(waker: Waker) -> Self {
-        let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+        let demo = std::env::var("ONWARD_DEMO").is_ok_and(|v| v == "1");
         let (answers, waiting) = mpsc::channel();
         let mut app = App::new(prefs::load(), true);
         app.use_settings_window();
@@ -564,7 +564,7 @@ impl Core {
                 }
             };
             if *DEBUG && !lost.is_empty() {
-                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+                eprintln!("onward: entry {}: {lost}", entry.id);
             }
             self.rendered = Some(key);
             if previous.is_none_or(|p| p.id != key.id || p.content != key.content) {
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn the_demo_opens_through_the_c_interface() {
         // SAFETY: setting the variable before anything reads it; no other test in this module reads it.
-        unsafe { std::env::set_var("KLETSE_RSS_DEMO", "1") };
+        unsafe { std::env::set_var("ONWARD_DEMO", "1") };
         let core = kr_new(count, std::ptr::null_mut());
         assert!(send(core, r#"{"cmd":"nonsense"}"#)["error"].is_string());
         let started = send(core, r#"{"cmd":"start","dark":true}"#);

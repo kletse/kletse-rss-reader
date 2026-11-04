@@ -1,6 +1,7 @@
 // The feeds/categories overlay: "All unread", categories, and their feeds with unread counts. In history mode the
 // same, with read counts. The cursor and the rows come from the app; a click picks a row.
 import QtQuick
+import QtQuick.Controls.Basic as T
 
 Panel {
     id: picker
@@ -16,6 +17,8 @@ Panel {
 
     readonly property real rowHeight: Math.ceil(metrics.height) + 10
 
+    titleHeight: 32
+
     FontMetrics {
         id: metrics
         font.family: picker.ui.uiFont
@@ -24,18 +27,49 @@ Panel {
 
     onBackdrop: model.pickerBackdrop()
 
+    // A word that lights up under the mouse, and when chosen stands on the title row's line in the accent colour.
+    component ModeTab: Item {
+        id: tab
+        property string text
+        property string tip
+        property bool selected
+        signal clicked()
+
+        implicitWidth: tabLabel.implicitWidth + 12
+        implicitHeight: picker.titleHeight
+        T.ToolTip.visible: tabHover.hovered
+        T.ToolTip.text: tip
+        T.ToolTip.delay: 600
+
+        Text {
+            id: tabLabel
+            anchors.verticalCenter: parent.verticalCenter
+            text: tab.text
+            color: tab.selected || tabHover.hovered ? picker.model.fgBright : picker.model.fgDim
+            font.family: picker.ui.uiFont
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+        }
+        Rectangle {
+            anchors.bottom: parent.bottom
+            width: tabLabel.width
+            height: 2
+            color: tab.selected ? picker.model.accent : "transparent"
+        }
+        HoverHandler { id: tabHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { onTapped: tab.clicked() }
+    }
+
     titleControls: [
-        Button {
-            ui: picker.ui
+        ModeTab {
             text: "Unread"
-            primary: !picker.model.pickerHistory
+            selected: !picker.model.pickerHistory
             tip: "Unread items (h)"
             onClicked: picker.model.press("unread")
         },
-        Button {
-            ui: picker.ui
+        ModeTab {
             text: "History"
-            primary: picker.model.pickerHistory
+            selected: picker.model.pickerHistory
             tip: "Read items, newest first (h)"
             onClicked: picker.model.press("history")
         }

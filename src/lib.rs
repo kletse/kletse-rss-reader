@@ -1,4 +1,4 @@
-//! Kletse RSS without a window: what the app does (app.rs), the servers it talks to and how articles are
+//! Onward without a window: what the app does (app.rs), the servers it talks to and how articles are
 //! converted. The Qt window (main.rs, bridge.rs), the native macOS app (macos/, through ffi.rs) and the terminal
 //! version (tui_main.rs, tui/) all drive it.
 
@@ -18,6 +18,7 @@ pub mod ffi;
 pub mod greader;
 pub mod keys;
 pub mod miniflux;
+mod moved;
 pub mod paging;
 pub mod picker;
 pub mod prefs;

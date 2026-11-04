@@ -22,7 +22,7 @@ use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
 use std::collections::HashMap;
 
-pub const APP_NAME: &str = "Kletse RSS";
+pub const APP_NAME: &str = "Onward";
 /// Load the next page when this few loaded items are left.
 const PREFETCH: usize = 10;
 /// Miniflux refreshes feeds in the background; the counts are reloaded a few times while it works.

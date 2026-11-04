@@ -330,7 +330,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
     let unset = Status { configured: false, readeck: false, fetches: true };
     let mut s = Screenful::starting(100, 30, unset);
-    assert!(s.shows("Welcome to Kletse RSS"), "{}", s.text());
+    assert!(s.shows("Welcome to Onward"), "{}", s.text());
     s.key(KeyCode::Esc);
     assert_eq!(s.ui.app.overlay(), Overlay::Onboarding);
     assert!(!s.ui.quitting());

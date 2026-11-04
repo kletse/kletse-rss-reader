@@ -23,7 +23,7 @@ struct PickerView: View {
             }
             .buttonStyle(.borderless)
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 6)
             Divider()
             if let picker, picker.state == "ready", !picker.rows.isEmpty {
                 rows(picker)
@@ -49,14 +49,10 @@ struct PickerView: View {
 
     /// Shows which list this is, and changes it.
     private func modeSwitch(_ history: Bool) -> some View {
-        Picker("List", selection: Binding(get: { history }, set: { model.press($0 ? "history" : "unread") })) {
-            Text("Unread").tag(false)
-            Text("History").tag(true)
+        HStack(spacing: 16) {
+            ModeTab(title: "Unread", selected: !history, help: "Unread items (h)") { model.press("unread") }
+            ModeTab(title: "History", selected: history, help: "Read items, newest first (h)") { model.press("history") }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("Unread items, or read items newest first (h)")
     }
 
     private func footer(_ picker: PickerInfo?, history: Bool) -> some View {
@@ -135,6 +131,35 @@ struct PickerView: View {
 }
 
 /// The search box (`/`): Enter searches every feed, read and unread; Esc goes back (the core takes it).
+/// A word that lights up under the mouse, and when chosen stands on the line under the header in the accent colour.
+/// Always the same weight, so the other tab doesn't shift.
+private struct ModeTab: View {
+    let title: String
+    let selected: Bool
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .fontWeight(.semibold)
+                .foregroundStyle(selected || hovered ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(selected ? Brand.accent : .clear)
+                        .frame(height: 2)
+                        .offset(y: 7)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
 struct SearchView: View {
     let model: Model
     @State private var query = ""

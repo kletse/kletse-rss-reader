@@ -1,3 +1,3 @@
 [alias]
-# The terminal version, without Qt: `cargo tui`, `KLETSE_RSS_DEMO=1 cargo tui`.
-tui = "run --no-default-features --features tui --bin kletse-rss-tui"
+# The terminal version, without Qt: `cargo tui`, `ONWARD_DEMO=1 cargo tui`.
+tui = "run --no-default-features --features tui --bin onward-tui"

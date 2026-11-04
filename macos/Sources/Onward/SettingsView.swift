@@ -135,7 +135,7 @@ struct OnboardingView: View {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     LogoMark(width: 72).padding(.bottom, 6)
-                    Text("Welcome to Kletse RSS").font(.largeTitle.bold())
+                    Text("Welcome to Onward").font(.largeTitle.bold())
                     Text("Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b.")
                         .foregroundStyle(.secondary)
                 }

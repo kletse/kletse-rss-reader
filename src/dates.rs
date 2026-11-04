@@ -58,8 +58,8 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The other way round: `2026-10-01T00:00:00.000Z` for unix milliseconds. For test data.
-#[cfg(test)]
+/// The other way round: `2026-10-01T00:00:00.000Z` for unix milliseconds. For test data, and for a Google Reader
+/// API server, which gives an article's date as unix seconds.
 pub fn rfc3339_utc(millis: i64) -> String {
     let (secs, ms) = (millis.div_euclid(1000), millis.rem_euclid(1000));
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));

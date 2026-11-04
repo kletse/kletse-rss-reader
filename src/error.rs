@@ -7,6 +7,8 @@ use std::{error::Error as _, fmt};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Miniflux,
+    /// A Google Reader API server (FreshRSS, Inoreader, …).
+    GReader,
     Readeck,
 }
 
@@ -15,6 +17,7 @@ impl Service {
     fn credential(self) -> &'static str {
         match self {
             Service::Miniflux => "API key",
+            Service::GReader => "password",
             Service::Readeck => "token",
         }
     }
@@ -24,6 +27,7 @@ impl fmt::Display for Service {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Service::Miniflux => "Miniflux",
+            Service::GReader => "Google Reader API",
             Service::Readeck => "Readeck",
         })
     }

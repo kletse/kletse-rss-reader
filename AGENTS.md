@@ -39,7 +39,14 @@ and how to build it is in the [README](README.md).
   momentum, 72 px per click) felt about 4× too slow under Omarchy's `touchpad:scroll_factor`. macOS takes deltas
   1:1, since the system adds its own momentum.
 - **The shared core** (`miniflux.rs`, `readeck.rs`, `config.rs`, `error.rs`, `demo.rs`) came over from the Tauri
-  version unchanged apart from dropping the IPC bits. Its tests use wiremock.
+  version unchanged apart from dropping the IPC bits. Its tests use wiremock. `greader.rs` is the Google Reader API
+  client (FreshRSS, Miniflux's integration, Inoreader…), giving the same `Entry`/`FeedCount`/`Selection` as
+  `miniflux.rs`; `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
+  (the Google Reader one remembers its login and the stream each hashed feed id stands for). Paging goes by
+  `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. What the
+  protocol can't do comes back as `Error::Refused`, and `Status::fetches` tells the windows to leave out `r`/`f`
+  hints. To try it against a real server, FreshRSS runs in Docker; on macOS point the app at a throwaway config
+  with `HOME=<dir>` (`dirs` ignores `XDG_CONFIG_HOME` there).
 
 ## Commands
 

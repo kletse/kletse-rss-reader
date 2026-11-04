@@ -1,5 +1,5 @@
-// Onboarding (first run) and Settings: Miniflux is required, Readeck optional. Saving checks both servers before
-// anything is written. Shown in place of the article; Esc cancels (src/app.rs), except on first run.
+// Onboarding (first run) and Settings: a feed server is required (Miniflux, or a Google Reader API server such as
+// FreshRSS), Readeck optional. Saving checks both servers before anything is written. Shown in place of the article; Esc cancels (src/app.rs), except on first run.
 import QtQuick
 
 Item {
@@ -8,21 +8,34 @@ Item {
     required property var ui
     readonly property var model: ui.model
     readonly property bool firstRun: model.overlay === "onboarding"
+    // "miniflux" or "greader": which fields show. The other kind's are kept, for switching back.
+    property string server: "miniflux"
+    readonly property bool greader: server === "greader"
 
     height: form.visible ? form.height : 0
 
     function submit() {
-        s.model.submitSettings(minifluxUrl.text, minifluxKey.text, readeckUrl.text, readeckToken.text)
+        s.model.submitSettings(s.server, minifluxUrl.text, minifluxKey.text, greaderUrl.text, greaderUser.text,
+                               greaderPassword.text, readeckUrl.text, readeckToken.text)
     }
 
     // The form starts from the saved values once (the serial says when they are in); after that it keeps what
     // is typed, also when a check fails.
     function fill() {
+        s.server = s.model.server === "greader" ? "greader" : "miniflux"
         minifluxUrl.text = s.model.minifluxUrl
         minifluxKey.text = s.model.minifluxApiKey
+        greaderUrl.text = s.model.greaderUrl
+        greaderUser.text = s.model.greaderUsername
+        greaderPassword.text = s.model.greaderPassword
         readeckUrl.text = s.model.readeckUrl
         readeckToken.text = s.model.readeckToken
-        const first = minifluxUrl.text === "" ? minifluxUrl : minifluxKey
+        s.focusFirst()
+    }
+    // The chosen server's first empty field, or its last.
+    function focusFirst() {
+        const fields = s.greader ? [greaderUrl, greaderUser, greaderPassword] : [minifluxUrl, minifluxKey]
+        const first = fields.find(f => f.text === "") ?? fields[fields.length - 1]
         first.input.forceActiveFocus()
     }
     Connections {
@@ -53,7 +66,7 @@ Item {
             width: parent.width
             bottomPadding: 28
             text: s.firstRun
-                ? "Connect your Miniflux server to start reading. Readeck is optional: add it to save articles for later with b."
+                ? "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b."
                 : "Changes are checked against your servers before they are saved."
             color: s.model.fgDim
             lineHeight: 1.4
@@ -88,6 +101,26 @@ Item {
         }
 
         Fieldset {
+            title: "Server"
+            note: "where your feeds are"
+            Row {
+                spacing: 8
+                Button {
+                    ui: s.ui
+                    primary: !s.greader
+                    text: "Miniflux"
+                    onClicked: { s.server = "miniflux"; s.focusFirst() }
+                }
+                Button {
+                    ui: s.ui
+                    primary: s.greader
+                    text: "Google Reader API (FreshRSS, …)"
+                    onClicked: { s.server = "greader"; s.focusFirst() }
+                }
+            }
+        }
+        Fieldset {
+            visible: !s.greader
             title: "Miniflux"
             note: "required"
             Field {
@@ -104,6 +137,44 @@ Item {
                 width: parent.width
                 label: "API key"
                 placeholder: "Settings → API Keys → Create a new API key"
+                secret: true
+                onAccepted: s.submit()
+            }
+        }
+        Fieldset {
+            visible: s.greader
+            title: "Google Reader API"
+            note: "required"
+            Field {
+                id: greaderUrl
+                ui: s.ui
+                width: parent.width
+                label: "Server URL"
+                placeholder: "https://freshrss.example.com/api/greader.php"
+                onAccepted: s.submit()
+            }
+            Text {
+                width: parent.width
+                text: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled."
+                color: s.model.fgDim
+                lineHeight: 1.3
+                wrapMode: Text.Wrap
+                font.family: s.ui.uiFont
+                font.pixelSize: 12
+            }
+            Field {
+                id: greaderUser
+                ui: s.ui
+                width: parent.width
+                label: "Username"
+                onAccepted: s.submit()
+            }
+            Field {
+                id: greaderPassword
+                ui: s.ui
+                width: parent.width
+                label: "Password"
+                placeholder: "FreshRSS: the API password in your profile"
                 secret: true
                 onAccepted: s.submit()
             }

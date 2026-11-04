@@ -76,6 +76,8 @@ struct Harness {
     held: Option<Effect>,
     fail_next_page: Option<String>,
     fail_next_status: Option<String>,
+    /// What the server says to `f` and `r`, instead of doing it.
+    fail_fetch: Option<String>,
     full_content: String,
     problem: Option<String>,
     save_result: Result<Status, String>,
@@ -84,8 +86,8 @@ struct Harness {
 fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
     vec![FeedCount {
         feed: Feed { id: 1, title: "Feed".into(), category: Category { id: 1, title: "Dev".into() } },
-        unread,
-        read,
+        unread: Some(unread),
+        read: Some(read),
     }]
 }
 
@@ -94,7 +96,7 @@ impl Harness {
         Self {
             app: App::new(Prefs::default(), false),
             fake: Fake { entries, requests: 0 },
-            status: Status { configured: true, readeck: false },
+            status: Status { configured: true, readeck: false, fetches: true },
             counts: counts(2, 3),
             calls: Vec::new(),
             hold_next_page: false,
@@ -103,9 +105,10 @@ impl Harness {
             held: None,
             fail_next_page: None,
             fail_next_status: None,
+            fail_fetch: None,
             full_content: "<p>Full text</p>".into(),
             problem: None,
-            save_result: Ok(Status { configured: true, readeck: false }),
+            save_result: Ok(Status { configured: true, readeck: false, fetches: true }),
         }
     }
 
@@ -195,10 +198,11 @@ impl Harness {
                     self.held = Some(effect);
                     return None;
                 }
-                Some(Outcome::ContentFetched { index, id, result: Ok(self.full_content.clone()) })
+                let result = self.fail_fetch.clone().map_or_else(|| Ok(self.full_content.clone()), Err);
+                Some(Outcome::ContentFetched { index, id, result })
             }
             Effect::FeedCounts => Some(Outcome::FeedCounts(Ok(self.counts.clone()))),
-            Effect::RefreshFeeds => Some(Outcome::Refreshed(Ok(()))),
+            Effect::RefreshFeeds => Some(Outcome::Refreshed(self.fail_fetch.clone().map_or(Ok(()), Err))),
             Effect::ReloadPickerAfter { .. } | Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => None,
             Effect::SaveToReadeck { index, id, .. } => {
                 if self.hold_save {
@@ -952,8 +956,8 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
 #[test]
 fn onboarding_cant_be_cancelled_and_connects_on_submit() {
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false };
-    h.save_result = Ok(Status { configured: true, readeck: true });
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.save_result = Ok(Status { configured: true, readeck: true, fetches: true });
     h.start();
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
     h.key("Escape");
@@ -997,7 +1001,7 @@ fn saving_settings_starts_over_from_the_picker() {
 fn onboarding_says_why_the_config_file_wasnt_used() {
     let problem = "Couldn't use /home/me/.config/kletse-rss/config.toml. Line 3: string values must be quoted.";
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false };
+    h.status = Status { configured: false, readeck: false, fetches: true };
     h.problem = Some(problem.into());
     h.start();
     assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem));
@@ -1006,7 +1010,7 @@ fn onboarding_says_why_the_config_file_wasnt_used() {
 #[test]
 fn onboarding_shows_no_notice_when_the_config_file_is_fine() {
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false };
+    h.status = Status { configured: false, readeck: false, fetches: true };
     h.start();
     assert_eq!(h.app.settings().unwrap().problem, None);
 }
@@ -1335,8 +1339,8 @@ fn the_article_after_this_one_is_known_ahead() {
 fn three_feeds(beta_unread: i64) -> Vec<FeedCount> {
     let feed = |id, title: &str, category: (i64, &str), unread| FeedCount {
         feed: Feed { id, title: title.into(), category: Category { id: category.0, title: category.1.into() } },
-        unread,
-        read: 1,
+        unread: Some(unread),
+        read: Some(1),
     };
     vec![feed(1, "Alpha", (1, "Dev"), 2), feed(2, "Beta", (1, "Dev"), beta_unread), feed(3, "Gamma", (2, "Blogs"), 5)]
 }
@@ -1427,4 +1431,71 @@ fn the_picker_stays_on_screen_behind_the_question_shift_a_asks() {
     h.shift("A");
     assert_eq!(h.app.overlay(), Overlay::Confirm);
     assert!(!h.app.picker_shown(), "asked from the reader");
+}
+
+// ---- A server that can't fetch (the Google Reader API) ------------------------------------------------------
+
+#[test]
+fn a_full_article_the_server_wont_fetch_is_a_toast_and_f_works_again_after() {
+    let mut h = Harness::new(items(3));
+    h.fail_fetch = Some("Fetching the full article isn't available".into());
+    h.open(false);
+    h.key("f");
+    assert_eq!(h.toast(), Some("Fetching the full article isn't available"));
+    assert_eq!(h.app.toast().map(|t| t.kind), Some(ToastKind::Error));
+    // Nothing is left waiting: f asks again, and the article is as it was.
+    h.fail_fetch = None;
+    h.key("f");
+    assert_eq!(h.toast(), Some("Full article"));
+    assert_eq!(h.calls.iter().filter(|c| matches!(c, Effect::FetchContent { .. })).count(), 2);
+}
+
+#[test]
+fn a_refresh_the_server_turns_down_is_a_toast() {
+    let mut h = Harness::new(items(3));
+    h.fail_fetch = Some("Refreshing feeds isn't available".into());
+    h.start();
+    h.key("r");
+    assert_eq!(h.toast(), Some("Refreshing feeds isn't available"));
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::ReloadPickerAfter { .. })));
+}
+
+#[test]
+fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
+    let mut h = Harness::new(items(3));
+    h.status = Status { configured: true, readeck: false, fetches: false };
+    h.open(false);
+    assert!(!h.app.fetches());
+    h.key("f");
+    assert_eq!(h.toast(), Some(crate::greader::FETCH_CONTENT_REFUSED));
+    h.key("p");
+    h.key("r");
+    assert_eq!(h.toast(), Some(crate::greader::REFRESH_REFUSED));
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::FetchContent { .. } | Effect::RefreshFeeds)));
+    // Saved settings for a Miniflux server bring them back.
+    h.save_result = Ok(Status { configured: true, readeck: false, fetches: true });
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.app.fetches());
+}
+
+#[test]
+fn history_with_counts_the_server_doesnt_know_lists_every_feed_and_says_where_j_goes() {
+    let mut h = Harness::new(read_items(2));
+    h.counts = three_feeds(0).into_iter().map(|c| FeedCount { read: None, ..c }).collect();
+    h.start();
+    h.key("h");
+    let rows: Vec<_> = h.app.picker_items().into_iter().map(|i| (i.label, i.count)).collect();
+    assert_eq!(rows.len(), 6, "{rows:?}");
+    assert!(rows.iter().all(|(_, count)| count.is_none()), "{rows:?}");
+    let row = h.app.picker_items().iter().position(|i| i.label == "Alpha").unwrap();
+    for _ in 0..row {
+        h.key("j");
+    }
+    h.key("Enter");
+    assert_eq!(h.app.selection_label(), "Alpha");
+    h.press_through(&["j"]);
+    assert!(h.caught_up());
+    assert_eq!(h.app.end_hint(), "Press j for Beta, Enter for the feeds, k to go back.");
 }

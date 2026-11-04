@@ -110,7 +110,7 @@ pub fn feed_counts() -> Vec<FeedCount> {
         .iter()
         .map(|f| {
             let n = ENTRIES.iter().filter(|e| e.feed == f.id).count() as i64;
-            FeedCount { feed: as_feed(f), unread: n, read: n }
+            FeedCount { feed: as_feed(f), unread: Some(n), read: Some(n) }
         })
         .collect()
 }
@@ -196,6 +196,7 @@ fn selection(sel: Selection) -> Vec<Entry> {
             status: EntryStatus::Unread,
             reading_time: e.minutes,
             feed: EntryFeed { id: e.feed, title: feed(e.feed).title.into() },
+            order_ms: 0, // pages by published_at, as Miniflux does
         })
         .collect()
 }
@@ -310,9 +311,9 @@ mod tests {
     fn feed_counts_match_entries() {
         let counts = feed_counts();
         assert_eq!(counts.len(), FEEDS.len());
-        let total: i64 = counts.iter().map(|c| c.unread).sum();
+        let total: i64 = counts.iter().filter_map(|c| c.unread).sum();
         assert_eq!(total, ENTRIES.len() as i64);
-        assert!(counts.iter().all(|c| c.unread > 0), "every demo feed has something to read");
+        assert!(counts.iter().all(|c| c.unread > Some(0)), "every demo feed has something to read");
     }
 
     fn ids(page: &EntryPage) -> Vec<i64> {

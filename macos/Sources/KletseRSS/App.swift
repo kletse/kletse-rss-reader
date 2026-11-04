@@ -30,6 +30,7 @@ struct KletseApp: App {
                 Button("Toggle Read (m)") { Model.shared.key("m") }
                 Button("Open Original (o)") { Model.shared.key("o") }
                 Button("Fetch Full Article (f)") { Model.shared.key("f") }
+                    .disabled(Model.shared.state?.fetches == false)
                 Button("Save to Readeck (b)") { Model.shared.press("readeck") }
                 Divider()
                 Button("Feeds (p)") { Model.shared.press("picker") }

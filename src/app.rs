@@ -12,7 +12,9 @@
 //! All of them load a page at a time as you get near the end. At the end of the unread list, it looks once more
 //! for items that arrived meanwhile.
 
+use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
+use crate::greader;
 use crate::keys::{self, Action};
 use crate::miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
@@ -81,18 +83,26 @@ pub struct Toast {
 /// What the backend reports about the configured servers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Status {
-    /// Miniflux URL and key are present; otherwise show onboarding.
+    /// The feed server's settings are present; otherwise show onboarding.
     pub configured: bool,
     /// Readeck is set up; otherwise hide the bookmark button.
     pub readeck: bool,
+    /// The server fetches on request: the feeds (r) and a whole article (f). Miniflux does; the Google Reader
+    /// API has no way to ask, so the keys only say so and the windows leave out their hints.
+    pub fetches: bool,
 }
 
-/// The settings form, flat. Empty Readeck fields mean "not set up".
-/// Its `Debug` shows nothing on purpose: it holds the API key and token.
+/// The settings form, flat: which server, the fields of both kinds (only the chosen one's are used, the other's
+/// are kept for switching back), and Readeck, whose empty fields mean "not set up".
+/// Its `Debug` shows nothing on purpose: it holds the API key, password and token.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct SettingsValues {
+    pub server: Server,
     pub miniflux_url: String,
     pub miniflux_api_key: String,
+    pub greader_url: String,
+    pub greader_username: String,
+    pub greader_password: String,
     pub readeck_url: String,
     pub readeck_token: String,
 }
@@ -382,6 +392,8 @@ pub struct App {
     toast: Option<Toast>,
     toast_serial: u64,
     readeck: bool,
+    /// See `Status::fetches`.
+    fetches: bool,
     settings: Option<SettingsForm>,
 
     prefs: Prefs,
@@ -427,6 +439,7 @@ impl App {
             toast: None,
             toast_serial: 0,
             readeck: false,
+            fetches: true,
             settings: None,
             prefs,
             mac,
@@ -438,6 +451,7 @@ impl App {
         let mut fx = Vec::new();
         if status.configured {
             self.readeck = status.readeck;
+            self.fetches = status.fetches;
             self.open_picker(Some(Mode::Unread), &mut fx);
         } else {
             self.open_settings(true, &mut fx);
@@ -484,6 +498,11 @@ impl App {
 
     pub fn readeck(&self) -> bool {
         self.readeck
+    }
+
+    /// The server refreshes feeds (r) and fetches whole articles (f) on request: see `Status::fetches`.
+    pub fn fetches(&self) -> bool {
+        self.fetches
     }
 
     pub fn prefs(&self) -> Prefs {
@@ -574,7 +593,10 @@ impl App {
     /// What the end screen says: where j goes next.
     pub fn end_hint(&self) -> String {
         match self.next_list() {
-            Some(next) => format!("Press j for {} ({}), Enter for the feeds, k to go back.", next.label, next.count),
+            Some(PickerItem { label, count: Some(count), .. }) => {
+                format!("Press j for {label} ({count}), Enter for the feeds, k to go back.")
+            }
+            Some(next) => format!("Press j for {}, Enter for the feeds, k to go back.", next.label),
             None => "Press j or Enter for the feeds, k to go back.".into(),
         }
     }
@@ -931,6 +953,10 @@ impl App {
     /// Fetches the full article the first time, then switches between it and the feed's version.
     fn fetch_full(&mut self, fx: &mut Vec<Effect>) {
         let Some(entry) = self.current() else { return };
+        if !self.fetches {
+            self.toast_info(greader::FETCH_CONTENT_REFUSED);
+            return;
+        }
         let (id, index) = (entry.id, self.index);
         let switch = self.versions.get(&id).map(|known| {
             if entry.content == known.full {
@@ -1329,6 +1355,7 @@ impl App {
         let first_run = self.overlay == Overlay::Onboarding;
         if let Some(status) = status {
             self.readeck = status.readeck;
+            self.fetches = status.fetches;
             if !first_run {
                 self.toast_info("Settings saved");
             }
@@ -1514,6 +1541,7 @@ impl App {
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
+            Action::PickerRefresh if !self.fetches => self.toast_info(greader::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
                 fx.push(Effect::RefreshFeeds);

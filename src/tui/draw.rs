@@ -1,7 +1,7 @@
 //! Draws the state in `Ui`, the way the QML does: a top bar, the reader under it, and the overlays over that.
 
 use super::article::{self, ACCENT, DIM, Row};
-use super::ui::{FIELDS, Inline, Picture, SECRET, Ui};
+use super::ui::{CHOICE, FIELDS, Inline, Picture, SECRET, Ui};
 use crate::app::{Overlay, PickerList, Screen, ToastKind};
 use crate::paging::Mode;
 use ratatui::Frame;
@@ -151,7 +151,8 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     rows.extend(article::plain(title, BOLD, w));
     rows.push(Row::default());
     let intro = if first_run {
-        "Connect your Miniflux server to start reading. Readeck is optional: add it to save articles for later."
+        "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save \
+         articles for later."
     } else {
         "Changes are checked against your servers before they are saved."
     };
@@ -162,22 +163,52 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         rows.push(Row::default());
     }
 
-    const SECTIONS: [(usize, &str, &str); 2] =
-        [(0, "Miniflux", "required"), (2, "Readeck", "optional: leave empty to hide the bookmark button")];
-    const LABELS: [&str; FIELDS] = ["Miniflux URL", "API key", "Readeck URL", "API token"];
+    const SECTIONS: [(usize, &str, &str); 4] = [
+        (CHOICE, "Server", "← → to switch"),
+        (0, "Miniflux", "required"),
+        (2, "Google Reader API", "required"),
+        (5, "Readeck", "optional: leave empty to hide the bookmark button"),
+    ];
+    const LABELS: [&str; FIELDS] =
+        ["Miniflux URL", "API key", "Server URL", "Username", "Password", "Readeck URL", "API token"];
     const PLACEHOLDERS: [&str; FIELDS] = [
         "https://miniflux.example.com",
         "Settings → API Keys → Create a new API key",
+        "https://freshrss.example.com/api/greader.php",
+        "",
+        "FreshRSS: the API password in your profile",
         "https://readeck.example.com",
         "Profile → API Tokens (needs “Bookmarks: write”)",
     ];
+    const GREADER_HINT: &str = "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.";
     let mut cursor = None;
-    for i in 0..FIELDS {
+    let shown = fields.shown();
+    for (n, &i) in shown.iter().enumerate() {
         if let Some((_, title, note)) = SECTIONS.iter().find(|(first, ..)| *first == i) {
             let line = Line::from(vec![Span::styled(*title, ACCENTED), Span::styled(format!(" · {note}"), DIM)]);
             rows.push(Row { line, ..Row::default() });
         }
         let focused = i == fields.focus;
+        if i == CHOICE {
+            let mark = if focused { Span::styled("› ", ACCENTED) } else { Span::raw("  ") };
+            let option = |on: bool, name: &'static str| {
+                let style = if on { BOLD } else { DIM };
+                Span::styled(format!("{} {name}", if on { "●" } else { "○" }), style)
+            };
+            let greader = fields.server == crate::config::Server::GReader;
+            rows.push(Row {
+                line: Line::from(vec![
+                    Span::raw("  "),
+                    mark,
+                    option(!greader, "Miniflux"),
+                    Span::raw("   "),
+                    option(greader, "Google Reader API (FreshRSS, …)"),
+                ]),
+                ..Row::default()
+            });
+            rows.push(Row::default());
+            continue;
+        }
         rows.push(Row {
             line: Line::from(Span::styled(format!("  {}", LABELS[i]), if focused { BOLD } else { DIM })),
             ..Row::default()
@@ -193,7 +224,11 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             cursor = Some((rows.len(), 4 + at));
         }
         rows.push(Row { line: Line::from(vec![Span::raw("  "), mark, value]), ..Row::default() });
-        if i + 1 < FIELDS {
+        if i == 2 {
+            let indent = Span::raw("    ");
+            rows.extend(article::prefixed(article::plain(GREADER_HINT, DIM, w.saturating_sub(4)), &indent, &indent));
+        }
+        if n + 1 < shown.len() {
             rows.push(Row::default());
         }
     }
@@ -249,13 +284,17 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         PickerList::Error(message) => Some((message.clone(), ERROR)),
         PickerList::Ready(_) if !items.is_empty() => None,
         PickerList::Ready(_) if history => Some(("Nothing read yet. Press h for unread items.".to_string(), DIM)),
-        PickerList::Ready(_) => Some(("Nothing unread. Press r to refresh, or h for history.".to_string(), DIM)),
+        PickerList::Ready(_) if ui.app.fetches() => {
+            Some(("Nothing unread. Press r to refresh, or h for history.".to_string(), DIM))
+        }
+        PickerList::Ready(_) => Some(("Nothing unread. Press h for history.".to_string(), DIM)),
     };
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
+    let refresh = if ui.app.fetches() { " · r refresh" } else { "" };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Feeds " }, BOLD))
-        .title_bottom(Line::styled(format!(" {swap} · / search · r refresh · , settings · ? keys "), DIM));
+        .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));
     }
@@ -285,7 +324,7 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let width = usize::from(inner.width);
     for (i, item) in items.iter().enumerate().skip(ui.picker_top).take(room) {
         let indent = if item.depth == 1 { "  " } else { "" };
-        let count = item.count.to_string();
+        let count = item.count.map(|c| c.to_string()).unwrap_or_default();
         let label = fitted(&item.label, width.saturating_sub(indent.width() + count.width() + 1));
         let gap = width.saturating_sub(indent.width() + label.width() + count.width());
         let selected = i == cursor;

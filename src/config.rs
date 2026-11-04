@@ -1,5 +1,5 @@
-//! `~/.config/kletse-rss/config.toml`: Miniflux (required) and Readeck (optional).
-//! Written by the onboarding/settings screen; can also be edited by hand.
+//! `~/.config/kletse-rss/config.toml`: the feed server, Miniflux or a Google Reader API server (one is
+//! required), and Readeck (optional). Written by the onboarding/settings screen; can also be edited by hand.
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,11 +11,44 @@ use crate::error::Error;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
-    #[serde(default)]
+    /// Which server to read from, when the file says. Without it, the one whose section is complete; Miniflux
+    /// when both are (see `server()`). The settings form always writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<Server>,
+    #[serde(default, skip_serializing_if = "Miniflux::is_empty")]
     pub miniflux: Miniflux,
+    /// A Google Reader API server: FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's own integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greader: Option<GReader>,
     /// `None` when Readeck is not set up: the bookmark button is hidden.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readeck: Option<Readeck>,
+}
+
+/// The kind of feed server.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Server {
+    /// Miniflux's own API (`/v1`).
+    #[default]
+    Miniflux,
+    /// The Google Reader API (`/reader/api/0`).
+    GReader,
+}
+
+impl Server {
+    /// As the config file and the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Server::Miniflux => "miniflux",
+            Server::GReader => "greader",
+        }
+    }
+
+    /// The other way round; anything else is Miniflux.
+    pub fn from_name(name: &str) -> Self {
+        if name == "greader" { Server::GReader } else { Server::Miniflux }
+    }
 }
 
 /// `Debug` leaves out the API key.
@@ -25,6 +58,39 @@ pub struct Miniflux {
     pub url: String,
     #[serde(default)]
     pub api_key: String,
+}
+
+impl Miniflux {
+    fn is_empty(&self) -> bool {
+        self.url.is_empty() && self.api_key.is_empty()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        !self.url.is_empty() && !self.api_key.is_empty()
+    }
+}
+
+/// A Google Reader API server. `url` is the API's root, the part before `/accounts/ClientLogin`:
+/// `https://host/api/greader.php` for FreshRSS, `https://host` for Miniflux. `Debug` leaves out the password.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GReader {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub username: String,
+    /// The API password, which FreshRSS keeps apart from the one you log in to the web page with.
+    #[serde(default)]
+    pub password: String,
+}
+
+impl GReader {
+    fn filled(&self) -> usize {
+        [&self.url, &self.username, &self.password].iter().filter(|s| !s.is_empty()).count()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.filled() == 3
+    }
 }
 
 /// `Debug` leaves out the token.
@@ -39,6 +105,16 @@ pub struct Readeck {
 impl fmt::Debug for Miniflux {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Miniflux").field("url", &self.url).field("api_key", &Redacted(&self.api_key)).finish()
+    }
+}
+
+impl fmt::Debug for GReader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GReader")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &Redacted(&self.password))
+            .finish()
     }
 }
 
@@ -65,10 +141,16 @@ pub fn path() -> Option<PathBuf> {
 }
 
 impl Config {
-    /// Trims values, drops trailing slashes, and treats a half-empty Readeck section as "not set up".
+    /// Trims values, drops trailing slashes, and treats a half-empty Readeck section, or an empty Google Reader
+    /// one, as "not set up". (A half-filled Google Reader section is kept, for `validate` to say what's missing.)
     pub fn normalized(mut self) -> Self {
         self.miniflux.url = clean_url(&self.miniflux.url);
         self.miniflux.api_key = self.miniflux.api_key.trim().to_string();
+        self.greader = self.greader.and_then(|g| {
+            // A password may well begin or end with a space; it is kept as typed.
+            let g = GReader { url: clean_url(&g.url), username: g.username.trim().to_string(), password: g.password };
+            (g.filled() > 0).then_some(g)
+        });
         self.readeck = self.readeck.and_then(|r| {
             let r = Readeck { url: clean_url(&r.url), token: r.token.trim().to_string() };
             (!r.url.is_empty() && !r.token.is_empty()).then_some(r)
@@ -76,23 +158,55 @@ impl Config {
         self
     }
 
-    /// True when the required Miniflux settings are present.
-    pub fn is_complete(&self) -> bool {
-        !self.miniflux.url.is_empty() && !self.miniflux.api_key.is_empty()
+    /// The server to read from: the one the file names, or else the one whose section is complete, Miniflux
+    /// when both or neither are.
+    pub fn server(&self) -> Server {
+        match self.server {
+            Some(server) => server,
+            None if !self.miniflux.is_complete() && self.greader.as_ref().is_some_and(GReader::is_complete) => {
+                Server::GReader
+            }
+            None => Server::Miniflux,
+        }
     }
 
-    /// Checks that every configured server address is a usable http(s) URL.
-    pub fn validate(&self) -> Result<(), Error> {
-        if !self.is_complete() {
-            return Err(Error::Setup("The Miniflux URL and API key are required.".into()));
+    /// True when the chosen server's settings are all there.
+    pub fn is_complete(&self) -> bool {
+        match self.server() {
+            Server::Miniflux => self.miniflux.is_complete(),
+            Server::GReader => self.greader.as_ref().is_some_and(GReader::is_complete),
         }
-        validate_url(&self.miniflux.url)?;
+    }
+
+    /// Checks that the chosen server is filled in, that a Google Reader section isn't half filled, and that every
+    /// configured server address is a usable http(s) URL.
+    pub fn validate(&self) -> Result<(), Error> {
+        if let Some(greader) = &self.greader
+            && !greader.is_complete()
+        {
+            return Err(Error::Setup(GREADER_INCOMPLETE.into()));
+        }
+        match self.server() {
+            Server::Miniflux if !self.is_complete() => {
+                return Err(Error::Setup("The Miniflux URL and API key are required.".into()));
+            }
+            Server::GReader if !self.is_complete() => return Err(Error::Setup(GREADER_INCOMPLETE.into())),
+            _ => {}
+        }
+        if self.miniflux.is_complete() {
+            validate_url(&self.miniflux.url)?;
+        }
+        if let Some(greader) = &self.greader {
+            validate_url(&greader.url)?;
+        }
         if let Some(readeck) = &self.readeck {
             validate_url(&readeck.url)?;
         }
         Ok(())
     }
 }
+
+const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
 
 fn clean_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
@@ -135,13 +249,21 @@ fn read_from(path: &Path) -> Result<Config, Error> {
 /// A config file's contents, or what is wrong with them ("Line 3: string values must be quoted").
 fn parse(bytes: &[u8]) -> Result<Config, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "It is not a text file".to_string())?;
-    toml::from_str(text).map_err(|e| match e.span() {
+    let config: Config = toml::from_str(text).map_err(|e| match e.span() {
         Some(span) => {
             let line = text[..span.start.min(text.len())].matches('\n').count() + 1;
             format!("Line {line}: {}", e.message().trim_end_matches('.'))
         }
         None => e.message().trim_end_matches('.').to_string(),
-    })
+    })?;
+    // Said here rather than left to `validate`, so it shows when the app starts, above the form that fixes it.
+    if let Some(greader) = &config.greader
+        && greader.filled() > 0
+        && !greader.is_complete()
+    {
+        return Err("The [greader] section needs a url, a username and a password".into());
+    }
+    Ok(config)
 }
 
 /// Where a config file that doesn't parse is kept when a save replaces it: `config.toml.broken`.
@@ -245,6 +367,19 @@ mod tests {
         Config {
             miniflux: Miniflux { url: "https://m.example.com".into(), api_key: "key".into() },
             readeck: Some(Readeck { url: "https://r.example.com".into(), token: "tok".into() }),
+            ..Config::default()
+        }
+    }
+
+    fn greader() -> Config {
+        Config {
+            server: Some(Server::GReader),
+            greader: Some(GReader {
+                url: "https://rss.example.com/api/greader.php".into(),
+                username: "ward".into(),
+                password: "pass word".into(),
+            }),
+            ..Config::default()
         }
     }
 
@@ -253,6 +388,7 @@ mod tests {
         let cfg = Config {
             miniflux: Miniflux { url: "  https://m.example.com/// ".into(), api_key: " key\n".into() },
             readeck: Some(Readeck { url: " https://r.example.com/ ".into(), token: "\ttok ".into() }),
+            ..Config::default()
         }
         .normalized();
         assert_eq!(cfg, full());
@@ -261,9 +397,8 @@ mod tests {
     #[test]
     fn half_empty_readeck_means_not_set_up() {
         for (url, token) in [("", "tok"), ("https://r.example.com", ""), ("  ", " ")] {
-            let cfg =
-                Config { miniflux: full().miniflux, readeck: Some(Readeck { url: url.into(), token: token.into() }) }
-                    .normalized();
+            let readeck = Some(Readeck { url: url.into(), token: token.into() });
+            let cfg = Config { miniflux: full().miniflux, readeck, ..Config::default() }.normalized();
             assert_eq!(cfg.readeck, None, "url={url:?} token={token:?}");
         }
     }
@@ -461,12 +596,76 @@ mod tests {
     }
 
     #[test]
+    fn an_old_miniflux_file_reads_as_it_always_did() {
+        let text = "[miniflux]\nurl = \"https://m.example.com\"\napi_key = \"key\"\n\n[readeck]\nurl = \"https://r.example.com\"\ntoken = \"tok\"\n";
+        let cfg = parse(text.as_bytes()).unwrap().normalized();
+        assert_eq!(cfg, full());
+        assert_eq!(cfg.server(), Server::Miniflux);
+        assert!(cfg.is_complete());
+        cfg.validate().unwrap();
+        // And saving it again writes no new keys.
+        let saved = toml::to_string(&cfg).unwrap();
+        assert!(!saved.contains("server") && !saved.contains("greader"), "{saved}");
+    }
+
+    #[test]
+    fn a_greader_file_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        save_to(&greader(), &path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("server = \"greader\"") && text.contains("[greader]"), "{text}");
+        assert!(!text.contains("[miniflux]"), "an empty Miniflux section isn't written: {text}");
+        let cfg = read_from(&path).unwrap();
+        assert_eq!(cfg, greader());
+        assert_eq!(cfg.server(), Server::GReader);
+        assert!(cfg.is_complete());
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn the_server_is_the_complete_section_or_the_one_the_file_names() {
+        let mut cfg = greader();
+        cfg.server = None;
+        assert_eq!(cfg.server(), Server::GReader, "only the Google Reader section is complete");
+        cfg.miniflux = full().miniflux;
+        assert_eq!(cfg.server(), Server::Miniflux, "both are: Miniflux, as before");
+        cfg.server = Some(Server::GReader);
+        assert_eq!(cfg.server(), Server::GReader);
+        let named: Config =
+            toml::from_str("server = \"greader\"\n[miniflux]\nurl = \"https://m\"\napi_key = \"k\"\n").unwrap();
+        assert_eq!(named.server(), Server::GReader);
+        assert!(!named.is_complete(), "the named server has no settings");
+        assert!(named.validate().unwrap_err().message().contains("Google Reader"));
+    }
+
+    #[test]
+    fn a_half_filled_greader_section_is_an_error_that_says_what_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[greader]\nurl = \"https://rss.example.com/api/greader.php\"\nusername = \"ward\"\n")
+            .unwrap();
+        let message = read_from(&path).unwrap_err().message();
+        assert!(message.contains("The [greader] section needs a url, a username and a password"), "{message}");
+
+        let mut cfg = greader();
+        cfg.greader.as_mut().unwrap().password.clear();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.message(), "The Google Reader API server needs a URL, a username and a password.");
+        // An empty one is just not set up.
+        let cfg = Config { greader: Some(GReader::default()), ..full() }.normalized();
+        assert_eq!(cfg.greader, None);
+    }
+
+    #[test]
     fn debug_output_leaves_out_secrets() {
         let mut cfg = full();
         cfg.miniflux.api_key = "mf-secret-123".into();
         cfg.readeck = Some(Readeck { url: "https://r.example.com".into(), token: "rd-secret-456".into() });
+        cfg.greader = Some(GReader { password: "gr-secret-789".into(), ..greader().greader.unwrap() });
         let shown = format!("{cfg:?} {cfg:#?}");
         assert!(!shown.contains("mf-secret-123") && !shown.contains("rd-secret-456"), "{shown}");
+        assert!(!shown.contains("gr-secret-789") && shown.contains("ward"), "{shown}");
         assert!(shown.contains("https://m.example.com") && shown.contains("<redacted>"), "{shown}");
         assert!(format!("{:?}", Config::default()).contains(r#"api_key: """#));
     }

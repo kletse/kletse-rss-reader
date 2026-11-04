@@ -146,9 +146,22 @@ enum Command {
         url: String,
     },
     SubmitSettings {
+        /// "miniflux" or "greader".
+        #[serde(default)]
+        server: String,
+        #[serde(default)]
         miniflux_url: String,
+        #[serde(default)]
         miniflux_api_key: String,
+        #[serde(default)]
+        greader_url: String,
+        #[serde(default)]
+        greader_username: String,
+        #[serde(default)]
+        greader_password: String,
+        #[serde(default)]
         readeck_url: String,
+        #[serde(default)]
         readeck_token: String,
     },
     CancelSettings,
@@ -195,6 +208,8 @@ struct State {
     searching: bool,
     position: String,
     readeck: bool,
+    /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
+    fetches: bool,
     article: Option<Article>,
     picker: Picker,
     /// The search box starts from the last search.
@@ -250,7 +265,8 @@ struct ViewerState {
 #[derive(Serialize)]
 struct PickerRow {
     label: String,
-    count: i64,
+    /// `null` when the server can't count: shown without a number.
+    count: Option<i64>,
     depth: u8,
 }
 
@@ -274,8 +290,12 @@ struct Settings {
 
 #[derive(Serialize)]
 struct Values {
+    server: &'static str,
     miniflux_url: String,
     miniflux_api_key: String,
+    greader_url: String,
+    greader_username: String,
+    greader_password: String,
     readeck_url: String,
     readeck_token: String,
 }
@@ -343,9 +363,25 @@ impl Core {
                 Vec::new()
             }
             Command::OpenLink { url } => self.app.open_link(&url),
-            Command::SubmitSettings { miniflux_url, miniflux_api_key, readeck_url, readeck_token } => {
-                self.app.submit_settings(SettingsValues { miniflux_url, miniflux_api_key, readeck_url, readeck_token })
-            }
+            Command::SubmitSettings {
+                server,
+                miniflux_url,
+                miniflux_api_key,
+                greader_url,
+                greader_username,
+                greader_password,
+                readeck_url,
+                readeck_token,
+            } => self.app.submit_settings(SettingsValues {
+                server: crate::config::Server::from_name(&server),
+                miniflux_url,
+                miniflux_api_key,
+                greader_url,
+                greader_username,
+                greader_password,
+                readeck_url,
+                readeck_token,
+            }),
             Command::CancelSettings => self.app.cancel_settings(),
             Command::Search { query } => self.app.search(&query),
             Command::CancelSearch => {
@@ -475,6 +511,7 @@ impl Core {
             searching: app.searching(),
             position: app.position(),
             readeck: app.readeck(),
+            fetches: app.fetches(),
             article,
             picker: Picker {
                 state: picker_state,
@@ -553,8 +590,12 @@ impl Core {
         };
         // The form starts from the loaded values once; after that the window keeps what is typed.
         let values = (!self.settings_shown).then(|| Values {
+            server: form.values.server.name(),
             miniflux_url: form.values.miniflux_url.clone(),
             miniflux_api_key: form.values.miniflux_api_key.clone(),
+            greader_url: form.values.greader_url.clone(),
+            greader_username: form.values.greader_username.clone(),
+            greader_password: form.values.greader_password.clone(),
             readeck_url: form.values.readeck_url.clone(),
             readeck_token: form.values.readeck_token.clone(),
         });

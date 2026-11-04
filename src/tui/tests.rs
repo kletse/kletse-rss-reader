@@ -31,7 +31,7 @@ struct Screenful {
 
 impl Screenful {
     fn new(width: u16, height: u16) -> Self {
-        Self::starting(width, height, Status { configured: true, readeck: true })
+        Self::starting(width, height, Status { configured: true, readeck: true, fetches: true })
     }
 
     fn starting(width: u16, height: u16, status: Status) -> Self {
@@ -282,21 +282,45 @@ fn typing_in_the_search_box_is_not_shortcuts() {
 }
 
 #[test]
+fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
+    let mut s = Screenful::reading(100, 40);
+    s.keys(",");
+    s.settle();
+    assert!(s.shows("● Miniflux") && s.shows("Miniflux URL") && !s.shows("Username"), "{}", s.text());
+    s.ui.form.as_mut().unwrap().focus = super::ui::CHOICE;
+    s.keys("x"); // typing on the choice does nothing
+    s.key(KeyCode::Right);
+    s.settle();
+    assert!(s.shows("● Google Reader API (FreshRSS, …)") && s.shows("Username"), "{}", s.text());
+    assert!(s.shows("FreshRSS: https://your-freshrss/api/greader.php."), "the hint: {}", s.text());
+    assert!(!s.shows("Miniflux URL"), "{}", s.text());
+    s.key(KeyCode::Tab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, 2, "the Google Reader URL");
+    s.keys("x");
+    let form = s.ui.form.as_ref().unwrap();
+    assert!(form.fields[2].text().ends_with('x'));
+    assert_eq!(form.shown(), [super::ui::CHOICE, 2, 3, 4, 5, 6]);
+    s.key(KeyCode::BackTab).key(KeyCode::Left);
+    s.settle();
+    assert!(s.shows("● Miniflux"), "{}", s.text());
+}
+
+#[test]
 fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     let mut s = Screenful::reading(100, 30);
     s.keys(",");
     assert_eq!(s.ui.app.screen(), Screen::Settings);
     let form = s.ui.form.as_mut().unwrap();
-    form.focus = 3;
+    form.focus = 6; // Readeck's token
     s.keys("j");
     s.ui.paste("-pasted\n");
     s.settle();
-    assert!(s.ui.form.as_ref().unwrap().fields[3].text().ends_with("j-pasted"));
+    assert!(s.ui.form.as_ref().unwrap().fields[6].text().ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, 0);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::CHOICE, "round to the top: the server choice");
     s.key(KeyCode::BackTab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, 3);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, 6);
     s.key(KeyCode::Esc);
     assert!(s.ui.form.is_none());
     assert!(s.shows("1 / 8"), "back on the article: {}", s.text());
@@ -304,7 +328,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 
 #[test]
 fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
-    let unset = Status { configured: false, readeck: false };
+    let unset = Status { configured: false, readeck: false, fetches: true };
     let mut s = Screenful::starting(100, 30, unset);
     assert!(s.shows("Welcome to Kletse RSS"), "{}", s.text());
     s.key(KeyCode::Esc);
@@ -645,7 +669,7 @@ fn only_pixels_on_screen_make_a_repaint() {
     let mut sixel = Picker::halfblocks();
     sixel.set_protocol_type(ProtocolType::Sixel);
     let mut pixels = Ui::new(Prefs::default(), true, sixel);
-    pixels.start(Status { configured: true, readeck: true });
+    pixels.start(Status { configured: true, readeck: true, fetches: true });
     let area = Rect::new(0, 0, 100, 60);
     let settle = |ui: &mut Ui, s: &Screenful| {
         loop {
@@ -761,7 +785,7 @@ fn nothing_breaks_in_a_tiny_terminal() {
             s.keys(keys);
             s.keys("J");
         }
-        let mut s = Screenful::starting(width, height, Status { configured: false, readeck: false });
+        let mut s = Screenful::starting(width, height, Status { configured: false, readeck: false, fetches: true });
         s.keys("x");
     }
 }

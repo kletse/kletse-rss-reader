@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::dates;
-use crate::miniflux::{Category, Feed, FeedCount};
+use crate::feeds::{Category, Feed, FeedCount};
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;

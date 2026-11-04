@@ -1,13 +1,13 @@
 //! Minimal Miniflux API client: only what the reader needs.
 //! API docs: https://miniflux.app/docs/api.html
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config;
-use crate::dates;
 use crate::error::{Error, Service, ok_status};
+use crate::feeds::{Counts, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
 
 /// `Debug` leaves out the API key.
@@ -27,82 +27,6 @@ impl std::fmt::Debug for Client {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Category {
-    pub id: i64,
-    pub title: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Feed {
-    pub id: i64,
-    pub title: String,
-    pub category: Category,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct EntryFeed {
-    pub id: i64,
-    pub title: String,
-}
-
-/// Read state of an entry, as Miniflux spells it. (Miniflux also has `removed`, which we never see.)
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum EntryStatus {
-    Read,
-    Unread,
-}
-
-impl EntryStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            EntryStatus::Read => "read",
-            EntryStatus::Unread => "unread",
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Entry {
-    pub id: i64,
-    pub title: String,
-    pub url: String,
-    #[serde(default)]
-    pub author: String,
-    #[serde(default)]
-    pub content: String,
-    pub published_at: String,
-    pub status: EntryStatus,
-    #[serde(default)]
-    pub reading_time: i64,
-    pub feed: EntryFeed,
-    /// Where the server has the entry in its order, in unix milliseconds, when that isn't `published_at`: a
-    /// Google Reader API server pages by its own timestamp (FreshRSS: when the entry arrived). 0 for Miniflux,
-    /// which pages by `published_at`. See `order_millis`.
-    #[serde(default)]
-    pub order_ms: i64,
-    /// Bookmarked on the server (`*`): Miniflux calls it `starred`, the Google Reader API a state tag.
-    #[serde(default)]
-    pub starred: bool,
-}
-
-impl Entry {
-    /// The time the server orders and pages the entry by, in unix milliseconds: what `paging::next_page` starts
-    /// the next page from. `published_at` stays the article's date, for the header.
-    pub fn order_millis(&self) -> Option<i64> {
-        if self.order_ms > 0 { Some(self.order_ms) } else { dates::unix_millis(&self.published_at) }
-    }
-}
-
-/// One page of entries, plus how many the server has in total for the query.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EntryPage {
-    pub total: i64,
-    pub entries: Vec<Entry>,
-}
-
-/// A page of entries when only their ids matter; serde skips the rest (content included).
 #[derive(Deserialize)]
 struct IdPage {
     total: i64,
@@ -127,48 +51,20 @@ struct FetchedContent {
     content: String,
 }
 
-/// What the picker shows: every feed with its category and its unread and read counts. `None` is a count the
-/// server can't give: the Google Reader API has no read counts, and Miniflux's Google Reader integration no
-/// unread ones either. The picker then lists the feed without a number.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct FeedCount {
-    pub feed: Feed,
-    pub unread: Option<i64>,
-    pub read: Option<i64>,
+fn status_name(status: EntryStatus) -> &'static str {
+    match status {
+        EntryStatus::Read => "read",
+        EntryStatus::Unread => "unread",
+    }
 }
 
-/// What the picker shows: every feed with its counts, and how many entries are starred.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Counts {
-    pub feeds: Vec<FeedCount>,
-    /// `None` when the server can't count them; the picker then shows the row without a number.
-    pub starred: Option<i64>,
-}
-
-/// Which set of entries to read.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Selection {
-    All,
-    Category {
-        id: i64,
-    },
-    Feed {
-        id: i64,
-    },
-    /// The starred entries of every feed, read and unread alike: a status doesn't narrow it (see `entries`).
-    Starred,
-}
-
-impl Selection {
-    /// `/entries` scoped to this selection, with `query` (which mustn't be empty) after the `?`.
-    fn entries_path(self, query: &str) -> String {
-        match self {
-            Selection::All => format!("/entries?{query}"),
-            Selection::Category { id } => format!("/categories/{id}/entries?{query}"),
-            Selection::Feed { id } => format!("/feeds/{id}/entries?{query}"),
-            Selection::Starred => format!("/entries?starred=true&{query}"),
-        }
+/// `/entries` scoped to the selection, with `query` (which mustn't be empty) after the `?`.
+fn entries_path(sel: Selection, query: &str) -> String {
+    match sel {
+        Selection::All => format!("/entries?{query}"),
+        Selection::Category { id } => format!("/categories/{id}/entries?{query}"),
+        Selection::Feed { id } => format!("/feeds/{id}/entries?{query}"),
+        Selection::Starred => format!("/entries?starred=true&{query}"),
     }
 }
 
@@ -252,9 +148,9 @@ impl Client {
         };
         let status = match sel {
             Selection::Starred => "status=unread&status=read".to_string(),
-            _ => format!("status={}", status.as_str()),
+            _ => format!("status={}", status_name(status)),
         };
-        let mut path = sel.entries_path(&format!("{status}&order=published_at&direction={direction}&limit={limit}"));
+        let mut path = entries_path(sel, &format!("{status}&order=published_at&direction={direction}&limit={limit}"));
         if past > 0 {
             path.push_str(&format!("&{bound}={past}"));
         }
@@ -282,7 +178,7 @@ impl Client {
     /// The id of the selection's newest unread entry, 0 if there is none. Entry ids only grow, so anything with
     /// a higher id arrived later: that is how "mark all read" leaves alone what you haven't been shown.
     pub async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
-        let path = sel.entries_path("status=unread&order=id&direction=desc&limit=1");
+        let path = entries_path(sel, "status=unread&order=id&direction=desc&limit=1");
         let page: IdPage = self.get_json(&path).await?;
         Ok(page.entries.first().map_or(0, |e| e.id))
     }
@@ -292,7 +188,7 @@ impl Client {
         if up_to < 1 {
             return Ok(0); // Miniflux ignores before_entry_id=0 and would count everything
         }
-        let path = sel.entries_path(&format!("status=unread&before_entry_id={}&limit=1", up_to + 1));
+        let path = entries_path(sel, &format!("status=unread&before_entry_id={}&limit=1", up_to + 1));
         let page: IdPage = self.get_json(&path).await?;
         Ok(page.total)
     }
@@ -306,10 +202,13 @@ impl Client {
         }
         let mut after = 0; // after_entry_id=0 means no lower bound
         loop {
-            let path = sel.entries_path(&format!(
-                "status=unread&order=id&direction=asc&limit={ID_PAGE}&before_entry_id={}&after_entry_id={after}",
-                up_to + 1
-            ));
+            let path = entries_path(
+                sel,
+                &format!(
+                    "status=unread&order=id&direction=asc&limit={ID_PAGE}&before_entry_id={}&after_entry_id={after}",
+                    up_to + 1
+                ),
+            );
             let page: IdPage = self.get_json(&path).await?;
             let ids: Vec<i64> = page.entries.iter().map(|e| e.id).collect();
             // A server that ignored after_entry_id would hand out the same page forever.
@@ -378,7 +277,9 @@ fn merge_counts(feeds: Vec<Feed>, counters: &Counters) -> Vec<FeedCount> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::dates;
     use crate::error::ErrorKind;
+    use crate::feeds::{Category, Entry};
     use std::time::Duration;
     use wiremock::matchers::{body_json, header, method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -411,10 +312,10 @@ mod tests {
         let sel: Selection = serde_json::from_str(r#"{"kind":"starred"}"#).unwrap();
         assert_eq!(sel, Selection::Starred);
         assert!(serde_json::from_str::<Selection>(r#"{"kind":"bookmarks"}"#).is_err());
-        assert_eq!(Selection::All.entries_path("limit=1"), "/entries?limit=1");
-        assert_eq!(Selection::Category { id: 3 }.entries_path("limit=1"), "/categories/3/entries?limit=1");
-        assert_eq!(Selection::Feed { id: 7 }.entries_path("limit=1"), "/feeds/7/entries?limit=1");
-        assert_eq!(Selection::Starred.entries_path("limit=1"), "/entries?starred=true&limit=1");
+        assert_eq!(entries_path(Selection::All, "limit=1"), "/entries?limit=1");
+        assert_eq!(entries_path(Selection::Category { id: 3 }, "limit=1"), "/categories/3/entries?limit=1");
+        assert_eq!(entries_path(Selection::Feed { id: 7 }, "limit=1"), "/feeds/7/entries?limit=1");
+        assert_eq!(entries_path(Selection::Starred, "limit=1"), "/entries?starred=true&limit=1");
     }
 
     #[test]

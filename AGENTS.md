@@ -40,8 +40,8 @@ and how to build it is in the [README](README.md).
   1:1, since the system adds its own momentum.
 - **The shared core** (`miniflux.rs`, `readeck.rs`, `config.rs`, `error.rs`, `demo.rs`) came over from the Tauri
   version unchanged apart from dropping the IPC bits. Its tests use wiremock. `greader.rs` is the Google Reader API
-  client (FreshRSS, Miniflux's integration), giving the same `Entry`/`FeedCount`/`Selection` as
-  `miniflux.rs`; `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
+  client (FreshRSS, Miniflux's integration). Both give the same `Entry`/`FeedCount`/`Selection`, from `feeds.rs`;
+  `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
   (the Google Reader one remembers its login and the stream each hashed feed id stands for). Paging goes by
   `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. What the
   protocol can't do comes back as `Error::Refused`, and `Status::fetches` tells the windows to leave out `r`/`f`

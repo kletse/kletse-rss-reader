@@ -31,7 +31,7 @@ use std::sync::Mutex;
 use crate::config;
 use crate::dates;
 use crate::error::{Error, Service, ok_status};
-use crate::miniflux::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::feeds::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
 
 const READING_LIST: &str = "user/-/state/com.google/reading-list";

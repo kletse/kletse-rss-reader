@@ -15,9 +15,9 @@
 
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
+use crate::feeds::{Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::greader;
 use crate::keys::{self, Action};
-use crate::miniflux::{Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};

@@ -9,8 +9,8 @@ use super::images::{self, Answer, Job};
 use crate::app::{App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, display_title, status_name};
 use crate::config::Server;
 use crate::content::{convert, native};
+use crate::feeds::EntryStatus;
 use crate::keys::Action;
-use crate::miniflux::EntryStatus;
 use crate::prefs::{self, Prefs};
 use crate::theme::Palette;
 use ratatui::crossterm::event::{

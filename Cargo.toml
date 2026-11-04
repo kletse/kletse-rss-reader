@@ -1,6 +1,6 @@
 [package]
 name = "onward"
-version = "5.2.0"
+version = "6.0.0"
 edition = "2024"
 rust-version = "1.88" # let chains
 description = "A one-article-at-a-time reader for Miniflux and Google Reader API servers (FreshRSS, …), for Omarchy and macOS"

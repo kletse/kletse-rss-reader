@@ -8,6 +8,7 @@ use super::images::{self, Job};
 use super::ui::{Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status};
 use crate::backend::Backend;
+use crate::feeds::Capabilities;
 use crate::prefs::Prefs;
 use base64::Engine as _;
 use ratatui::Terminal;
@@ -31,7 +32,11 @@ struct Screenful {
 
 impl Screenful {
     fn new(width: u16, height: u16) -> Self {
-        Self::starting(width, height, Status { configured: true, readeck: true, fetches: true })
+        Self::starting(
+            width,
+            height,
+            Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING },
+        )
     }
 
     fn starting(width: u16, height: u16, status: Status) -> Self {
@@ -328,7 +333,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 
 #[test]
 fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
-    let unset = Status { configured: false, readeck: false, fetches: true };
+    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut s = Screenful::starting(80, 24, unset);
     s.key(KeyCode::BackTab).key(KeyCode::Right);
     for _ in 0..3 {
@@ -346,7 +351,7 @@ fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
 
 #[test]
 fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
-    let unset = Status { configured: false, readeck: false, fetches: true };
+    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut s = Screenful::starting(100, 30, unset);
     assert!(s.shows("Welcome to Onward"), "{}", s.text());
     s.key(KeyCode::Esc);
@@ -711,7 +716,7 @@ fn only_pixels_on_screen_make_a_repaint() {
     let mut sixel = Picker::halfblocks();
     sixel.set_protocol_type(ProtocolType::Sixel);
     let mut pixels = Ui::new(Prefs::default(), true, sixel);
-    pixels.start(Status { configured: true, readeck: true, fetches: true });
+    pixels.start(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING });
     let area = Rect::new(0, 0, 100, 60);
     let settle = |ui: &mut Ui, s: &Screenful| {
         loop {
@@ -827,7 +832,11 @@ fn nothing_breaks_in_a_tiny_terminal() {
             s.keys(keys);
             s.keys("J");
         }
-        let mut s = Screenful::starting(width, height, Status { configured: false, readeck: false, fetches: true });
+        let mut s = Screenful::starting(
+            width,
+            height,
+            Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING },
+        );
         s.keys("x");
     }
 }

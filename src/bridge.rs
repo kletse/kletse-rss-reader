@@ -51,8 +51,8 @@ pub mod qobject {
         #[qproperty(bool, starred_list)]
         #[qproperty(QString, position)]
         #[qproperty(bool, readeck)]
-        // The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
-        #[qproperty(bool, fetches)]
+        // The server refreshes feeds on request (r).
+        #[qproperty(bool, refreshes)]
         // The article. The serial changes with the article or its text, not with a re-render for the theme.
         #[qproperty(i32, article_serial)]
         #[qproperty(QString, title)]
@@ -244,7 +244,7 @@ pub struct ModelRust {
     starred_list: bool,
     position: QString,
     readeck: bool,
-    fetches: bool,
+    refreshes: bool,
     article_serial: i32,
     title: QString,
     url: QString,
@@ -343,7 +343,7 @@ impl Default for ModelRust {
             starred_list: false,
             position: QString::default(),
             readeck: false,
-            fetches: true,
+            refreshes: true,
             article_serial: 0,
             title: QString::default(),
             url: QString::default(),
@@ -651,7 +651,7 @@ impl qobject::Model {
         });
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
-        let fetches = app.fetches();
+        let refreshes = app.capabilities().refresh;
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
@@ -674,7 +674,7 @@ impl qobject::Model {
         self.as_mut().set_viewer_position(qs(&position_in_viewer));
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
-        self.as_mut().set_fetches(fetches);
+        self.as_mut().set_refreshes(refreshes);
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
             Some(t) => {

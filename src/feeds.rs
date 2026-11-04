@@ -104,6 +104,22 @@ pub enum Selection {
     Starred,
 }
 
+/// What the configured server can do, one operation at a time: a kind of server isn't on or off as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Capabilities {
+    /// Fetches the whole article on request (`f`).
+    pub fetch_full: bool,
+    /// Refreshes the feeds on request (`r`).
+    pub refresh: bool,
+    /// Searches entries (`/`). `None` when only trying will tell: Google Reader API servers differ, and the protocol
+    /// has no way to ask.
+    pub search: Option<bool>,
+}
+
+impl Capabilities {
+    pub const EVERYTHING: Self = Self { fetch_full: true, refresh: true, search: Some(true) };
+}
+
 // What the app says when a server can't do something: `Error::Refused`'s words, and the toasts of keys the app
 // already knows won't work.
 

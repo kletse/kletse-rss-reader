@@ -13,6 +13,7 @@ use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsValues, Toa
 use crate::backend::Backend;
 use crate::config::Server;
 use crate::content::{convert, native};
+use crate::feeds::Capabilities;
 use crate::keys;
 use crate::paging::Mode;
 use crate::prefs;
@@ -212,8 +213,7 @@ struct State {
     starred_list: bool,
     position: String,
     readeck: bool,
-    /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
-    fetches: bool,
+    capabilities: Capabilities,
     article: Option<Article>,
     picker: Picker,
     /// The search box starts from the last search.
@@ -532,7 +532,7 @@ impl Core {
             starred_list: app.starred_list(),
             position: app.position(),
             readeck: app.readeck(),
-            fetches: app.fetches(),
+            capabilities: app.capabilities(),
             article,
             picker: Picker {
                 state: picker_state,

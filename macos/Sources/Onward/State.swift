@@ -26,8 +26,7 @@ struct AppState: Decodable {
     let starredList: Bool
     let position: String
     let readeck: Bool
-    /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
-    let fetches: Bool
+    let capabilities: Capabilities
     let article: ArticleInfo?
     let picker: PickerInfo
     /// The search box starts from the last search.
@@ -59,6 +58,14 @@ struct ArticleInfo: Decodable {
     let starred: Bool
     /// Only when converted again; the model keeps the last ones.
     let blocks: [Block]?
+}
+
+/// What the server can do on request. The core also sends `search`, which nothing here reads.
+struct Capabilities: Decodable {
+    /// Fetches the whole article (f).
+    let fetchFull: Bool
+    /// Refreshes the feeds (r).
+    let refresh: Bool
 }
 
 struct PickerInfo: Decodable {

@@ -308,14 +308,14 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         PickerList::Error(message) => Some((message.clone(), ERROR)),
         PickerList::Ready(_) if !items.is_empty() => None,
         PickerList::Ready(_) if history => Some(("Nothing read yet. Press h for unread items.".to_string(), DIM)),
-        PickerList::Ready(_) if ui.app.fetches() => {
+        PickerList::Ready(_) if ui.app.capabilities().refresh => {
             Some(("Nothing unread. Press r to refresh, or h for history.".to_string(), DIM))
         }
         PickerList::Ready(_) => Some(("Nothing unread. Press h for history.".to_string(), DIM)),
     };
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
-    let refresh = if ui.app.fetches() { " · r refresh" } else { "" };
+    let refresh = if ui.app.capabilities().refresh { " · r refresh" } else { "" };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
         .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));

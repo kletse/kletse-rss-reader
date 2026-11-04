@@ -6,7 +6,7 @@ use crate::app::{Effect, Outcome, Saved, SettingsValues, Status};
 use crate::config;
 use crate::demo;
 use crate::error::{Error, RedirectRefused};
-use crate::feeds::{EntryPage, EntryStatus, Selection};
+use crate::feeds::{Capabilities, EntryPage, EntryStatus, Selection};
 use crate::greader;
 use crate::miniflux;
 use crate::paging::PageRequest;
@@ -126,11 +126,7 @@ impl Backend {
         Status {
             configured: self.demo || cfg.is_complete(),
             readeck: self.demo || cfg.readeck.is_some(),
-            fetches: self.demo
-                || match cfg.server() {
-                    config::Server::Miniflux => true,
-                    config::Server::GReader => false,
-                },
+            capabilities: if self.demo { Capabilities::EVERYTHING } else { cfg.server().capabilities() },
         }
     }
 
@@ -719,7 +715,10 @@ mod tests {
             ..config::Config::default()
         };
         backend.set_config(cfg);
-        assert_eq!(backend.status(), Status { configured: true, readeck: false, fetches: false });
+        assert_eq!(
+            backend.status(),
+            Status { configured: true, readeck: false, capabilities: config::Server::GReader.capabilities() }
+        );
         assert_eq!(backend.settings().server, config::Server::GReader);
         assert!(matches!(*backend.server().unwrap(), Server::GReader(_)));
         let same = Arc::ptr_eq(&backend.server().unwrap(), &backend.server().unwrap());
@@ -737,7 +736,10 @@ mod tests {
     #[tokio::test]
     async fn demo_mode_serves_the_sample_data() {
         let backend = Backend::new(true);
-        assert_eq!(backend.status(), Status { configured: true, readeck: true, fetches: true });
+        assert_eq!(
+            backend.status(),
+            Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }
+        );
         let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
             panic!("no feed counts");
         };

@@ -15,7 +15,7 @@
 
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
-use crate::feeds::{self, Counts, Entry, EntryPage, EntryStatus, Selection};
+use crate::feeds::{self, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::keys::{self, Action};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
@@ -90,9 +90,8 @@ pub struct Status {
     pub configured: bool,
     /// Readeck is set up; otherwise hide the bookmark button.
     pub readeck: bool,
-    /// The server fetches on request: the feeds (r) and a whole article (f). Miniflux does; the Google Reader
-    /// API has no way to ask, so the keys only say so and the windows leave out their hints.
-    pub fetches: bool,
+    /// What the server can do: what it can't, the keys only say so and the windows leave out their hints.
+    pub capabilities: Capabilities,
 }
 
 /// What a save of the settings comes to. The feed server is saved; Readeck may not be.
@@ -433,8 +432,8 @@ pub struct App {
     toast: Option<Toast>,
     toast_serial: u64,
     readeck: bool,
-    /// See `Status::fetches`.
-    fetches: bool,
+    /// See `Status::capabilities`.
+    capabilities: Capabilities,
     settings: Option<SettingsForm>,
     /// The form lives in a window of its own: it takes no keys and doesn't replace the article.
     settings_in_window: bool,
@@ -484,7 +483,7 @@ impl App {
             toast: None,
             toast_serial: 0,
             readeck: false,
-            fetches: true,
+            capabilities: Capabilities::EVERYTHING,
             settings: None,
             settings_in_window: false,
             settings_window_open: false,
@@ -498,7 +497,7 @@ impl App {
         let mut fx = Vec::new();
         if status.configured {
             self.readeck = status.readeck;
-            self.fetches = status.fetches;
+            self.capabilities = status.capabilities;
             self.open_picker(Some(Mode::Unread), &mut fx);
         } else {
             self.open_settings(true, &mut fx);
@@ -552,9 +551,8 @@ impl App {
         self.readeck
     }
 
-    /// The server refreshes feeds (r) and fetches whole articles (f) on request: see `Status::fetches`.
-    pub fn fetches(&self) -> bool {
-        self.fetches
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
     }
 
     pub fn prefs(&self) -> Prefs {
@@ -1069,7 +1067,7 @@ impl App {
     /// Fetches the full article the first time, then switches between it and the feed's version.
     fn fetch_full(&mut self, fx: &mut Vec<Effect>) {
         let Some(entry) = self.current() else { return };
-        if !self.fetches {
+        if !self.capabilities.fetch_full {
             self.toast_info(feeds::FETCH_CONTENT_REFUSED);
             return;
         }
@@ -1341,7 +1339,9 @@ impl App {
 
     /// `/`: the search box, from the reader or the picker.
     fn open_search(&mut self) {
-        if matches!(self.overlay, Overlay::None | Overlay::Picker) {
+        if self.capabilities.search == Some(false) {
+            self.toast_info(feeds::NO_SEARCH);
+        } else if matches!(self.overlay, Overlay::None | Overlay::Picker) {
             self.before_search = self.overlay;
             self.overlay = Overlay::Search;
         }
@@ -1504,7 +1504,7 @@ impl App {
         let in_window = std::mem::take(&mut self.settings_window_open);
         if let Some(saved) = saved {
             self.readeck = saved.status.readeck;
-            self.fetches = saved.status.fetches;
+            self.capabilities = saved.status.capabilities;
             self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
@@ -1724,7 +1724,7 @@ impl App {
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
-            Action::PickerRefresh if !self.fetches => self.toast_info(feeds::REFRESH_REFUSED),
+            Action::PickerRefresh if !self.capabilities.refresh => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
                 fx.push(Effect::RefreshFeeds);

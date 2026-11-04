@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::error::Error;
+use crate::feeds::Capabilities;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -53,6 +54,15 @@ impl Server {
         match self {
             Server::Miniflux => "Miniflux",
             Server::GReader => "Google Reader API",
+        }
+    }
+
+    /// What this kind of server can do.
+    pub fn capabilities(self) -> Capabilities {
+        match self {
+            Server::Miniflux => Capabilities::EVERYTHING,
+            // The protocol has no call for the first two.
+            Server::GReader => Capabilities { fetch_full: false, refresh: false, search: None },
         }
     }
 

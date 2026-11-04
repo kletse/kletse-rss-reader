@@ -46,7 +46,7 @@ impl Screenful {
         let mut screen = Self {
             ui,
             terminal: Terminal::new(TestBackend::new(width, height)).unwrap(),
-            backend: Arc::new(Backend::new(true)),
+            backend: Arc::new(Backend::unconfigured(true)),
             runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
             opened: Vec::new(),
             content: None,
@@ -781,7 +781,7 @@ fn png() -> Vec<u8> {
 #[tokio::test]
 async fn pictures_are_decoded_from_data_uris_and_fit_again_for_a_new_size() {
     let src = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png()));
-    let backend = Arc::new(Backend::new(true));
+    let backend = Arc::new(Backend::unconfigured(true));
     let picker = Picker::halfblocks();
     let job = Job::Load { src: src.clone(), size: Size::new(10, 5) };
     let images::Answer::Viewer { result, .. } = images::run(job, Arc::clone(&backend), picker.clone()).await else {
@@ -802,7 +802,7 @@ async fn pictures_are_decoded_from_data_uris_and_fit_again_for_a_new_size() {
 async fn demo_mode_stays_off_the_network_for_images() {
     let job = Job::Load { src: "https://example.com/a.png".into(), size: Size::new(10, 5) };
     let images::Answer::Viewer { result, .. } =
-        images::run(job, Arc::new(Backend::new(true)), Picker::halfblocks()).await
+        images::run(job, Arc::new(Backend::unconfigured(true)), Picker::halfblocks()).await
     else {
         panic!("not the viewer's answer");
     };

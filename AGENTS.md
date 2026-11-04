@@ -43,8 +43,9 @@ and how to build it is in the [README](README.md).
   client (FreshRSS, Miniflux's integration). Both give the same `Entry`/`FeedCount`/`Selection`, from `feeds.rs`;
   `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
   (the Google Reader one remembers its login and the stream each hashed feed id stands for). Paging goes by
-  `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. What the
-  protocol can't do comes back as `Error::Refused`, and `Status::capabilities` (per operation, from
+  `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. Tests
+  make a `Backend` with `unconfigured` or `with_config_dir`: `new` reads the real config. What the protocol can't do
+  comes back as `Error::Refused`, and `Status::capabilities` (per operation, from
   `config::Server::capabilities`) tells the windows to leave out `r`/`f` hints. To try it against a real
   server, FreshRSS runs in Docker; on macOS point the app at a throwaway config with `HOME=<dir>` (`dirs` ignores
   `XDG_CONFIG_HOME` there).

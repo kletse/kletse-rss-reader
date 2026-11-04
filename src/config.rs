@@ -275,8 +275,8 @@ pub fn validate_url(url: &str) -> Result<(), Error> {
 
 /// Reads the config file. No file (or no home directory) is an empty config; a file that can't be read or
 /// parsed is an error that says where, so the settings form can show it instead of quietly starting over.
-pub fn read() -> Result<Config, Error> {
-    path().map_or(Ok(Config::default()), |p| read_from(&p))
+pub fn read(path: Option<&Path>) -> Result<Config, Error> {
+    path.map_or(Ok(Config::default()), read_from)
 }
 
 fn read_from(path: &Path) -> Result<Config, Error> {
@@ -323,10 +323,9 @@ fn broken_name(path: &Path) -> PathBuf {
 }
 
 /// Writes the config (mode 600: it holds API keys).
-pub fn save(config: &Config) -> Result<(), Error> {
-    let path =
-        path().ok_or_else(|| Error::Setup("Could not find your home directory to save the settings in".into()))?;
-    save_to(config, &path)
+pub fn save(config: &Config, path: Option<&Path>) -> Result<(), Error> {
+    let path = path.ok_or_else(|| Error::Setup("Could not find your home directory to save the settings in".into()))?;
+    save_to(config, path)
 }
 
 fn save_to(config: &Config, path: &Path) -> Result<(), Error> {

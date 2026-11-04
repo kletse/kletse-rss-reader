@@ -12,6 +12,7 @@ use crate::miniflux;
 use crate::paging::PageRequest;
 use crate::readeck;
 use crate::server::Server;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -19,6 +20,8 @@ use std::time::Duration;
 const MAX_REDIRECTS: usize = 10;
 
 pub struct Backend {
+    /// Where the config file is, or `None` with no home directory at all.
+    config_path: Option<PathBuf>,
     /// The config can change at runtime (onboarding / settings), hence the lock.
     config: RwLock<config::Config>,
     /// What was wrong with the config file at startup, until a save replaces it.
@@ -85,8 +88,24 @@ impl std::fmt::Debug for Backend {
 
 impl Backend {
     pub fn new(demo: bool) -> Self {
+        Self::reading(demo, config::path())
+    }
+
+    /// One whose `config.toml` is in `dir`, for tests: they mustn't depend on the real config, let alone change it.
+    #[cfg(test)]
+    pub(crate) fn with_config_dir(demo: bool, dir: &std::path::Path) -> Self {
+        Self::reading(demo, Some(dir.join("config.toml")))
+    }
+
+    /// For tests that need no config: an empty one, and nowhere to save one.
+    #[cfg(test)]
+    pub(crate) fn unconfigured(demo: bool) -> Self {
+        Self::with_config_dir(demo, std::path::Path::new("/nonexistent/onward-tests"))
+    }
+
+    fn reading(demo: bool, config_path: Option<PathBuf>) -> Self {
         let http = api_client();
-        let (config, problem) = match config::read() {
+        let (config, problem) = match config::read(config_path.as_deref()) {
             Ok(config) => (config, None),
             Err(e) => {
                 eprintln!("onward: {}", e.message());
@@ -94,6 +113,7 @@ impl Backend {
             }
         };
         Self {
+            config_path,
             config: RwLock::new(config),
             problem: RwLock::new(problem),
             server: Mutex::new(None),
@@ -179,10 +199,9 @@ impl Backend {
         let Checked { cfg, username, readeck_problem } = self.check_settings(values).await?;
         if !self.demo {
             // Writing and flushing the file blocks; keep it off the runtime's few workers.
-            let saved = cfg.clone();
-            tokio::task::spawn_blocking(move || config::save(&saved)).await.map_err(|e| Error::Io {
-                context: "Could not save the settings".into(),
-                source: std::io::Error::other(e),
+            let (saved, path) = (cfg.clone(), self.config_path.clone());
+            tokio::task::spawn_blocking(move || config::save(&saved, path.as_deref())).await.map_err(|e| {
+                Error::Io { context: "Could not save the settings".into(), source: std::io::Error::other(e) }
             })??;
         }
         self.set_config(cfg);
@@ -506,7 +525,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_bytes(*b"png"))
             .mount(&server)
             .await;
-        let backend = Backend::new(false);
+        let backend = Backend::unconfigured(false);
         assert_eq!(backend.fetch_image(&format!("{}/a.png", server.uri())).await.unwrap_or_default(), b"png");
         assert!(backend.fetch_image(&format!("{}/missing.png", server.uri())).await.is_err());
         assert!(backend.fetch_image("file:///etc/passwd").await.is_err());
@@ -525,7 +544,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(302).insert_header("Location", to.as_str()))
             .mount(&site)
             .await;
-        let image = Backend::new(false).fetch_image(&format!("{}/image", site.uri())).await;
+        let image = Backend::unconfigured(false).fetch_image(&format!("{}/image", site.uri())).await;
         assert_eq!(image.unwrap_or_default(), b"png");
     }
 
@@ -575,7 +594,7 @@ mod tests {
     }
 
     async fn save(values: SettingsValues) -> Result<Saved, String> {
-        let backend = Backend::new(true);
+        let backend = Backend::unconfigured(true);
         match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
             Some(Outcome::SettingsSaved(result)) => result,
             _ => Err("no answer".into()),
@@ -595,7 +614,7 @@ mod tests {
     /// A backend that really checks, with this Readeck saved. Tests go through `check_settings`, which writes
     /// nothing: `save_settings` would replace the config of whoever runs them.
     fn live_backend(readeck: Option<config::Readeck>) -> Backend {
-        let backend = Backend { demo: false, ..Backend::new(true) };
+        let backend = Backend::unconfigured(false);
         backend.set_config(config::Config { readeck, ..config::Config::default() });
         backend
     }
@@ -706,7 +725,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let backend = Backend { demo: false, ..Backend::new(true) };
+        let backend = Backend::unconfigured(false);
         let err = backend.save_settings(greader_values(&server.uri(), "wrong")).await.unwrap_err();
         assert_eq!(err.message(), greader::LOGIN_REJECTED);
         let cfg = config::Config {
@@ -727,15 +746,34 @@ mod tests {
 
     #[test]
     fn a_google_reader_config_without_its_section_gets_no_miniflux_client() {
-        let backend = Backend::new(true);
+        let backend = Backend::unconfigured(true);
         let cfg = config::Config { server: Some(config::Server::GReader), ..config::Config::default() };
         let err = backend.client_for(&cfg).unwrap_err();
         assert_eq!(err.message(), config::GREADER_INCOMPLETE);
     }
 
     #[tokio::test]
+    async fn a_backend_reads_and_saves_the_config_in_its_own_dir() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let me = ResponseTemplate::new(200).set_body_json(serde_json::json!({ "username": "ward" }));
+        Mock::given(path("/v1/me")).respond_with(me).mount(&server).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        std::fs::write(&file, "[miniflux]\nurl = \"https://old.example.com\"\napi_key = \"k\"\n").unwrap();
+        let backend = Backend::with_config_dir(false, dir.path());
+        assert!(backend.status().configured);
+        assert_eq!(backend.settings().miniflux_url, "https://old.example.com");
+
+        backend.save_settings(values(&server.uri(), "", "")).await.unwrap();
+        assert!(std::fs::read_to_string(&file).unwrap().contains(&server.uri()));
+    }
+
+    #[tokio::test]
     async fn demo_mode_serves_the_sample_data() {
-        let backend = Backend::new(true);
+        let backend = Backend::unconfigured(true);
         assert_eq!(
             backend.status(),
             Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }
@@ -750,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn demo_mode_stars_in_memory() {
-        let backend = Backend::new(true);
+        let backend = Backend::unconfigured(true);
         let star = Effect::SetStarred { index: 0, id: 1, starred: true };
         let Some(Outcome::StarredSet { id: 1, starred: true, result: Ok(()), .. }) = backend.run(star).await else {
             panic!("not starred");

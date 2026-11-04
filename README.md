@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>One unread article at a time. Oldest first. Keyboard all the way.</b><br>
-  A small desktop reader for <a href="https://miniflux.app">Miniflux</a> or any Google Reader API server (<a href="https://freshrss.org">FreshRSS</a>, Inoreader, BazQux, The Old Reader), for <a href="https://omarchy.org">Omarchy</a> and macOS, and for any terminal.
+  A small desktop reader for <a href="https://miniflux.app">Miniflux</a> or <a href="https://freshrss.org">FreshRSS</a>, for <a href="https://omarchy.org">Omarchy</a> and macOS, and for any terminal.
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 - **Unread first.** Read items don't appear, except ones you passed during this session, so **k** can take you back to undo.
 - **History when you need it.** Press **h** to switch to the items you've already read, newest first, with all the same keys. Press **h** again to go back to unread.
-- **Your feed server does the heavy lifting.** [Miniflux](https://miniflux.app), or any server that speaks the Google Reader API: [FreshRSS](https://freshrss.org), Inoreader, BazQux, The Old Reader, or Miniflux's own Google Reader integration. It fetches the feeds and stores what you've read. The app is a thin client with no local database.
+- **Your feed server does the heavy lifting.** [Miniflux](https://miniflux.app), or over the Google Reader API, [FreshRSS](https://freshrss.org) or Miniflux's own Google Reader integration. It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes, or pick Onward Dark or Onward Light in **Settings** to keep the logo's colours instead. On macOS: light or dark mode, the moment you change it, along with the app icon.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
 - **Star what you want to keep.** Press **\*** to star an article on your feed server; the **Starred** row in the picker reads them again, newest first.
@@ -187,10 +187,10 @@ The first time you start Onward, a welcome screen asks for:
 |                                                     |                                                                                                                                                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Miniflux URL + API key**                          | _Required, or the next row._ In Miniflux: Settings → API Keys → Create a new API key.                                                                                                                                                            |
-| **Google Reader API: URL + username + password**    | _Or this._ Choose **Google Reader API** at the top of the form. FreshRSS: `https://your-freshrss/api/greader.php`, your username and the **API password** from your profile (allow API access in its settings). Miniflux: the server URL, with the Google Reader integration enabled (Settings → Integrations). |
+| **Google Reader API: URL + username + password**    | _Or this._ Choose **Google Reader API** at the top of the form. FreshRSS: `https://your-freshrss/api/greader.php`, your username and the **API password** from your profile (allow API access in its settings). Miniflux: the server URL, with the Google Reader integration enabled, and the username and password you set for it (Settings → Integrations). |
 | **Readeck URL + API token**                         | _Optional._ In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden.                                                                                                      |
 
-**Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
+**Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. Readeck is optional, so it never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
 
 The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`), which you can also edit by hand:
 
@@ -218,7 +218,7 @@ password = "…"     # FreshRSS: the API password, not the one you log in with
 **What a Google Reader API server can't do.** The protocol has no way to ask for a few things, so with one:
 
 - <kbd>f</kbd> (fetch the full article) and <kbd>r</kbd> (refresh the feeds) only say they aren't available; the server refreshes feeds on its own schedule.
-- <kbd>/</kbd> searches only where the server offers search through the API; FreshRSS and Miniflux don't, and the app says so.
+- <kbd>/</kbd> doesn't work: neither FreshRSS nor Miniflux's integration offers search through this API, and the app says so.
 - History has no read counts, so the picker lists every feed there without a number.
 - “Oldest first” is the order the server keeps: when items arrived on FreshRSS, when they were published on Miniflux.
 - Miniflux's integration can't list a category's items (open its feeds one at a time) or give unread counts, and history per feed may show unread items left out.
@@ -266,7 +266,7 @@ src/
   theme/             the Omarchy theme (watched live), the macOS appearance or the logo's colours, as a palette
   server.rs          the feed server: Miniflux or a Google Reader API server, one set of calls
   miniflux.rs        Miniflux API client
-  greader.rs         Google Reader API client (FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's integration)
+  greader.rs         Google Reader API client (FreshRSS, Miniflux's integration)
   readeck.rs         Readeck "save bookmark"
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
   moved.rs           moves the kletse-rss folders to onward on first use

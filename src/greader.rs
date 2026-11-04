@@ -1,5 +1,5 @@
-//! Minimal Google Reader API client: only what the reader needs, as FreshRSS (`https://host/api/greader.php`),
-//! Miniflux's Google Reader integration (`https://host`), Inoreader, BazQux and The Old Reader speak it.
+//! Minimal Google Reader API client: only what the reader needs, as FreshRSS (`https://host/api/greader.php`) and
+//! Miniflux's Google Reader integration (`https://host`) speak it.
 //! The best description is FreshRSS's: https://freshrss.github.io/FreshRSS/en/developers/06_GoogleReader_API.html
 //!
 //! It gives the app the same `Entry`, `FeedCount` and `Selection` the Miniflux client does, so app.rs doesn't
@@ -465,7 +465,7 @@ impl Client {
                         };
                         Category { id: stream_id(&c.id), title }
                     }
-                    // A feed in no folder (Inoreader has those); its category row can't be opened.
+                    // A feed in no folder; its category row can't be opened.
                     None => Category { id: 0, title: "Uncategorized".into() },
                 };
                 let count = unread.as_ref().map(|counts| counts.get(&sub.id).copied().unwrap_or(0));

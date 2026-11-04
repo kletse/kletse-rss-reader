@@ -7,7 +7,7 @@ use std::{error::Error as _, fmt};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Miniflux,
-    /// A Google Reader API server (FreshRSS, Inoreader, …).
+    /// A Google Reader API server (FreshRSS, Miniflux's integration).
     GReader,
     Readeck,
 }

@@ -1,4 +1,4 @@
-# Working on Kletse RSS
+# Working on Onward
 
 Notes for coding agents (and people) picking this up in a new session. Practical notes are here; what the app does
 and how to build it is in the [README](README.md).
@@ -48,15 +48,21 @@ and how to build it is in the [README](README.md).
   hints. To try it against a real server, FreshRSS runs in Docker; on macOS point the app at a throwaway config
   with `HOME=<dir>` (`dirs` ignores `XDG_CONFIG_HOME` there).
 
+## The old name
+
+The app was Kletse RSS until 5.2. `src/moved.rs` moves the `kletse-rss` config and state folders to `onward` on first
+use, `AppDefaults` in `Brand.swift` brings the Mac's defaults over from `be.kletse.rss`, and the PKGBUILD replaces the
+old package. Keep these for a while; everything else uses the new name.
+
 ## Commands
 
 ```bash
 cargo test                                   # ~170 tests, no window
 cargo clippy --all-targets -- -D warnings    # CI is this strict
 cargo fmt
-KLETSE_RSS_DEMO=1 cargo run                  # sample data, no server, nothing marked read
+ONWARD_DEMO=1 cargo run                  # sample data, no server, nothing marked read
 
-KLETSE_RSS_DEMO=1 cargo tui                  # the terminal version
+ONWARD_DEMO=1 cargo tui                  # the terminal version
 cargo test --no-default-features --features tui
 cargo clippy --all-targets --no-default-features --features tui -- -D warnings
 ```
@@ -84,9 +90,9 @@ QML is only checked when it runs: a type that doesn't resolve, a missing propert
 There's no way to click around a live window from an agent session, so the app can screenshot itself:
 
 ```bash
-LANG=C.UTF-8 QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen KLETSE_RSS_DEMO=1 \
-KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter n n" \
-  timeout 30 target/debug/kletse-rss
+LANG=C.UTF-8 QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen ONWARD_DEMO=1 \
+ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="Enter n n" \
+  timeout 30 target/debug/onward
 ```
 
 Once the feeds load, it presses the keys one per 400 ms (default `Enter`, which opens the first row; write a
@@ -100,7 +106,13 @@ Note: the settings form shows the **real** config of the machine it runs on (dem
 so keep that in mind before sharing a screenshot. Prefs (font size, width, order) are read from the real
 `prefs.toml` but never written in demo mode.
 
-`KLETSE_RSS_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
+For the README's shots (`docs/screenshots/`), add `-qwindowgeometry 1200x860` to the command, and set
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` to an empty folder with `omarchy/current/theme` in the state one linked to
+`/usr/share/omarchy/themes/tokyo-night`: that keeps the real config out and gives the theme the caption names.
+Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. The terminal shots are foot captures
+(see below), with tmux inside it to send the keys, so no real picture shows; foot's palette goes under `[colors-dark]`.
+
+`ONWARD_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
 
 ## Traps found so far
 
@@ -125,7 +137,7 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
 - **Key text with Ctrl held is a control character.** `keyName()` falls back to the key code for letters, digits
   and `=`/`+`/`-`. On macOS, Qt reports ⌘ as `ControlModifier` and the Control key as `MetaModifier`.
 - **Linking needs lld.** When `ld` is GNU bfd, cxx-qt's build helper picks `lld` if it's installed and `ld.gold`
-  otherwise. Gold fails with `undefined reference to 'cxx_qt_init_crate_kletse_rss'` (and the other
+  otherwise. Gold fails with `undefined reference to 'cxx_qt_init_crate_onward'` (and the other
   `cxx_qt_init_*`) since `bridge.rs` moved into the library. Arch's `rust` package pulls in `lld`; with rustup,
   install it (`sudo pacman -S lld`). The PKGBUILD lists it in `makedepends`.
 - **Test-only accessors** in `app.rs` are `#[cfg(test)]`. Clippy runs with `-D warnings`, so an unused one fails
@@ -140,9 +152,9 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
   generated code need an inner `#![allow]` on the module.
 - `self.rust_mut()` needs `use cxx_qt::CxxQtType`, and `qt_thread()` needs `use cxx_qt::Threading` plus
   `impl cxx_qt::Threading for Model {}` in the bridge.
-- The build (`build.rs`) uses `CxxQtBuilder::new_qml_module(QmlModule::new("be.kletse.rss").qml_files([...]))`.
+- The build (`build.rs`) uses `CxxQtBuilder::new_qml_module(QmlModule::new("be.kletse.onward").qml_files([...]))`.
   **Every new QML file must be added to the `QML` list in `build.rs`**, and every embedded file (fonts) to
-  `qrc_resources`. They end up under `qrc:/qt/qml/be/kletse/rss/<path>`.
+  `qrc_resources`. They end up under `qrc:/qt/qml/be/kletse/onward/<path>`.
 - When unsure of an API, read the crate source in `~/.cargo/registry/src/*/cxx-qt*-0.10.*`. It is newer than
   most training data.
 
@@ -154,7 +166,9 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
   (`cargo rustc --lib --no-default-features --features ffi --crate-type staticlib`) and the Swift package in
   `macos/` around it, with `MACOSX_DEPLOYMENT_TARGET` matching the package's macOS 15. macOS-only Rust
   (`src/theme/macos.rs`, `src/ffi.rs`) can't be compiled on Linux, so the macOS CI job is its only check. The Qt
-  window still builds and runs on a Mac (`cargo run`, with Homebrew Qt), which is handy for comparing.
+  window still builds and runs on a Mac (`ONWARD_DEMO=1 cargo qt`, with Homebrew Qt), which is handy for comparing: the
+  same QML and core, but the Mac's theme, fonts and scrolling. It shares `prefs.toml` and the servers with the Mac app, so
+  use the demo.
 
 ## The terminal version (`src/tui/`)
 
@@ -180,7 +194,7 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
 - **To see it**, there's no snapshot mode: tmux is one. Run it in a detached session and read the pane:
 
   ```bash
-  tmux new-session -d -s k -x 100 -y 32 "KLETSE_RSS_DEMO=1 LANG=C.UTF-8 target/debug/kletse-rss-tui"
+  tmux new-session -d -s k -x 100 -y 32 "ONWARD_DEMO=1 LANG=C.UTF-8 target/debug/onward-tui"
   tmux send-keys -t k Enter; sleep 0.3; tmux capture-pane -p -t k; tmux kill-session -t k
   ```
 
@@ -212,7 +226,7 @@ Traps here:
 
 ## The macOS app (`macos/`)
 
-- **`src/ffi.rs` is to Swift what `bridge.rs` is to QML.** Three C functions (`macos/Sources/CKletse/kletse.h`):
+- **`src/ffi.rs` is to Swift what `bridge.rs` is to QML.** Three C functions (`macos/Sources/COnward/onward.h`):
   `kr_new`, `kr_send` (a JSON command in, a JSON reply out: whether a key was used, events such as
   `scroll_down` and `quit`, and the whole state) and `kr_free_string`. Effects run on tokio; when an answer is
   in, the core calls `notify` from that thread, and Swift sends `pump` on the main thread, which applies it. The
@@ -225,8 +239,13 @@ Traps here:
 - **SwiftUI only draws and forwards**, like the QML: `Model.swift` holds the last reply. Every key goes through
   an `NSEvent` local monitor (`Keyboard.swift`) to the core first, named as `keyName()` in Main.qml names them,
   with ⌘ as `ctrl` and Control as `meta`. Keys the core doesn't use carry on (⌘Q, typing in a field). Overlays
-  map onto native presentation: the picker and help are sheets, confirm an alert. Their bindings only
+  map onto native presentation: the picker, help and search float in the window, and confirm is an alert. Their bindings only
   ask the core to close them.
+- **Settings is a window beside the reader** (`App::use_settings_window`, set by `ffi.rs` only), the stock `Settings`
+  scene with toolbar tabs. There the form isn't an overlay: the reader keeps working, and the core asks for the window
+  with `Effect::ShowSettings`. Closing it drops the form; a save closes it. Saving checks the servers, so it has a
+  Save button rather than applying as you go. `Keyboard` leaves that window's keys alone. Onboarding stays in the main window.
+- **AppKit won't quit while a sheet is up**, so `Model.quit` ends sheets first, and the Quit menu item goes through it.
 - **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
   are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
   toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
@@ -239,8 +258,21 @@ Traps here:
   isolated to it and traps when tokio calls it; `wake` in `Core.swift` is a top-level function for that reason.
 - **The window must be told to open at launch** (`.defaultLaunchBehavior(.presented)`): macOS remembers a
   `Window` that was closed at the last quit, per bundle id, and otherwise starts with no window at all.
-- **Snapshots work as for Qt:** `KLETSE_RSS_DEMO=1 KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter ?"
-  "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. An open sheet is drawn
+- **The icon and the colours are the logo's.** `packaging/logo/AppIcon.icon` holds a light and a dark version, and
+  `build-app.sh` compiles it with `actool` into `Assets.car`, so macOS 26+ switches by itself. `macos/icon.icns` is the
+  light one for older systems, made by the same `actool` run: redo it when the icon changes. The orange icon in Settings
+  is `AppIcon` in `Brand.swift`. The palette in `src/theme/macos.rs` and `Brand` in Swift must agree. Settings also offers the original look (neutral
+  colours, system accent): Swift then sends `accent` with the theme, and leaves it out for the logo's colours.
+  `ONWARD_APPEARANCE=light` or `dark` forces the appearance for snapshots, and `-colours original` tries that look. On Omarchy the logo takes
+  the accent, and Settings offers System (the default, the live theme) or Onward Dark and Light (`Prefs::colours`,
+  applied by `Theme::in_colours` in bridge.rs; the font and rounding stay Omarchy's). A terminal stays on its ANSI colours.
+- **The picker, the keys and the search box float in the window (`Floating`), they aren't sheets.** A sheet disables the
+  red button (AppKit undoes `isEnabled` on it), ignores clicks beside it and refuses a quit from the Dock. The confirm
+  alert is still one, briefly.
+- **Don't branch on a setting at the root of a window.** `if`/`else` there makes two views, so a change tears the content
+  down, and for Settings `onDisappear` then closes the form. `BrandStyle` keeps one modifier chain for this reason.
+- **Snapshots work as for Qt:** `ONWARD_DEMO=1 ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="Enter ?"
+  "packaging/Onward.app/Contents/MacOS/onward"`. The window really opens on screen. An open sheet is drawn
   over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap. If running the binary
   directly hangs with no window (seen from an agent's shell, with the installed app also running), launch the bundle
-  with `open -n -W --env KLETSE_RSS_DEMO=1 --env KLETSE_RSS_SNAPSHOT=… --env "KLETSE_RSS_SNAPSHOT_KEYS=…" "packaging/Kletse RSS.app"`.
+  with `open -n -W --env ONWARD_DEMO=1 --env ONWARD_SNAPSHOT=… --env "ONWARD_SNAPSHOT_KEYS=…" "packaging/Onward.app"`.

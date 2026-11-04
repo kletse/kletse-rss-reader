@@ -15,6 +15,8 @@ use unicode_width::UnicodeWidthStr;
 
 const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 const ACCENTED: Style = Style::new().fg(ACCENT);
+/// The logo, as near as text gets: the articles to come and the one you're reading.
+const LOGO: &str = "· • O";
 const ERROR: Style = Style::new().fg(Color::Red);
 
 pub fn draw(ui: &mut Ui, frame: &mut Frame) {
@@ -63,7 +65,8 @@ fn top_bar(ui: &Ui, frame: &mut Frame, area: Rect) {
     }
     let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1).intersection(area);
     let label = if app.selection_label().is_empty() { "Feeds" } else { app.selection_label() };
-    let mut left = vec![Span::raw("☰ "), Span::raw(fitted(label, usize::from(area.width) * 2 / 5))];
+    let mut left =
+        vec![Span::styled(LOGO, ACCENTED), Span::raw(" "), Span::raw(fitted(label, usize::from(area.width) * 2 / 5))];
     if app.searching() {
         left.extend([Span::raw("  "), Span::styled("SEARCH", ACCENTED)]);
     } else if app.starred_list() {
@@ -89,19 +92,23 @@ fn body(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     match ui.app.screen() {
         Screen::Article => reader(ui, frame, area),
         Screen::Settings => settings(ui, frame, area),
-        Screen::Loading => message(ui, frame, "", "Loading…"),
+        Screen::Loading => message(ui, frame, "", "", "Loading…"),
         Screen::End => {
             let (title, hint) = (ui.app.end_title(), ui.app.end_hint());
-            message(ui, frame, title, &hint);
+            message(ui, frame, LOGO, title, &hint);
         }
         Screen::Empty => {}
     }
 }
 
-fn message(ui: &Ui, frame: &mut Frame, title: &str, text: &str) {
+fn message(ui: &Ui, frame: &mut Frame, logo: &str, title: &str, text: &str) {
     let column = ui.column;
     let width = usize::from(column.width);
     let mut rows = vec![Row::default()];
+    if !logo.is_empty() {
+        rows.extend(article::plain(logo, ACCENTED, width));
+        rows.push(Row::default());
+    }
     if !title.is_empty() {
         rows.extend(article::plain(title, BOLD, width));
         rows.push(Row::default());
@@ -157,7 +164,7 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let w = usize::from(width);
 
     let mut rows = vec![Row::default()];
-    let title = if first_run { "Welcome to Kletse RSS" } else { "Settings" };
+    let title = if first_run { "Welcome to Onward" } else { "Settings" };
     rows.extend(article::plain(title, BOLD, w));
     rows.push(Row::default());
     let intro = if first_run {
@@ -303,7 +310,7 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let swap = if history { "h unread" } else { "h history" };
     let refresh = if ui.app.fetches() { " · r refresh" } else { "" };
     let mut block = Block::bordered()
-        .title(Line::styled(if history { " History " } else { " Feeds " }, BOLD))
+        .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
         .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));

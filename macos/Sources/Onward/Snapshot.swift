@@ -1,4 +1,4 @@
-// KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in, press KLETSE_RSS_SNAPSHOT_KEYS (default "Enter", which
+// ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (default "Enter", which
 // opens the first row; a space is written "Space"), one per 400 ms, give images 3 s, save the window to the
 // PNG and quit. As the Qt version does. The window is 1200×860 for it, the size of the README's screenshots, and
 // a sheet that is open is drawn over it where it sits (the image grows to take in anything that hangs out of
@@ -9,8 +9,8 @@ import AppKit
 enum Snapshot {
     static func startIfAsked(model: Model) {
         let env = ProcessInfo.processInfo.environment
-        guard let path = env["KLETSE_RSS_SNAPSHOT"], !path.isEmpty else { return }
-        let keys = (env["KLETSE_RSS_SNAPSHOT_KEYS"] ?? "Enter").split(separator: " ").map(String.init)
+        guard let path = env["ONWARD_SNAPSHOT"], !path.isEmpty else { return }
+        let keys = (env["ONWARD_SNAPSHOT_KEYS"] ?? "Enter").split(separator: " ").map(String.init)
         Task { @MainActor in
             while model.state?.picker.state != "ready" && model.state?.overlay != "onboarding" || main() == nil {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -35,6 +35,7 @@ enum Snapshot {
     private static func main() -> NSWindow? {
         NSApp.windows.first {
             $0.isVisible && $0.styleMask.contains(.titled) && $0.sheetParent == nil && $0.frame.width >= 360
+                && $0 !== Keyboard.settingsWindow
         }
     }
 

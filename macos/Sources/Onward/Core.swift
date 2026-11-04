@@ -1,6 +1,6 @@
 // The Rust core (src/ffi.rs): every command goes in as JSON, and what the window shows comes back as JSON.
 // Server calls answer later: the core then asks for a `pump` from the main thread, which applies them.
-import CKletse
+import COnward
 import Foundation
 
 @MainActor
@@ -26,7 +26,7 @@ final class Core {
         do {
             return try decoder.decode(Reply.self, from: reply)
         } catch {
-            FileHandle.standardError.write(Data("kletse-rss: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("onward: \(error)\n".utf8))
             return nil
         }
     }

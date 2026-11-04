@@ -25,14 +25,14 @@ use std::sync::{Arc, LazyLock, mpsc};
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        .thread_name("kletse-rss-io")
+        .thread_name("onward-io")
         .enable_all()
         .build()
         .expect("a tokio runtime starts on any supported platform")
 });
 
-/// `KLETSE_RSS_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
-static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("KLETSE_RSS_DEBUG").is_ok_and(|v| v == "1"));
+/// `ONWARD_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
+static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("ONWARD_DEBUG").is_ok_and(|v| v == "1"));
 
 /// Called from a background thread when answers are waiting: Swift then sends `pump` on the main thread.
 pub type Notify = extern "C" fn(ctx: *mut c_void);
@@ -69,7 +69,7 @@ struct Rendered {
 struct Prefetched {
     key: Rendered,
     blocks: Vec<native::NativeBlock>,
-    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    /// What the converter dropped, for `ONWARD_DEBUG=1`.
     lost: String,
     images: Vec<String>,
 }
@@ -109,12 +109,13 @@ impl std::fmt::Debug for Core {
 enum Command {
     Start {
         dark: bool,
-        accent: String,
+        /// The system accent, for the original look; left out, the logo's colours.
+        accent: Option<String>,
     },
-    /// The system appearance or accent colour changed.
+    /// The system appearance or accent colour changed, or the choice of colours.
     Theme {
         dark: bool,
-        accent: String,
+        accent: Option<String>,
     },
     Key {
         key: String,
@@ -312,10 +313,12 @@ fn hash(value: &impl Hash) -> u64 {
 
 impl Core {
     fn new(waker: Waker) -> Self {
-        let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+        let demo = std::env::var("ONWARD_DEMO").is_ok_and(|v| v == "1");
         let (answers, waiting) = mpsc::channel();
+        let mut app = App::new(prefs::load(), true);
+        app.use_settings_window();
         Self {
-            app: App::new(prefs::load(), true),
+            app,
             backend: Arc::new(Backend::new(demo)),
             palette: Palette::default(),
             answers,
@@ -331,7 +334,7 @@ impl Core {
         }
     }
 
-    fn set_theme(&mut self, dark: bool, accent: &str) {
+    fn set_theme(&mut self, dark: bool, accent: Option<&str>) {
         self.palette = Palette::from(&theme::macos(dark, accent));
     }
 
@@ -340,14 +343,14 @@ impl Core {
         let mut used = true;
         let fx = match command {
             Command::Start { dark, accent } => {
-                self.set_theme(dark, &accent);
+                self.set_theme(dark, accent.as_deref());
                 // Loading the grammars takes a moment; better now than on the first code block.
                 std::thread::spawn(crate::content::highlight::warm_up);
                 let status = self.backend.status();
                 self.app.start(status)
             }
             Command::Theme { dark, accent } => {
-                self.set_theme(dark, &accent);
+                self.set_theme(dark, accent.as_deref());
                 Vec::new()
             }
             Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom } => {
@@ -435,6 +438,7 @@ impl Core {
                 }
                 Effect::ScrollPage { up } => events.push(if up { "scroll_up" } else { "scroll_down" }),
                 Effect::Quit => events.push("quit"),
+                Effect::ShowSettings => events.push("show_settings"),
                 effect => {
                     let backend = Arc::clone(&self.backend);
                     let answers = self.answers.clone();
@@ -565,7 +569,7 @@ impl Core {
                 }
             };
             if *DEBUG && !lost.is_empty() {
-                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+                eprintln!("onward: entry {}: {lost}", entry.id);
             }
             self.rendered = Some(key);
             if previous.is_none_or(|p| p.id != key.id || p.content != key.content) {
@@ -683,10 +687,10 @@ mod tests {
     #[test]
     fn the_demo_opens_through_the_c_interface() {
         // SAFETY: setting the variable before anything reads it; no other test in this module reads it.
-        unsafe { std::env::set_var("KLETSE_RSS_DEMO", "1") };
+        unsafe { std::env::set_var("ONWARD_DEMO", "1") };
         let core = kr_new(count, std::ptr::null_mut());
         assert!(send(core, r#"{"cmd":"nonsense"}"#)["error"].is_string());
-        let started = send(core, r##"{"cmd":"start","dark":true,"accent":"#0a84ff"}"##);
+        let started = send(core, r#"{"cmd":"start","dark":true}"#);
         assert_eq!(started["state"]["overlay"], "picker");
 
         let mut state = started["state"].clone();

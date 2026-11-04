@@ -214,6 +214,7 @@ Flickable {
         id: end
         Message {
             ui: reader.ui
+            logo: true
             title: reader.model.endTitle
             text: reader.model.endHint
         }

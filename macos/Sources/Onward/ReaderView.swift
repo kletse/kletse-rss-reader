@@ -49,7 +49,7 @@ struct ReaderView: View {
                 .padding(.top, 120)
         case "end":
             ContentUnavailableView {
-                Label(model.state?.endTitle ?? "", systemImage: "checkmark.circle")
+                Label { Text(model.state?.endTitle ?? "") } icon: { LogoMark() }
             } description: {
                 Text(model.state?.endHint ?? "")
             }

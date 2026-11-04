@@ -4,14 +4,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "KletseRSS",
+    name: "Onward",
     platforms: [.macOS(.v15)],
     targets: [
-        .systemLibrary(name: "CKletse", path: "Sources/CKletse"),
+        .systemLibrary(name: "COnward", path: "Sources/COnward"),
         .executableTarget(
-            name: "KletseRSS",
-            dependencies: ["CKletse"],
-            path: "Sources/KletseRSS",
+            name: "Onward",
+            dependencies: ["COnward"],
+            path: "Sources/Onward",
             linkerSettings: [.unsafeFlags(["-L", Context.packageDirectory + "/../target/release"])]
         ),
     ]

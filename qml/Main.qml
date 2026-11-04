@@ -4,7 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtCore as Core
-import be.kletse.rss
+import be.kletse.onward
 
 ApplicationWindow {
     id: win
@@ -45,17 +45,17 @@ ApplicationWindow {
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
     }
 
-    // macOS: follow the system appearance and accent colour (it has no event for the accent, so on focus too).
+    // macOS: follow the system appearance.
     onActiveChanged: if (active) model.recheckTheme()
     Connections {
         target: Application.styleHints
         function onColorSchemeChanged() { model.recheckTheme() }
     }
 
-    FontLoader { id: literata; source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/literata-latin-wght-normal.woff2" }
-    FontLoader { source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/literata-latin-wght-italic.woff2" }
-    FontLoader { id: inter; source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/inter-latin-wght-normal.woff2" }
-    FontLoader { source: "qrc:/qt/qml/be/kletse/rss/assets/fonts/inter-latin-wght-italic.woff2" }
+    FontLoader { id: literata; source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/literata-latin-wght-normal.woff2" }
+    FontLoader { source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/literata-latin-wght-italic.woff2" }
+    FontLoader { id: inter; source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/inter-latin-wght-normal.woff2" }
+    FontLoader { source: "qrc:/qt/qml/be/kletse/onward/assets/fonts/inter-latin-wght-italic.woff2" }
 
     // Mac apps reopen where they were left; under a tiling compositor the window manager decides.
     Core.Settings {
@@ -205,7 +205,7 @@ ApplicationWindow {
         return ""
     }
 
-    // KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in, press KLETSE_RSS_SNAPSHOT_KEYS (Enter: open the first
+    // ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (Enter: open the first
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
     // loads and draws.
     Timer {
@@ -213,7 +213,8 @@ ApplicationWindow {
         property var pending: null
         interval: 400
         repeat: true
-        running: model.snapshotPath !== "" && model.pickerState === "ready" && pending === null
+        running: model.snapshotPath !== "" && (model.pickerState === "ready" || model.overlay === "onboarding")
+                 && pending === null
         onTriggered: {
             // One key per tick, so what a key starts (opening a selection) is done before the next one.
             if (pending === null)

@@ -2,6 +2,8 @@
 //! names them ("j", "A", "ArrowDown", " ", "Escape"); the QML side translates Qt's key events into these names.
 //! A test keeps the help and the keymaps from drifting apart.
 
+use crate::paging::Mode;
+
 /// What a key does. Some depend on where you are (`Space`, `Enter`); the app decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -31,6 +33,8 @@ pub enum Action {
     /// `v`: the article's images, one at a time.
     ViewImages,
     ToggleMode,
+    /// The picker's switch: unread or history, staying put when it's on that one already.
+    PickerMode(Mode),
     OpenPicker,
     Narrower,
     Wider,
@@ -82,6 +86,7 @@ pub const PICKER_KEYS: Keymap = &[
     (&["h"], Action::ToggleMode),
     (&["?"], Action::Help),
     (&["Escape", "g", "p", "Tab"], Action::PickerClose),
+    (&["q"], Action::Quit),
 ];
 
 /// Ctrl combinations (⌘ on macOS: Qt reports ⌘ as Ctrl there).
@@ -98,7 +103,9 @@ pub fn button_action(button: &str) -> Option<Action> {
         "prev" => Action::Prev,
         "picker" => Action::OpenPicker,
         "readeck" => Action::SaveToReadeck,
-        "mode" => Action::ToggleMode,
+        "unread" => Action::PickerMode(Mode::Unread),
+        "history" => Action::PickerMode(Mode::History),
+        "refresh" => Action::PickerRefresh,
         "settings" => Action::Settings,
         "help" => Action::Help,
         "search" => Action::Search,
@@ -194,7 +201,7 @@ pub const HELP: &[HelpRow] = &[
     row(&[Mod("0")], "reset font size and width"),
     HelpRow { keys: &[Plain(",")], action: "settings", place: Where::Both, picker_note: None },
     HelpRow { keys: &[Plain("?")], action: "this help", place: Where::Both, picker_note: None },
-    row(&[Plain("q")], "quit"),
+    HelpRow { keys: &[Plain("q")], action: "quit", place: Where::Both, picker_note: None },
 ];
 
 /// How the help (and the README) names a key: arrows as glyphs, Esc, Space, a real minus sign.

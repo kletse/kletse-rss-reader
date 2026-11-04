@@ -1,8 +1,11 @@
 //! The look of the app comes from the desktop it runs on: the live Omarchy theme on Linux,
-//! the system appearance (light/dark + accent colour) on macOS. Both fill the same `Theme`,
+//! the system appearance (light or dark) on macOS. Both fill the same `Theme`,
 //! which `Palette` turns into the colours the window and the article renderer use.
 
+use crate::prefs::Colours;
 use std::{collections::HashMap, sync::Arc};
+
+mod onward;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -24,6 +27,18 @@ pub struct Theme {
     pub font: Option<String>,
 }
 
+impl Theme {
+    /// This theme in the chosen colours. The font and the rounding stay the desktop's, whatever the colours.
+    pub fn in_colours(mut self, colours: Colours) -> Self {
+        match colours {
+            Colours::System => {}
+            Colours::OnwardDark => self.colors = onward::colors(true),
+            Colours::OnwardLight => self.colors = onward::colors(false),
+        }
+        self
+    }
+}
+
 /// Called with the new theme, from a background thread, when it changes.
 pub type OnChange = Arc<dyn Fn(Theme) + Send + Sync>;
 
@@ -32,11 +47,11 @@ pub fn load() -> Theme {
     provider::load()
 }
 
-/// The macOS theme for an appearance and accent colour (`#rrggbb`). The native app reads both from AppKit,
-/// which knows them better than `defaults` does, and is told when they change.
+/// The macOS theme for an appearance: the logo's colours, or with a system accent (`#rrggbb`) the original look. The
+/// native app reads both from AppKit, which knows them better than `defaults` does, and is told when they change.
 #[cfg(target_os = "macos")]
-pub fn macos(dark: bool, accent: &str) -> Theme {
-    provider::theme(dark, accent)
+pub fn macos(dark: bool, system_accent: Option<&str>) -> Theme {
+    provider::theme(dark, system_accent)
 }
 
 /// Follows theme changes for as long as the returned watcher lives.

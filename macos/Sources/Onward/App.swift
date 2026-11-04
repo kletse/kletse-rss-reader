@@ -1,16 +1,21 @@
-// Kletse RSS for macOS: one window, its toolbar and the menus. Everything it shows comes from the Rust core
+// Onward for macOS: the reader's window, its toolbar, the menus and the Settings window. Everything it shows comes from the Rust core
 // (src/ffi.rs) through `Model`; keys and clicks go back to it.
 import AppKit
 import SwiftUI
 
 @main
-struct KletseApp: App {
+struct OnwardApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
+    init() {
+        AppDefaults.moveFromOldName()
+    }
+
     var body: some Scene {
-        Window("Kletse RSS", id: "main") {
+        Window("Onward", id: "main") {
             ContentView()
                 .frame(minWidth: 360, minHeight: 300)
+                .modifier(BrandStyle())
         }
         .defaultSize(width: 900, height: 1000)
         // Also when it was closed at the last quit; there is only this one window.
@@ -20,6 +25,7 @@ struct KletseApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { Model.shared.press("settings") }
                     .keyboardShortcut(",")
+                    .disabled(Model.shared.state?.overlay == "onboarding")
             }
             // Single keys can't be menu shortcuts: AppKit would take them from the settings fields too.
             CommandMenu("Article") {
@@ -42,16 +48,35 @@ struct KletseApp: App {
                 Button("View Images (v)") { Model.shared.key("v") }
                 Button("Oldest or Newest First (s)") { Model.shared.press("order") }
             }
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Onward") { Model.shared.quit() }
+                    .keyboardShortcut("q")
+            }
             CommandGroup(replacing: .help) {
                 Button("Keyboard Shortcuts (?)") { Model.shared.press("help") }
             }
         }
+
+        Settings {
+            SettingsWindow(model: Model.shared)
+                .modifier(BrandStyle())
+        }
+        .windowResizability(.contentSize)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { Model.shared.start() }
+        MainActor.assumeIsolated {
+            // For screenshots: the system's own setting can't be overridden from outside.
+            switch ProcessInfo.processInfo.environment["ONWARD_APPEARANCE"] {
+            case "light": NSApp.appearance = NSAppearance(named: .aqua)
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+            default: break
+            }
+            AppIcon.applyAtLaunch()
+            Model.shared.start()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

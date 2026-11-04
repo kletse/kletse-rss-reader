@@ -1,6 +1,6 @@
 //! Runs the app's server effects: the feed server (Miniflux or a Google Reader API server), Readeck, the config
 //! file and the browser. The answer to each comes
-//! back as an `Outcome`. With `KLETSE_RSS_DEMO=1` it serves the built-in sample data and never touches a server.
+//! back as an `Outcome`. With `ONWARD_DEMO=1` it serves the built-in sample data and never touches a server.
 
 use crate::app::{Effect, Outcome, SettingsValues, Status};
 use crate::config;
@@ -37,14 +37,14 @@ impl std::fmt::Debug for Backend {
 impl Backend {
     pub fn new(demo: bool) -> Self {
         let http = reqwest::Client::builder()
-            .user_agent(concat!("kletse-rss/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("onward/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(30))
             .build()
             .expect("the HTTP client only needs built-in TLS roots");
         let (config, problem) = match config::read() {
             Ok(config) => (config, None),
             Err(e) => {
-                eprintln!("kletse-rss: {}", e.message());
+                eprintln!("onward: {}", e.message());
                 (config::Config::default(), Some(e.message()))
             }
         };
@@ -69,7 +69,7 @@ impl Backend {
         *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    /// `KLETSE_RSS_DEMO=1`: sample data, and nothing is saved, prefs included.
+    /// `ONWARD_DEMO=1`: sample data, and nothing is saved, prefs included.
     pub fn demo(&self) -> bool {
         self.demo
     }
@@ -352,7 +352,7 @@ impl Backend {
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
             Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
-            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => return None,
+            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings => return None,
         })
     }
 

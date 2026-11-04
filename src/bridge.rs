@@ -11,7 +11,10 @@ use crate::content::convert;
 use crate::keys;
 use crate::paging::Mode;
 use crate::theme::{self, Palette};
-use crate::{prefs, theme::Theme};
+use crate::{
+    prefs::{self, Colours},
+    theme::Theme,
+};
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use std::hash::{Hash, Hasher};
@@ -104,6 +107,8 @@ pub mod qobject {
         // Prefs
         #[qproperty(i32, article_size)]
         #[qproperty(i32, width_factor)]
+        // "system", "onward-dark" or "onward-light".
+        #[qproperty(QString, colours)]
         // Theme
         #[qproperty(QString, bg)]
         #[qproperty(QString, bg_light)]
@@ -120,7 +125,7 @@ pub mod qobject {
         #[qproperty(i32, rounding)]
         #[qproperty(bool, dark)]
         #[qproperty(bool, mac)]
-        // `KLETSE_RSS_SNAPSHOT`: render the first article to this PNG and quit (screenshots, the CI smoke test).
+        // `ONWARD_SNAPSHOT`: render the first article to this PNG and quit (screenshots, the CI smoke test).
         #[qproperty(QString, snapshot_path)]
         // Keys to press first, space-separated ("Enter n ?"); by default Enter opens the first row of the picker.
         #[qproperty(QString, snapshot_keys)]
@@ -140,7 +145,8 @@ pub mod qobject {
             typing: bool,
             at_bottom: bool,
         ) -> bool;
-        /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help", "search", "order".
+        /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
+        /// "search", "order".
         #[qinvokable]
         fn press(self: Pin<&mut Model>, button: &QString);
         #[qinvokable]
@@ -181,6 +187,8 @@ pub mod qobject {
         /// The window regained focus or the system appearance changed (macOS follows the theme this way).
         #[qinvokable]
         fn recheck_theme(self: Pin<&mut Model>);
+        #[qinvokable]
+        fn choose_colours(self: Pin<&mut Model>, name: &QString);
 
         #[qsignal]
         fn scroll_page(self: Pin<&mut Model>, up: bool);
@@ -194,14 +202,14 @@ pub mod qobject {
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        .thread_name("kletse-rss-io")
+        .thread_name("onward-io")
         .enable_all()
         .build()
         .expect("a tokio runtime starts on any supported platform")
 });
 
-/// `KLETSE_RSS_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
-static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("KLETSE_RSS_DEBUG").is_ok_and(|v| v == "1"));
+/// `ONWARD_DEBUG=1`: say on stderr what an article had that the window can't show (inline SVG, MathML).
+static DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("ONWARD_DEBUG").is_ok_and(|v| v == "1"));
 
 /// What the article on screen was rendered from, to render it again only when that changes.
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -215,7 +223,7 @@ struct Rendered {
 struct Prefetched {
     key: Rendered,
     json: String,
-    /// What the converter dropped, for `KLETSE_RSS_DEBUG=1`.
+    /// What the converter dropped, for `ONWARD_DEBUG=1`.
     lost: String,
     images: Vec<String>,
 }
@@ -275,6 +283,7 @@ pub struct ModelRust {
     readeck_token: QString,
     article_size: i32,
     width_factor: i32,
+    colours: QString,
     bg: QString,
     bg_light: QString,
     bg_dark: QString,
@@ -296,6 +305,8 @@ pub struct ModelRust {
     app: App,
     backend: Arc<Backend>,
     palette: Palette,
+    /// The desktop's theme as last heard, for switching back to it.
+    system_theme: Theme,
     watcher: Option<theme::Watcher>,
     rendered: Option<Rendered>,
     prefetched: Option<Prefetched>,
@@ -314,7 +325,7 @@ impl std::fmt::Debug for ModelRust {
 impl Default for ModelRust {
     fn default() -> Self {
         let mac = cfg!(target_os = "macos");
-        let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
+        let demo = std::env::var("ONWARD_DEMO").is_ok_and(|v| v == "1");
         Self {
             screen: QString::from("empty"),
             end_title: QString::default(),
@@ -370,6 +381,7 @@ impl Default for ModelRust {
             readeck_token: QString::default(),
             article_size: 18,
             width_factor: 40,
+            colours: QString::default(),
             bg: QString::default(),
             bg_light: QString::default(),
             bg_dark: QString::default(),
@@ -385,11 +397,12 @@ impl Default for ModelRust {
             rounding: 0,
             dark: true,
             mac,
-            snapshot_path: QString::from(&std::env::var("KLETSE_RSS_SNAPSHOT").unwrap_or_default()),
-            snapshot_keys: QString::from(&std::env::var("KLETSE_RSS_SNAPSHOT_KEYS").unwrap_or_else(|_| "Enter".into())),
+            snapshot_path: QString::from(&std::env::var("ONWARD_SNAPSHOT").unwrap_or_default()),
+            snapshot_keys: QString::from(&std::env::var("ONWARD_SNAPSHOT_KEYS").unwrap_or_else(|_| "Enter".into())),
             app: App::new(prefs::load(), mac),
             backend: Arc::new(Backend::new(demo)),
             palette: Palette::default(),
+            system_theme: Theme::default(),
             watcher: None,
             rendered: None,
             prefetched: None,
@@ -442,7 +455,9 @@ impl qobject::Model {
     }
 
     fn apply_theme(mut self: Pin<&mut Self>, theme: Theme) {
-        let p = Palette::from(&theme);
+        self.as_mut().state().system_theme = theme.clone();
+        let colours = self.as_mut().state().app.prefs().colours;
+        let p = Palette::from(&theme.in_colours(colours));
         self.as_mut().set_bg(qs(&p.bg));
         self.as_mut().set_bg_light(qs(&p.bg_light));
         self.as_mut().set_bg_dark(qs(&p.bg_dark));
@@ -460,6 +475,14 @@ impl qobject::Model {
         self.as_mut().state().palette = p;
         // Code colours and link colours are baked into the rendered article.
         self.sync();
+    }
+
+    pub fn choose_colours(mut self: Pin<&mut Self>, name: &QString) {
+        let Some(colours) = Colours::from_name(&name.to_string()) else { return };
+        let fx = self.as_mut().state().app.set_colours(colours);
+        let theme = self.as_mut().state().system_theme.clone();
+        self.as_mut().apply_theme(theme);
+        self.run(fx);
     }
 
     pub fn recheck_theme(mut self: Pin<&mut Self>) {
@@ -651,6 +674,7 @@ impl qobject::Model {
             }
             None => self.as_mut().set_toast_message(QString::default()),
         }
+        self.as_mut().set_colours(qs(prefs.colours.name()));
         self.as_mut().set_article_size(prefs.font_size);
         self.set_width_factor(prefs.width_factor);
     }
@@ -672,7 +696,7 @@ impl qobject::Model {
                 }
             };
             if *DEBUG && !lost.is_empty() {
-                eprintln!("kletse-rss: entry {}: {lost}", entry.id);
+                eprintln!("onward: entry {}: {lost}", entry.id);
             }
             s.rendered = Some(key);
             let new_article = previous.is_none_or(|p| p.id != key.id || p.content != key.content);

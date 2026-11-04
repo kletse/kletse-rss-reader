@@ -1,0 +1,47 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.94902,0.93725,0.90196,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.11765,0.07451,0.05098,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "glyph",
+          "image-name-specializations": [
+            {
+              "value": "light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "dark.png"
+            }
+          ],
+          "glass": false
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

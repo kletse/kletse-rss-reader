@@ -35,14 +35,14 @@ jobs:
           QT_FATAL_WARNINGS: "1"
           QT_FORCE_STDERR_LOGGING: "1"
           LANG: C.UTF-8
-          KLETSE_RSS_DEMO: "1"
+          ONWARD_DEMO: "1"
         run: |
           cargo build --locked
           for keys in "Enter" "Enter n n" "Enter ?" "Enter ," "h Enter" "Enter A" "Enter n n n n n n n n" \
               "Enter /" "Enter v" "Enter n p A" "j j j Enter j" "Enter *" "j Enter"; do
             echo "== $keys"
             rm -f /tmp/shot.png
-            KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/kletse-rss
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
             test -s /tmp/shot.png
           done
       - uses: actions/upload-artifact@v4

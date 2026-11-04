@@ -12,6 +12,7 @@ const QML: &[&str] = &[
     "qml/Blocks.qml",
     "qml/RichText.qml",
     "qml/Message.qml",
+    "qml/Logo.qml",
     "qml/Picker.qml",
     "qml/Help.qml",
     "qml/Confirm.qml",
@@ -37,7 +38,7 @@ fn main() {}
 
 #[cfg(feature = "qt")]
 fn main() {
-    CxxQtBuilder::new_qml_module(QmlModule::new("be.kletse.rss").qml_files(QML.iter().copied()))
+    CxxQtBuilder::new_qml_module(QmlModule::new("be.kletse.onward").qml_files(QML.iter().copied()))
         .qt_module("Network")
         .qt_module("Quick")
         .qrc_resources(FONTS.iter().copied())

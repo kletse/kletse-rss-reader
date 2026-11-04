@@ -151,7 +151,8 @@ impl Harness {
     }
 
     fn exec(&mut self, effect: Effect) -> Option<Outcome> {
-        let server = !matches!(effect, Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit);
+        let server =
+            !matches!(effect, Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings);
         if server {
             self.calls.push(effect.clone());
         }
@@ -227,7 +228,11 @@ impl Harness {
                 Some(Outcome::FeedCounts(Ok(Counts { feeds: self.counts.clone(), starred: self.starred })))
             }
             Effect::RefreshFeeds => Some(Outcome::Refreshed(self.fail_fetch.clone().map_or(Ok(()), Err))),
-            Effect::ReloadPickerAfter { .. } | Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => None,
+            Effect::ReloadPickerAfter { .. }
+            | Effect::SavePrefs(_)
+            | Effect::ScrollPage { .. }
+            | Effect::Quit
+            | Effect::ShowSettings => None,
             Effect::SaveToReadeck { index, id, .. } => {
                 if self.hold_save {
                     self.held = Some(effect);
@@ -729,23 +734,23 @@ fn esc_opens_the_picker_and_closes_it_again_once_there_is_a_queue() {
 #[test]
 fn the_window_title_shows_the_article_and_just_the_app_name_elsewhere() {
     let mut h = first_second();
-    assert_eq!(h.app.window_title(), "First — Kletse RSS");
+    assert_eq!(h.app.window_title(), "First — Onward");
     h.key("Escape");
-    assert_eq!(h.app.window_title(), "Kletse RSS");
+    assert_eq!(h.app.window_title(), "Onward");
     h.key("Escape");
-    assert_eq!(h.app.window_title(), "First — Kletse RSS");
+    assert_eq!(h.app.window_title(), "First — Onward");
     h.key("n");
-    assert_eq!(h.app.window_title(), "Second — Kletse RSS");
+    assert_eq!(h.app.window_title(), "Second — Onward");
     h.key("n");
     assert!(h.caught_up());
-    assert_eq!(h.app.window_title(), "Kletse RSS");
+    assert_eq!(h.app.window_title(), "Onward");
 }
 
 #[test]
 fn an_untitled_article_is_untitled_in_the_window_title_too() {
     let mut h = Harness::new(vec![entry(1, "")]);
     h.open(false);
-    assert_eq!(h.app.window_title(), "(untitled) — Kletse RSS");
+    assert_eq!(h.app.window_title(), "(untitled) — Onward");
 }
 
 #[test]
@@ -827,9 +832,9 @@ fn font_size_and_width_keys_change_and_save_the_prefs() {
     let mut h = first_second();
     let ctrl = |key: &str| KeyPress { key: key.into(), ctrl: true, ..KeyPress::default() };
     let (_, fx) = h.app.key(&ctrl("="));
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 40, newest_first: false })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, ..Prefs::default() })]);
     let (_, fx) = h.app.key(&KeyPress { key: "[".into(), ..KeyPress::default() });
-    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36, newest_first: false })]);
+    assert_eq!(fx, [Effect::SavePrefs(Prefs { font_size: 19, width_factor: 36, ..Prefs::default() })]);
     let (_, fx) = h.app.key(&ctrl("0"));
     assert_eq!(fx, [Effect::SavePrefs(Prefs::default())]);
     let (used, fx) = h.app.key(&ctrl("0"));
@@ -883,6 +888,36 @@ fn h_in_the_reader_opens_the_picker_in_the_other_mode_and_esc_goes_back_to_the_o
     assert_eq!(h.app.overlay(), Overlay::None);
     assert_eq!(h.title(), Some("First"));
     assert_eq!(h.app.mode(), Mode::Unread);
+}
+
+#[test]
+fn the_pickers_switch_goes_to_the_mode_it_names_and_stays_there_when_pressed_again() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    h.key("j");
+    let cursor = h.app.picker_cursor();
+
+    let fx = h.app.action(keys::button_action("unread").unwrap());
+    assert!(fx.is_empty());
+    assert_eq!(h.app.picker_mode(), Mode::Unread);
+    assert_eq!(h.app.picker_cursor(), cursor);
+
+    let fx = h.app.action(keys::button_action("history").unwrap());
+    h.run(fx);
+    assert_eq!(h.app.picker_mode(), Mode::History);
+    assert_eq!(h.app.picker_cursor(), 0);
+    let fx = h.app.action(keys::button_action("history").unwrap());
+    assert!(fx.is_empty());
+    assert_eq!(h.app.picker_mode(), Mode::History);
+}
+
+#[test]
+fn the_pickers_refresh_button_refreshes_as_r_does() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    let fx = h.app.action(keys::button_action("refresh").unwrap());
+    assert_eq!(fx, [Effect::RefreshFeeds]);
+    assert_eq!(h.toast(), Some("Refreshing feeds…"));
 }
 
 // ---- Overlays -----------------------------------------------------------------------
@@ -1009,6 +1044,67 @@ fn a_failed_save_shows_why_and_lets_you_try_again() {
 }
 
 #[test]
+fn a_settings_window_leaves_the_reader_as_it_was() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    assert!(h.app.settings().is_some());
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.title(), Some("First"));
+    h.key("j");
+    assert_eq!(h.title(), Some("Second"), "the keys still read");
+
+    let fx = h.app.cancel_settings();
+    h.run(fx);
+    assert!(h.app.settings().is_none());
+    assert_eq!(h.title(), Some("Second"));
+}
+
+#[test]
+fn asking_for_the_open_settings_window_only_brings_it_up() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    let values = SettingsValues { miniflux_url: "typed".into(), ..SettingsValues::default() };
+    h.app.settings.as_mut().unwrap().values = values;
+    let (_, fx) = h.app.key(&KeyPress { key: ",".into(), ..KeyPress::default() });
+    assert!(matches!(fx.as_slice(), [Effect::ShowSettings]), "the form isn't loaded again");
+}
+
+#[test]
+fn saving_in_the_settings_window_starts_over_from_the_picker() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.app.settings().is_none());
+    assert_eq!(h.toast(), Some("Settings saved"));
+    assert!(h.picker_loaded());
+}
+
+#[test]
+fn a_settings_window_doesnt_replace_onboarding() {
+    let mut h = Harness::new(items(2));
+    h.app.use_settings_window();
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.start();
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+    h.press(KeyPress { key: ",".into(), ..KeyPress::default() });
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn q_quits_from_the_picker() {
+    let mut h = first_second();
+    h.key("p");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    let (used, fx) = h.app.key(&KeyPress { key: "q".into(), ..KeyPress::default() });
+    assert!(used);
+    assert!(matches!(fx.as_slice(), [Effect::Quit]));
+}
+
+#[test]
 fn saving_settings_starts_over_from_the_picker() {
     let mut h = first_second();
     h.key(",");
@@ -1023,7 +1119,7 @@ fn saving_settings_starts_over_from_the_picker() {
 
 #[test]
 fn onboarding_says_why_the_config_file_wasnt_used() {
-    let problem = "Couldn't use /home/me/.config/kletse-rss/config.toml. Line 3: string values must be quoted.";
+    let problem = "Couldn't use /home/me/.config/onward/config.toml. Line 3: string values must be quoted.";
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, fetches: true };
     h.problem = Some(problem.into());
@@ -1522,6 +1618,14 @@ fn history_with_counts_the_server_doesnt_know_lists_every_feed_and_says_where_j_
     h.press_through(&["j"]);
     assert!(h.caught_up());
     assert_eq!(h.app.end_hint(), "Press j for Beta, Enter for the feeds, k to go back.");
+}
+
+#[test]
+fn choosing_colours_saves_them_once() {
+    let mut app = App::new(Prefs::default(), false);
+    let chosen = app.set_colours(Colours::OnwardLight);
+    assert!(matches!(chosen.as_slice(), [Effect::SavePrefs(p)] if p.colours == Colours::OnwardLight));
+    assert!(app.set_colours(Colours::OnwardLight).is_empty(), "nothing changed, nothing to save");
 }
 
 // ---- Starring ------------------------------------------------------------------------------------------------------

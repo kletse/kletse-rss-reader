@@ -1,11 +1,11 @@
 [package]
-name = "kletse-rss"
-version = "5.2.0"
+name = "onward"
+version = "6.0.0"
 edition = "2024"
 rust-version = "1.88" # let chains
 description = "A one-article-at-a-time reader for Miniflux and Google Reader API servers (FreshRSS, …), for Omarchy and macOS"
 license = "MIT"
-repository = "https://github.com/kletse/kletse-rss-reader"
+repository = "https://github.com/kletse/onward-rss-reader"
 authors = ["Ward Werbrouck <ward@kletse.be>"]
 publish = false
 
@@ -13,7 +13,7 @@ publish = false
 default = ["qt"]
 # The Qt Quick window (main.rs, bridge.rs, qml/): the Linux app, and `cargo run` anywhere.
 qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build"]
-# The terminal version (src/tui/, the kletse-rss-tui binary), on Linux and macOS, without Qt. Build it with
+# The terminal version (src/tui/, the onward-tui binary), on Linux and macOS, without Qt. Build it with
 # `--no-default-features --features tui`, or `cargo tui`: with `qt` on as well, it would link Qt for nothing.
 tui = ["dep:ratatui", "dep:ratatui-image", "dep:image", "dep:unicode-width"]
 # The C interface the native macOS app (macos/) links against, as a static library:
@@ -21,15 +21,15 @@ tui = ["dep:ratatui", "dep:ratatui-image", "dep:image", "dep:unicode-width"]
 ffi = []
 
 [lib]
-name = "kletse_rss"
+name = "onward"
 
 [[bin]]
-name = "kletse-rss"
+name = "onward"
 path = "src/main.rs"
 required-features = ["qt"]
 
 [[bin]]
-name = "kletse-rss-tui"
+name = "onward-tui"
 path = "src/tui_main.rs"
 required-features = ["tui"]
 

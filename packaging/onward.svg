@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Onward</title>
+  <rect width="512" height="512" rx="112" fill="#1E130D"/>
+  <circle cx="92" cy="256" r="20" fill="#FF8A3D" fill-opacity=".5"/>
+  <circle cx="164" cy="256" r="32" fill="#FF8A3D" fill-opacity=".75"/>
+  <circle cx="330" cy="256" r="76" fill="none" stroke="#FF8A3D" stroke-width="52"/>
+</svg>

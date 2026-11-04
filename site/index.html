@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Onward</title>
+<meta name="description" content="One unread article at a time. Oldest first. Keyboard all the way. A small reader for Miniflux and FreshRSS, for Omarchy, macOS and any terminal.">
+<link rel="canonical" href="https://onward.kletse.dev/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f4ec">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1e130d">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Onward">
+<meta property="og:description" content="One unread article at a time. Oldest first. Keyboard all the way.">
+<meta property="og:url" content="https://onward.kletse.dev/">
+<meta property="og:image" content="https://onward.kletse.dev/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/fonts/literata-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face { font-family: "Literata"; src: url("/fonts/literata-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Literata"; src: url("/fonts/literata-latin-wght-italic.woff2") format("woff2"); font-weight: 200 900; font-style: italic; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 800; font-style: normal; font-display: swap; }
+
+/* The page is the app: a queue of unread items in one column, under the reader's top bar. Colours are the two
+   Onward palettes in src/theme/onward.rs; the type is the app's own. */
+:root {
+  --bg: #f7f4ec; --raised: #ece8dd; --sunk: #e4dfd2;
+  --fg: #2f2e2b; --dim: #6f6c66; --bright: #141311; --line: #d9d5cc;
+  --accent: #bf3f0c; --logo: #ff6a2b; --on-logo: #1e130d; --icon: #f2efe6;
+  --scrim: rgb(47 46 43 / .45);
+  --text: "Literata", Georgia, serif;
+  --head: "Inter", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 8px;
+  --bar: 3.25rem;
+  --gutter: max(20px, env(safe-area-inset-left, 0px));
+  --gutter-end: max(20px, env(safe-area-inset-right, 0px));
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e130d; --raised: #2d1f17; --sunk: #160d09;
+    --fg: #e2dcd3; --dim: #a09488; --bright: #ffffff; --line: #4a3325;
+    --accent: #ff8a3d; --logo: #ff8a3d; --on-logo: #1e130d; --icon: #160d09;
+    --scrim: rgb(10 5 3 / .6);
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: var(--bar); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 1.125rem/1.75 var(--text);
+  font-feature-settings: "liga", "kern";
+  -webkit-font-smoothing: antialiased;
+}
+img { display: block; max-width: 100%; height: auto; }
+a { color: var(--accent); text-underline-offset: .18em; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+p { margin: 0; }
+h1, h2, h3 { margin: 0; color: var(--bright); font-family: var(--head); text-wrap: balance; }
+
+/* The top bar, as in the window */
+.bar {
+  position: sticky; top: 0; z-index: 5;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .75rem;
+  min-height: var(--bar);
+  padding-block: env(safe-area-inset-top, 0px) 0;
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  background: var(--bg); border-bottom: 1px solid var(--raised);
+  font: 400 .8125rem/1 var(--mono);
+}
+.bar > div { display: flex; min-width: 0; }
+.bar-end { justify-content: flex-end; gap: .375rem; }
+.gh { width: 1rem; height: 1rem; flex: none; }
+@media (max-width: 30rem) { .gh-label { display: none; } }
+.chip {
+  display: inline-flex; align-items: center; gap: .5rem; height: 2rem; padding-inline: .625rem;
+  background: none; color: var(--fg); border: 1px solid var(--raised); border-radius: var(--radius);
+  font: inherit; text-decoration: none; cursor: pointer;
+}
+.chip:hover { border-color: var(--line); background: var(--raised); }
+.chip:disabled { opacity: .35; cursor: default; background: none; }
+.chip.square { width: 2rem; padding: 0; justify-content: center; font-size: .75rem; }
+.mark { width: 1.75rem; height: 1rem; color: var(--logo); flex: none; }
+.count { color: var(--dim); white-space: pre; font-variant-numeric: tabular-nums; }
+
+/* One item in the queue */
+.item { padding-inline: var(--gutter) var(--gutter-end); padding-block: clamp(3rem, 8vw, 5.5rem); scroll-margin-top: var(--bar); }
+.item + .item { border-top: 1px solid var(--raised); }
+.col { max-width: 42.5rem; margin-inline: auto; display: grid; gap: 1.25rem; min-width: 0; }
+.wide { max-width: 72rem; margin-inline: auto; margin-top: clamp(2rem, 5vw, 3.25rem); min-width: 0; }
+.meta { display: flex; justify-content: space-between; gap: 1rem; font: 400 .8125rem/1.5 var(--mono); color: var(--dim); }
+.tag { flex: none; color: var(--accent); letter-spacing: .08em; font-size: .75rem; line-height: 1.625; }
+.tag.read { color: var(--dim); }
+h1 { font-size: clamp(2.75rem, 8.2vw, 4.75rem); line-height: 1.04; font-weight: 800; letter-spacing: -.035em; }
+h2 { font-size: clamp(1.875rem, 5vw, 2.625rem); line-height: 1.12; font-weight: 800; letter-spacing: -.028em; }
+h3 { font-size: 1.1875rem; line-height: 1.3; font-weight: 700; letter-spacing: -.012em; }
+.lede { font-size: clamp(1.1875rem, 2.6vw, 1.375rem); line-height: 1.6; }
+.icon { width: 4.5rem; height: 4.5rem; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; margin-top: .5rem; font: 400 .875rem/1.4 var(--mono); }
+.button {
+  display: inline-flex; align-items: center; height: 2.75rem; padding-inline: 1.125rem; border-radius: var(--radius);
+  background: var(--logo); color: var(--on-logo); font-weight: 600; text-decoration: none; border: 1px solid var(--logo);
+}
+.button:hover { filter: brightness(1.07); }
+.button.plain { background: none; color: var(--fg); border-color: var(--line); font-weight: 400; }
+.button.plain:hover { background: var(--raised); filter: none; }
+.hint { color: var(--dim); }
+@media (hover: none) { .hint { display: none; } }
+
+kbd {
+  font: 500 .875em/1 var(--mono); color: var(--accent);
+  padding: .16em .4em; border: 1px solid var(--line); border-radius: 4px; white-space: nowrap;
+}
+
+/* Keys, as in the help overlay */
+.keys { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .4375rem 1.5rem; margin: 0; font: 400 .875rem/1.5 var(--mono); }
+.keys dt { color: var(--accent); }
+.keys dd { margin: 0; color: var(--fg); }
+
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .18em; justify-self: start; }
+
+.shot { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--sunk); max-width: 100%; }
+.shot img { width: 100%; }
+.shot.hero img { aspect-ratio: 1200 / 720; object-fit: cover; object-position: top; }
+/* On a phone the window would be unreadable: show its article column instead */
+@media (max-width: 44rem) { .shot.hero img { width: 150%; max-width: none; margin-left: -25%; aspect-ratio: 1200 / 900; } }
+figure { margin: 0; display: grid; gap: .625rem; min-width: 0; }
+figcaption { font: 400 .75rem/1.5 var(--mono); color: var(--dim); }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3rem); align-items: center; max-width: 60rem; margin-inline: auto; margin-top: clamp(2rem, 5vw, 3.25rem); }
+.split .stack { display: grid; gap: 1rem; min-width: 0; }
+@media (max-width: 44rem) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+.servers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; font: 400 .8125rem/1 var(--mono); }
+.servers a {
+  display: inline-flex; align-items: center; height: 2.125rem; padding-inline: .75rem; border-radius: var(--radius);
+  border: 1px solid var(--line); color: var(--fg); text-decoration: none;
+}
+.servers a:hover { background: var(--raised); }
+
+/* The theme picker */
+.themes { border: 0; margin: 0 0 1rem; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; font: 400 .8125rem/1 var(--mono); }
+.themes legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.themes label {
+  display: inline-flex; align-items: center; gap: .5rem; height: 2.125rem; padding-inline: .625rem; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius); user-select: none;
+}
+.themes label:hover { background: var(--raised); }
+.themes input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.themes input:checked + label { border-color: var(--accent); color: var(--bright); }
+.themes input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+.swatch { width: .9375rem; height: .9375rem; border-radius: 50%; border: .25rem solid var(--a); background: var(--b); box-shadow: 0 0 0 1px var(--line); }
+.narrow { max-width: 58rem; }
+
+/* Commands */
+.way { display: grid; gap: .625rem; min-width: 0; }
+.way h3 { margin-top: .75rem; }
+.way p { font-size: 1rem; line-height: 1.65; }
+.cmd { position: relative; min-width: 0; }
+pre {
+  margin: 0; padding: .875rem 4.25rem .875rem 1rem; overflow-x: auto; border-radius: var(--radius);
+  background: var(--raised); color: var(--fg); font: 400 .8125rem/1.7 var(--mono);
+}
+.copy {
+  position: absolute; top: .5rem; right: .5rem; height: 1.625rem; padding-inline: .5rem; cursor: pointer;
+  background: var(--bg); color: var(--dim); border: 1px solid var(--line); border-radius: 5px; font: 400 .6875rem/1 var(--mono);
+}
+.copy:hover { color: var(--fg); }
+
+code { font: 400 .875em/1 var(--mono); }
+.small { font-size: 1rem; line-height: 1.65; color: var(--dim); }
+
+footer {
+  padding-block: 1.75rem calc(1.75rem + env(safe-area-inset-bottom, 0px)); padding-inline: var(--gutter) var(--gutter-end);
+  border-top: 1px solid var(--raised); font: 400 .8125rem/1.6 var(--mono); color: var(--dim);
+}
+footer div { max-width: 42.5rem; margin-inline: auto; display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
+footer a { color: inherit; }
+
+/* Overlays, as in the app: a panel with an orange edge over a dimmed page */
+dialog {
+  width: min(32rem, calc(100vw - 2rem)); max-height: min(44rem, calc(100dvh - 2rem)); padding: 0; overflow: auto;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--radius);
+  font: 400 .8125rem/1.5 var(--mono);
+}
+dialog:focus { outline: none; }
+dialog::backdrop { background: var(--scrim); }
+.panel-head { display: flex; justify-content: space-between; align-items: center; padding: .75rem 1rem .25rem; color: var(--accent); }
+.panel-note { padding: 0 1rem .75rem; color: var(--dim); }
+#keys .keys { padding: 0 1rem 1rem; font-size: .8125rem; gap: .25rem 1.25rem; }
+.close { background: none; border: 0; color: var(--dim); font: inherit; cursor: pointer; padding: .125rem .25rem; }
+.rows { list-style: none; margin: 0; padding: 0 0 .5rem; }
+.rows a {
+  display: flex; justify-content: space-between; gap: 1rem; padding: .375rem 1rem; color: var(--fg); text-decoration: none;
+}
+.rows a:hover, .rows a:focus { background: var(--line); outline: none; }
+.rows li:first-child a { color: var(--bright); }
+.rows .n { color: var(--dim); font-variant-numeric: tabular-nums; }
+.rows li + li a { padding-left: 2rem; }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div><button class="chip" id="open-picker" type="button" aria-haspopup="dialog" title="Everything on this page (g)"><svg class="mark" viewBox="72 154 360 204" aria-hidden="true"><circle cx="92" cy="256" r="20" fill="currentColor" fill-opacity=".5"/><circle cx="164" cy="256" r="32" fill="currentColor" fill-opacity=".75"/><circle cx="330" cy="256" r="76" fill="none" stroke="currentColor" stroke-width="52"/></svg>Onward</button></div>
+  <div class="count" id="count" aria-live="polite">1 / 7</div>
+  <div class="bar-end">
+    <a class="chip" href="https://github.com/kletse/onward-rss-reader" aria-label="GitHub"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg><span class="gh-label">GitHub</span></a>
+    <button class="chip square" id="prev" type="button" aria-label="Previous (k)" title="Previous (k)" disabled>▲</button>
+    <button class="chip square" id="next" type="button" aria-label="Next, marks this one read (j)" title="Next, marks read (j)">▼</button>
+  </div>
+</header>
+
+<main>
+  <article class="item" id="idea" data-title="One unread article at a time">
+    <div class="col">
+      <svg class="icon" viewBox="0 0 512 512" role="img" aria-label="The Onward logo">
+        <rect width="512" height="512" rx="112" fill="var(--icon)"/>
+        <circle cx="92" cy="256" r="20" fill="var(--logo)" fill-opacity=".5"/>
+        <circle cx="164" cy="256" r="32" fill="var(--logo)" fill-opacity=".75"/>
+        <circle cx="330" cy="256" r="76" fill="none" stroke="var(--logo)" stroke-width="52"/>
+      </svg>
+      <div class="meta"><span>Onward · for Omarchy, macOS and any terminal</span><span class="tag">UNREAD</span></div>
+      <h1>One unread article at a time.</h1>
+      <p class="lede">Oldest first. Keyboard all the way. Onward is a small reader for your Miniflux or FreshRSS server that shows the article and nothing else.</p>
+      <div class="actions">
+        <a class="button" href="#install">Install</a>
+        <span class="hint">This page works like the app. Press <kbd>j</kbd> to read on.</span>
+      </div>
+    </div>
+    <figure class="wide">
+      <div class="shot hero">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/img/article-dark.webp">
+          <img src="/img/article-light.webp" width="2400" height="1720" alt="Onward showing one article, with its title, two paragraphs and a picture in a single column. The top bar says 1 / 8.">
+        </picture>
+      </div>
+    </figure>
+  </article>
+
+  <article class="item" id="reading" data-title="Press j and move on">
+    <div class="col">
+      <div class="meta"><span>How it reads</span><span class="tag">UNREAD</span></div>
+      <h2>Press j and move on</h2>
+      <p>Most feed readers give you three panes and a wall of headlines. Onward shows just the article. Pick a feed or a category and it opens on the oldest unread item. Press <kbd>j</kbd>: that item is marked read and the next one is already there, images and all.</p>
+      <p>When the list runs out, Onward asks your server once more for anything that arrived while you were reading. If nothing did, you’re all caught up, and <kbd>j</kbd> goes on to the next feed with unread items.</p>
+      <p>Items you’ve read stay out of the way. Press <kbd>k</kbd> to go back to one you just passed, or <kbd>h</kbd> for everything you’ve read, newest first, with all the same keys.</p>
+    </div>
+    <div class="split">
+      <div class="stack">
+        <dl class="keys">
+          <dt>j</dt><dd>next (marks read)</dd>
+          <dt>n</dt><dd>skip (keeps unread)</dd>
+          <dt>k</dt><dd>previous</dd>
+          <dt>m</dt><dd>toggle read / unread</dd>
+          <dt>o</dt><dd>open the original in your browser</dd>
+          <dt>b</dt><dd>save to Readeck, then next</dd>
+          <dt>g</dt><dd>feeds and categories</dd>
+          <dt>/</dt><dd>search all feeds</dd>
+        </dl>
+        <button class="linkish" id="open-keys" type="button" style="font:400 .875rem/1.5 var(--mono)">All the keys (?)</button>
+      </div>
+      <figure>
+        <div class="shot">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/picker-dark.webp">
+            <img src="/img/picker-light.webp" width="1240" height="820" alt="The feeds picker: All unread, then categories with their feeds underneath, each with an unread count." loading="lazy">
+          </picture>
+        </div>
+        <figcaption>The feeds picker. Anything with nothing unread is hidden.</figcaption>
+      </figure>
+    </div>
+  </article>
+
+  <article class="item" id="server" data-title="Your server does the heavy lifting">
+    <div class="col">
+      <div class="meta"><span>Where your feeds live</span><span class="tag">UNREAD</span></div>
+      <h2>Your server does the heavy lifting</h2>
+      <p>Your feed server fetches the feeds and remembers what you’ve read. Onward is a thin client with no local database, so the window and the terminal always agree on where you are.</p>
+      <ul class="servers">
+        <li><a href="https://miniflux.app">Miniflux</a></li>
+        <li><a href="https://freshrss.org">FreshRSS</a></li>
+        <li><a href="https://www.inoreader.com">Inoreader</a></li>
+        <li><a href="https://bazqux.com">BazQux</a></li>
+        <li><a href="https://theoldreader.com">The Old Reader</a></li>
+      </ul>
+      <p>Miniflux gets everything. The others connect over the Google Reader API, which can’t do a few things, such as asking for the full article or a refresh. <a href="https://github.com/kletse/onward-rss-reader#set-up">The README has the list.</a></p>
+      <p>If you use <a href="https://readeck.org">Readeck</a>, press <kbd>b</kbd> to save the article there, mark it read and move on.</p>
+    </div>
+  </article>
+
+  <article class="item" id="native" data-title="Native, with no web view">
+    <div class="col">
+      <div class="meta"><span>Under the hood</span><span class="tag">UNREAD</span></div>
+      <h2>Native, with no web view</h2>
+      <p>The window is Qt Quick on Linux and SwiftUI on macOS, over the same Rust core. Articles are laid out as native text and images, not in a browser engine.</p>
+      <p>Only a small set of tags makes it through, so scripts, styles, forms and tracking attributes are gone, and nothing in an article can run. Every link opens in your own browser. Code is highlighted in the theme’s colours.</p>
+    </div>
+    <figure class="wide narrow">
+      <div class="shot">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/img/code-dark.webp">
+          <img src="/img/code-light.webp" width="2400" height="1720" alt="An article about Rust services with a highlighted code block." loading="lazy">
+        </picture>
+      </div>
+    </figure>
+  </article>
+
+  <article class="item" id="theme" data-title="It follows your desktop">
+    <div class="col">
+      <div class="meta"><span>On Omarchy and macOS</span><span class="tag">UNREAD</span></div>
+      <h2>It follows your desktop</h2>
+      <p>On Omarchy, the colours, the UI font and the window rounding change the moment you switch themes. You can also pick Onward Dark or Onward Light in Settings and keep the logo’s colours. On macOS it follows light and dark mode, and from macOS 26 the Dock icon does too.</p>
+    </div>
+    <div class="wide narrow">
+      <fieldset class="themes" id="themes">
+        <legend>Omarchy theme</legend>
+        <input type="radio" name="theme" id="t-tokyo-night" value="tokyo-night" data-name="Tokyo Night" checked><label for="t-tokyo-night"><span class="swatch" style="--b:#1a1b26;--a:#7aa2f7"></span>Tokyo Night</label>
+        <input type="radio" name="theme" id="t-gruvbox" value="gruvbox" data-name="Gruvbox"><label for="t-gruvbox"><span class="swatch" style="--b:#282828;--a:#7daea3"></span>Gruvbox</label>
+        <input type="radio" name="theme" id="t-catppuccin-latte" value="catppuccin-latte" data-name="Catppuccin Latte"><label for="t-catppuccin-latte"><span class="swatch" style="--b:#eff1f5;--a:#1e66f5"></span>Catppuccin Latte</label>
+        <input type="radio" name="theme" id="t-rose-pine" value="rose-pine" data-name="Rosé Pine"><label for="t-rose-pine"><span class="swatch" style="--b:#faf4ed;--a:#56949f"></span>Rosé Pine</label>
+        <input type="radio" name="theme" id="t-everforest" value="everforest" data-name="Everforest"><label for="t-everforest"><span class="swatch" style="--b:#2d353b;--a:#7fbbb3"></span>Everforest</label>
+        <input type="radio" name="theme" id="t-nord" value="nord" data-name="Nord"><label for="t-nord"><span class="swatch" style="--b:#2e3440;--a:#81a1c1"></span>Nord</label>
+      </fieldset>
+      <figure>
+        <div class="shot"><img id="theme-shot" src="/img/theme-tokyo-night.webp" width="1800" height="1290" alt="Onward in the Tokyo Night theme." loading="lazy"></div>
+      </figure>
+    </div>
+  </article>
+
+  <article class="item" id="terminal" data-title="In a terminal too">
+    <div class="col">
+      <div class="meta"><span>onward-tui</span><span class="tag">UNREAD</span></div>
+      <h2>In a terminal too</h2>
+      <p><code>onward-tui</code> is the same reader, filling your terminal, on Linux and macOS, locally or over SSH. It needs neither Qt nor a desktop, and it gives the terminal back as it was when you quit.</p>
+      <p>The colours are your terminal’s own. Pictures appear in the article, as real images in foot, Ghostty, kitty, WezTerm and iTerm2, and in half-block characters everywhere else.</p>
+    </div>
+    <figure class="wide narrow">
+      <div class="shot"><img src="/img/terminal.webp" width="1200" height="860" alt="The same article in a terminal: text, headings and a highlighted code block in the terminal's colours." loading="lazy"></div>
+    </figure>
+  </article>
+
+  <article class="item" id="install" data-title="All caught up">
+    <div class="col">
+      <div class="meta"><span>Install · free and open source, MIT</span><span class="tag">UNREAD</span></div>
+      <h2>All caught up</h2>
+      <p>That’s everything. Here’s how to get it.</p>
+
+      <section class="way">
+        <h3>Arch and Omarchy</h3>
+        <p>Download the <code>.pkg.tar.zst</code> from <a href="https://github.com/kletse/onward-rss-reader/releases/latest">the latest release</a>, then install it. This gives you the window and <code>onward-tui</code>.</p>
+        <div class="cmd"><pre tabindex="0">sudo pacman -U onward-*-x86_64.pkg.tar.zst</pre></div>
+      </section>
+
+      <section class="way">
+        <h3>macOS</h3>
+        <p>Build it from source, which takes a few minutes. You need macOS 15 or later, Xcode or its command line tools, and a current stable <a href="https://rustup.rs">Rust</a>.</p>
+        <div class="cmd"><pre tabindex="0">git clone https://github.com/kletse/onward-rss-reader.git
+cd onward-rss-reader
+packaging/macos/build-app.sh
+cp -r "packaging/Onward.app" /Applications/</pre></div>
+      </section>
+
+      <section class="way">
+        <h3>Only the terminal version</h3>
+        <p>On Linux or macOS, with a current stable Rust. This puts <code>onward-tui</code> in <code>~/.cargo/bin</code>.</p>
+        <div class="cmd"><pre tabindex="0">git clone https://github.com/kletse/onward-rss-reader.git
+cd onward-rss-reader
+cargo install --path . --no-default-features --features tui --locked</pre></div>
+      </section>
+
+      <section class="way">
+        <h3>First run</h3>
+        <p>A welcome screen asks for your server’s address and API key, and checks them before saving anything. To look around first, start it with sample feeds: nothing is marked read and no server is needed.</p>
+        <div class="cmd"><pre tabindex="0">ONWARD_DEMO=1 onward</pre></div>
+      </section>
+
+      <p class="small">Not in scope, at least for now: managing feeds (use your server’s web interface), starring, offline reading and notifications.</p>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div>
+    <a href="https://github.com/kletse/onward-rss-reader">GitHub</a>
+    <a href="https://github.com/kletse/onward-rss-reader/releases">Releases</a>
+    <a href="https://github.com/kletse/onward-rss-reader/blob/main/LICENSE">MIT licence</a>
+    <span>Screenshots use the app’s sample feeds.</span>
+  </div>
+</footer>
+
+<dialog id="picker" aria-label="Everything on this page">
+  <div class="panel-head"><span>Onward</span><button class="close" type="button" data-close aria-label="Close">esc</button></div>
+  <ul class="rows" id="rows"></ul>
+</dialog>
+
+<dialog id="keys" aria-label="The app's keys" tabindex="-1">
+  <div class="panel-head"><span>Keys</span><button class="close" type="button" data-close aria-label="Close">esc</button></div>
+  <p class="panel-note">The app’s keys. On this page j, n, k, m, g and ? work too, and o opens GitHub.</p>
+  <dl class="keys">
+    <dt>j / ↓</dt><dd>next (marks read)</dd>
+    <dt>n</dt><dd>skip (keeps unread)</dd>
+    <dt>k / ↑</dt><dd>previous</dd>
+    <dt>m</dt><dd>toggle read / unread</dd>
+    <dt>o</dt><dd>open original in browser</dd>
+    <dt>b</dt><dd>save to Readeck, then next</dd>
+    <dt>f</dt><dd>fetch full article</dd>
+    <dt>Shift+A</dt><dd>mark the whole list read</dd>
+    <dt>v</dt><dd>view the article’s images</dd>
+    <dt>/</dt><dd>search all feeds</dd>
+    <dt>s</dt><dd>oldest or newest first</dd>
+    <dt>g / p / Tab</dt><dd>feeds picker</dd>
+    <dt>r</dt><dd>refresh feeds</dd>
+    <dt>h</dt><dd>history: read items, newest first</dd>
+    <dt>Space</dt><dd>scroll; at the end, next</dd>
+    <dt>Ctrl + / −</dt><dd>font size (⌘ on a Mac)</dd>
+    <dt>[ / ]</dt><dd>narrower / wider column</dd>
+    <dt>,</dt><dd>settings</dd>
+    <dt>?</dt><dd>this help</dd>
+    <dt>q</dt><dd>quit</dd>
+  </dl>
+</dialog>
+
+<script>
+(() => {
+  const items = [...document.querySelectorAll('.item')];
+  const tags = items.map(item => item.querySelector('.tag'));
+  const count = document.getElementById('count');
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  const picker = document.getElementById('picker');
+  const keys = document.getElementById('keys');
+  const rows = document.getElementById('rows');
+  const read = new Set();
+  const calm = matchMedia('(prefers-reduced-motion: reduce)');
+  let current = 0;
+  let moving = 0; // while a jump scrolls, the scroll position doesn't get to say where we are
+
+  function show() {
+    count.textContent = `${current + 1} / ${items.length}`;
+    prev.disabled = current === 0;
+    next.disabled = current === items.length - 1 && read.has(current);
+    tags.forEach((tag, i) => {
+      tag.textContent = read.has(i) ? 'READ' : 'UNREAD';
+      tag.classList.toggle('read', read.has(i));
+    });
+  }
+
+  function go(i) {
+    current = Math.max(0, Math.min(items.length - 1, i));
+    clearTimeout(moving);
+    moving = setTimeout(() => { moving = 0; }, calm.matches ? 60 : 800);
+    items[current].scrollIntoView({ behavior: calm.matches ? 'auto' : 'smooth', block: 'start' });
+    show();
+  }
+
+  // As in the app: only j marks read. Scrolling past something doesn't.
+  const forward = () => { read.add(current); go(current + 1); };
+  const skip = () => go(current + 1);
+  const back = () => go(current - 1);
+  const toggle = () => { read.has(current) ? read.delete(current) : read.add(current); show(); };
+
+  function follow() {
+    if (moving) return;
+    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 4;
+    const line = innerHeight * .4;
+    let found = 0;
+    items.forEach((item, i) => { if (item.getBoundingClientRect().top <= line) found = i; });
+    found = atEnd ? items.length - 1 : found;
+    if (found !== current) { current = found; show(); }
+  }
+  let queued = false;
+  addEventListener('scroll', () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; follow(); });
+  }, { passive: true });
+
+  function openPicker() {
+    const unread = items.length - read.size;
+    rows.replaceChildren(...[
+      ['All unread', unread, 0],
+      ...items.map((item, i) => [item.dataset.title, read.has(i) ? 0 : 1, i]),
+    ].map(([title, n, i]) => {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = `#${items[i].id}`;
+      a.dataset.i = i;
+      a.append(title);
+      const span = document.createElement('span');
+      span.className = 'n';
+      span.textContent = n;
+      a.append(span);
+      li.append(a);
+      return li;
+    }));
+    picker.showModal();
+    rows.querySelector('a').focus();
+  }
+
+  function showKeys() {
+    keys.showModal();
+    keys.focus();
+  }
+
+  function stepRow(by) {
+    const links = [...rows.querySelectorAll('a')];
+    const at = links.indexOf(document.activeElement);
+    links[(at + by + links.length) % links.length].focus();
+  }
+
+  rows.addEventListener('click', event => {
+    const a = event.target.closest('a');
+    if (!a) return;
+    event.preventDefault();
+    picker.close();
+    go(Number(a.dataset.i));
+  });
+
+  document.querySelectorAll('dialog').forEach(dialog => {
+    dialog.addEventListener('click', event => {
+      if (event.target === dialog || event.target.closest('[data-close]')) dialog.close();
+    });
+  });
+
+  document.getElementById('open-picker').addEventListener('click', openPicker);
+  document.getElementById('open-keys').addEventListener('click', showKeys);
+  next.addEventListener('click', forward);
+  prev.addEventListener('click', back);
+
+  addEventListener('keydown', event => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const key = event.key;
+    if (picker.open) {
+      if (key === 'j' || key === 'ArrowDown') { event.preventDefault(); stepRow(1); }
+      if (key === 'k' || key === 'ArrowUp') { event.preventDefault(); stepRow(-1); }
+      if (key === 'g' || key === 'p') picker.close();
+      return;
+    }
+    if (keys.open) {
+      if (key === '?') keys.close();
+      return;
+    }
+    const act = {
+      j: forward, n: skip, k: back, m: toggle,
+      g: openPicker, p: openPicker,
+      '?': showKeys,
+      o: () => { location.href = 'https://github.com/kletse/onward-rss-reader'; },
+    }[key];
+    if (act) { event.preventDefault(); act(); }
+  });
+
+  // The theme picker swaps in a real screenshot of that theme
+  const shot = document.getElementById('theme-shot');
+  const themes = document.getElementById('themes');
+  const radios = [...themes.querySelectorAll('input')];
+  themes.addEventListener('change', event => {
+    shot.src = `/img/theme-${event.target.value}.webp`;
+    shot.alt = `Onward in the ${event.target.dataset.name} theme.`;
+  });
+  let loaded = false;
+  const preload = () => {
+    if (loaded) return;
+    loaded = true;
+    radios.forEach(radio => { new Image().src = `/img/theme-${radio.value}.webp`; });
+  };
+  themes.addEventListener('pointerenter', preload);
+  themes.addEventListener('focusin', preload);
+
+  // Copy buttons, only where they can work
+  if (navigator.clipboard) {
+    document.querySelectorAll('.cmd').forEach(cmd => {
+      const button = document.createElement('button');
+      button.className = 'copy';
+      button.type = 'button';
+      button.textContent = 'Copy';
+      button.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(cmd.querySelector('pre').textContent);
+          button.textContent = 'Copied';
+        } catch {
+          getSelection().selectAllChildren(cmd.querySelector('pre'));
+          button.textContent = 'Selected';
+        }
+        setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+      });
+      cmd.append(button);
+    });
+  }
+
+  follow();
+  show();
+})();
+</script>
+</body>
+</html>

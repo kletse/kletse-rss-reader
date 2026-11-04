@@ -55,7 +55,7 @@ Item {
         Text {
             width: parent.width
             bottomPadding: 8
-            text: s.firstRun ? "Welcome to Kletse RSS" : "Settings"
+            text: s.firstRun ? "Welcome to Onward" : "Settings"
             color: s.model.fgBright
             font.family: s.ui.headingFont
             font.pixelSize: 28
@@ -198,6 +198,32 @@ Item {
                 placeholder: "Profile → API Tokens (needs “Bookmarks: write”)"
                 secret: true
                 onAccepted: s.submit()
+            }
+        }
+        Fieldset {
+            visible: !s.firstRun
+            title: "Colours"
+            note: "applied at once"
+            Row {
+                spacing: 8
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "system"
+                    text: "System"
+                    onClicked: s.model.chooseColours("system")
+                }
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "onward-dark"
+                    text: "Onward Dark"
+                    onClicked: s.model.chooseColours("onward-dark")
+                }
+                Button {
+                    ui: s.ui
+                    primary: s.model.colours === "onward-light"
+                    text: "Onward Light"
+                    onClicked: s.model.chooseColours("onward-light")
+                }
             }
         }
 

@@ -1,5 +1,5 @@
 // A button in the theme's colours: outlined, the accent on hover; `primary` fills it with the accent.
-// An icon is a glyph (`glyph`) or a 24×24 SVG path drawn as an outline in the accent colour (`iconPath`).
+// An icon is a glyph (`glyph`), a 24×24 SVG path drawn as an outline in the accent colour (`iconPath`), or the logo.
 import QtQuick
 import QtQuick.Shapes
 import QtQuick.Controls.Basic as T
@@ -11,6 +11,7 @@ T.Button {
     property bool primary: false
     property string glyph: ""
     property string iconPath: ""
+    property bool logo: false
     property string tip: ""
 
     focusPolicy: Qt.NoFocus
@@ -33,6 +34,7 @@ T.Button {
         // An icon alone is just the icon; with a label, a gap after it.
         readonly property real iconWidth: (b.glyph !== "" ? glyphText.implicitWidth + 6 : 0)
             + (b.iconPath !== "" ? (b.text !== "" ? 20 : 14) : 0)
+            + (b.logo ? 28 : 0)
         implicitWidth: iconWidth + label.implicitWidth
         implicitHeight: Math.max(label.implicitHeight, 14)
 
@@ -46,6 +48,12 @@ T.Button {
                 text: b.glyph
                 color: b.primary ? b.ui.model.bg : b.ui.model.accent
                 font: b.font
+            }
+            Logo {
+                visible: b.logo
+                anchors.verticalCenter: parent.verticalCenter
+                width: 22
+                color: b.primary ? b.ui.model.bg : b.ui.model.accent
             }
             Shape {
                 visible: b.iconPath !== ""

@@ -1476,36 +1476,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kletse-rss"
-version = "5.2.0"
-dependencies = [
- "base64 0.22.1",
- "cxx",
- "cxx-qt",
- "cxx-qt-build",
- "cxx-qt-lib",
- "dirs",
- "ego-tree",
- "image",
- "notify",
- "percent-encoding",
- "ratatui",
- "ratatui-image",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "toml",
- "unicode-width 0.2.3",
- "url",
- "wiremock",
-]
-
-[[package]]
 name = "kqueue"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1874,6 +1844,36 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "onward"
+version = "6.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
+ "dirs",
+ "ego-tree",
+ "image",
+ "notify",
+ "percent-encoding",
+ "ratatui",
+ "ratatui-image",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "unicode-width 0.2.3",
+ "url",
+ "wiremock",
+]
 
 [[package]]
 name = "option-ext"

@@ -1,4 +1,4 @@
-//! `~/.config/kletse-rss/config.toml`: the feed server, Miniflux or a Google Reader API server (one is
+//! `~/.config/onward/config.toml`: the feed server, Miniflux or a Google Reader API server (one is
 //! required), and Readeck (optional). Written by the onboarding/settings screen; can also be edited by hand.
 
 use serde::{Deserialize, Serialize};
@@ -133,11 +133,11 @@ impl fmt::Debug for Redacted<'_> {
     }
 }
 
-/// `$XDG_CONFIG_HOME/kletse-rss/config.toml`, or `None` when there is no home directory at all.
+/// `$XDG_CONFIG_HOME/onward/config.toml`, or `None` when there is no home directory at all.
 pub fn path() -> Option<PathBuf> {
     dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
-        .map(|dir| dir.join("kletse-rss").join("config.toml"))
+        .map(|dir| crate::moved::dir(&dir).join("config.toml"))
 }
 
 impl Config {
@@ -284,7 +284,7 @@ fn save_to(config: &Config, path: &Path) -> Result<(), Error> {
     let body = toml::to_string(config)
         .map_err(|e| Error::Io { context: "Could not write the settings".into(), source: std::io::Error::other(e) })?;
     let text = format!(
-        "# kletse-rss configuration. Also editable from the app: press , or use Settings in the feeds picker.\n\n{body}"
+        "# onward configuration. Also editable from the app: press , or use Settings in the feeds picker.\n\n{body}"
     );
     keep_if_broken(path)?;
     write_private(path, text.as_bytes())
@@ -522,7 +522,7 @@ mod tests {
         save_to(&full(), &path).unwrap();
         assert_eq!(read_from(&path).unwrap(), full());
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# kletse-rss configuration"));
+        assert!(text.starts_with("# onward configuration"));
         #[cfg(unix)]
         assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn saving_through_a_symlink_keeps_the_link() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("dotfiles").join("kletse-rss.toml");
+        let target = dir.path().join("dotfiles").join("onward.toml");
         fs::create_dir(target.parent().unwrap()).unwrap();
         fs::write(&target, "").unwrap();
         let link = dir.path().join("config.toml");
@@ -589,10 +589,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("dotfiles")).unwrap();
         let link = dir.path().join("config.toml");
-        std::os::unix::fs::symlink("dotfiles/kletse-rss.toml", &link).unwrap();
+        std::os::unix::fs::symlink("dotfiles/onward.toml", &link).unwrap();
         save_to(&full(), &link).unwrap();
         assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(read_from(&dir.path().join("dotfiles").join("kletse-rss.toml")).unwrap(), full());
+        assert_eq!(read_from(&dir.path().join("dotfiles").join("onward.toml")).unwrap(), full());
     }
 
     #[test]

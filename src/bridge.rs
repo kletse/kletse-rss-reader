@@ -43,6 +43,8 @@ pub mod qobject {
         #[qproperty(QString, selection_label)]
         #[qproperty(bool, history)]
         #[qproperty(bool, searching)]
+        // Reading the starred items: the top bar's Starred badge.
+        #[qproperty(bool, starred_list)]
         #[qproperty(QString, position)]
         #[qproperty(bool, readeck)]
         // The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
@@ -56,6 +58,8 @@ pub mod qobject {
         #[qproperty(QString, published_at)]
         #[qproperty(i32, reading_time)]
         #[qproperty(QString, status)]
+        // The article on screen is starred (`*`).
+        #[qproperty(bool, starred)]
         // The body as JSON blocks (see content/convert.rs).
         #[qproperty(QString, blocks)]
         // The next article's images as a JSON list of URLs, loading while this one is read.
@@ -226,6 +230,7 @@ pub struct ModelRust {
     selection_label: QString,
     history: bool,
     searching: bool,
+    starred_list: bool,
     position: QString,
     readeck: bool,
     fetches: bool,
@@ -237,6 +242,7 @@ pub struct ModelRust {
     published_at: QString,
     reading_time: i32,
     status: QString,
+    starred: bool,
     blocks: QString,
     prefetch_images: QString,
     viewer_src: QString,
@@ -319,6 +325,7 @@ impl Default for ModelRust {
             selection_label: QString::default(),
             history: false,
             searching: false,
+            starred_list: false,
             position: QString::default(),
             readeck: false,
             fetches: true,
@@ -330,6 +337,7 @@ impl Default for ModelRust {
             published_at: QString::default(),
             reading_time: 0,
             status: QString::default(),
+            starred: false,
             blocks: QString::from("[]"),
             prefetch_images: QString::from("[]"),
             viewer_src: QString::default(),
@@ -599,6 +607,7 @@ impl qobject::Model {
         let app = &s.app;
         let (screen, overlay) = (app.screen().name(), app.overlay().name());
         let (end_title, history, searching) = (app.end_title(), app.history_badge(), app.searching());
+        let (starred_list, starred) = (app.starred_list(), app.starred());
         let search_query = app.search_query().to_string();
         let (end_hint, picker_shown) = (app.end_hint(), app.picker_shown());
         let viewer = app.viewer().map(|v| {
@@ -623,6 +632,8 @@ impl qobject::Model {
         self.as_mut().set_selection_label(qs(&label));
         self.as_mut().set_history(history);
         self.as_mut().set_searching(searching);
+        self.as_mut().set_starred_list(starred_list);
+        self.as_mut().set_starred(starred);
         self.as_mut().set_search_query(qs(&search_query));
         let (src, alt, position_in_viewer) = viewer.unwrap_or_default();
         self.as_mut().set_viewer_src(qs(&src));

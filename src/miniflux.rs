@@ -82,6 +82,9 @@ pub struct Entry {
     /// which pages by `published_at`. See `order_millis`.
     #[serde(default)]
     pub order_ms: i64,
+    /// Bookmarked on the server (`*`): Miniflux calls it `starred`, the Google Reader API a state tag.
+    #[serde(default)]
+    pub starred: bool,
 }
 
 impl Entry {
@@ -134,22 +137,37 @@ pub struct FeedCount {
     pub read: Option<i64>,
 }
 
+/// What the picker shows: every feed with its counts, and how many entries are starred.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub feeds: Vec<FeedCount>,
+    /// `None` when the server can't count them; the picker then shows the row without a number.
+    pub starred: Option<i64>,
+}
+
 /// Which set of entries to read.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Selection {
     All,
-    Category { id: i64 },
-    Feed { id: i64 },
+    Category {
+        id: i64,
+    },
+    Feed {
+        id: i64,
+    },
+    /// The starred entries of every feed, read and unread alike: a status doesn't narrow it (see `entries`).
+    Starred,
 }
 
 impl Selection {
-    /// The API path prefix that scopes `/entries` to this selection.
-    fn path_prefix(self) -> String {
+    /// `/entries` scoped to this selection, with `query` (which mustn't be empty) after the `?`.
+    fn entries_path(self, query: &str) -> String {
         match self {
-            Selection::All => String::new(),
-            Selection::Category { id } => format!("/categories/{id}"),
-            Selection::Feed { id } => format!("/feeds/{id}"),
+            Selection::All => format!("/entries?{query}"),
+            Selection::Category { id } => format!("/categories/{id}/entries?{query}"),
+            Selection::Feed { id } => format!("/feeds/{id}/entries?{query}"),
+            Selection::Starred => format!("/entries?starred=true&{query}"),
         }
     }
 }
@@ -201,10 +219,14 @@ impl Client {
         }
     }
 
-    pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, Error> {
+    /// Every feed with its counts, and how many entries are starred (read or unread).
+    pub async fn feed_counts(&self) -> Result<Counts, Error> {
         let feeds: Vec<Feed> = self.get_json("/feeds").await?;
-        let counters: Counters = self.get_json("/feeds/counters").await?;
-        Ok(merge_counts(feeds, &counters))
+        let (counters, starred) = tokio::try_join!(
+            self.get_json::<Counters>("/feeds/counters"),
+            self.get_json::<IdPage>("/entries?starred=true&status=unread&status=read&limit=1"),
+        )?;
+        Ok(Counts { feeds: merge_counts(feeds, &counters), starred: Some(starred.total) })
     }
 
     /// One page of the selection's unread or read entries, oldest or newest first, loaded as you go. `past` is
@@ -212,6 +234,9 @@ impl Client {
     /// first); 0 starts at the beginning. See `next_page` in src/paging.rs for why that and not an offset.
     /// `after` / `before` compare `published_at` strictly and exist since Miniflux 2.0.9; `published_after` /
     /// `published_before` mean the same but need 2.0.49, and an older server would silently ignore them.
+    ///
+    /// `Selection::Starred` takes no status: starred entries come read and unread alike, so `status` is ignored.
+    /// (Not without any status filter: that would bring `removed` ones too.)
     pub async fn entries(
         &self,
         sel: Selection,
@@ -225,11 +250,11 @@ impl Client {
             Order::OldestFirst => ("asc", "after"),
             Order::NewestFirst => ("desc", "before"),
         };
-        let mut path = format!(
-            "{}/entries?status={}&order=published_at&direction={direction}&limit={limit}",
-            sel.path_prefix(),
-            status.as_str()
-        );
+        let status = match sel {
+            Selection::Starred => "status=unread&status=read".to_string(),
+            _ => format!("status={}", status.as_str()),
+        };
+        let mut path = sel.entries_path(&format!("{status}&order=published_at&direction={direction}&limit={limit}"));
         if past > 0 {
             path.push_str(&format!("&{bound}={past}"));
         }
@@ -257,7 +282,7 @@ impl Client {
     /// The id of the selection's newest unread entry, 0 if there is none. Entry ids only grow, so anything with
     /// a higher id arrived later: that is how "mark all read" leaves alone what you haven't been shown.
     pub async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
-        let path = format!("{}/entries?status=unread&order=id&direction=desc&limit=1", sel.path_prefix());
+        let path = sel.entries_path("status=unread&order=id&direction=desc&limit=1");
         let page: IdPage = self.get_json(&path).await?;
         Ok(page.entries.first().map_or(0, |e| e.id))
     }
@@ -267,7 +292,7 @@ impl Client {
         if up_to < 1 {
             return Ok(0); // Miniflux ignores before_entry_id=0 and would count everything
         }
-        let path = format!("{}/entries?status=unread&before_entry_id={}&limit=1", sel.path_prefix(), up_to + 1);
+        let path = sel.entries_path(&format!("status=unread&before_entry_id={}&limit=1", up_to + 1));
         let page: IdPage = self.get_json(&path).await?;
         Ok(page.total)
     }
@@ -281,11 +306,10 @@ impl Client {
         }
         let mut after = 0; // after_entry_id=0 means no lower bound
         loop {
-            let path = format!(
-                "{}/entries?status=unread&order=id&direction=asc&limit={ID_PAGE}&before_entry_id={}&after_entry_id={after}",
-                sel.path_prefix(),
+            let path = sel.entries_path(&format!(
+                "status=unread&order=id&direction=asc&limit={ID_PAGE}&before_entry_id={}&after_entry_id={after}",
                 up_to + 1
-            );
+            ));
             let page: IdPage = self.get_json(&path).await?;
             let ids: Vec<i64> = page.entries.iter().map(|e| e.id).collect();
             // A server that ignored after_entry_id would hand out the same page forever.
@@ -305,6 +329,22 @@ impl Client {
         }
         let body = json!({ "entry_ids": ids, "status": status });
         self.send(self.req(reqwest::Method::PUT, "/entries").json(&body)).await?;
+        Ok(())
+    }
+
+    /// Stars or unstars an entry. Miniflux only has a toggle (`PUT /v1/entries/{id}/bookmark`), so this asks what
+    /// the entry is first and flips it only when that differs: starred meanwhile elsewhere (the web UI, a phone),
+    /// a blind toggle would do the opposite of what the app shows.
+    pub async fn set_starred(&self, id: i64, starred: bool) -> Result<(), Error> {
+        #[derive(Deserialize)]
+        struct Starred {
+            #[serde(default)]
+            starred: bool,
+        }
+        let now: Starred = self.get_json(&format!("/entries/{id}")).await?;
+        if now.starred != starred {
+            self.send(self.req(reqwest::Method::PUT, &format!("/entries/{id}/bookmark"))).await?;
+        }
         Ok(())
     }
 
@@ -368,10 +408,13 @@ mod tests {
         assert_eq!(sel, Selection::Category { id: 3 });
         let sel: Selection = serde_json::from_str(r#"{"kind":"feed","id":7}"#).unwrap();
         assert_eq!(sel, Selection::Feed { id: 7 });
-        assert!(serde_json::from_str::<Selection>(r#"{"kind":"starred"}"#).is_err());
-        assert_eq!(Selection::All.path_prefix(), "");
-        assert_eq!(Selection::Category { id: 3 }.path_prefix(), "/categories/3");
-        assert_eq!(Selection::Feed { id: 7 }.path_prefix(), "/feeds/7");
+        let sel: Selection = serde_json::from_str(r#"{"kind":"starred"}"#).unwrap();
+        assert_eq!(sel, Selection::Starred);
+        assert!(serde_json::from_str::<Selection>(r#"{"kind":"bookmarks"}"#).is_err());
+        assert_eq!(Selection::All.entries_path("limit=1"), "/entries?limit=1");
+        assert_eq!(Selection::Category { id: 3 }.entries_path("limit=1"), "/categories/3/entries?limit=1");
+        assert_eq!(Selection::Feed { id: 7 }.entries_path("limit=1"), "/feeds/7/entries?limit=1");
+        assert_eq!(Selection::Starred.entries_path("limit=1"), "/entries?starred=true&limit=1");
     }
 
     #[test]
@@ -388,7 +431,11 @@ mod tests {
         assert_eq!(e.content, "");
         assert_eq!(e.reading_time, 0);
         assert_eq!(e.status, EntryStatus::Unread);
+        assert!(!e.starred);
         assert_eq!(e.order_ms, 0);
+        let mut starred = entry_json(2);
+        starred["starred"] = json!(true);
+        assert!(serde_json::from_value::<Entry>(starred).unwrap().starred);
         assert_eq!(e.order_millis(), dates::unix_millis("2026-10-24T08:12:00+02:00"), "Miniflux pages by published_at");
     }
 
@@ -492,11 +539,72 @@ mod tests {
             )
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("starred", "true"))
+            .and(query_param("limit", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 4, "entries": [entry_json(9)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
         let counts = client(&server).feed_counts().await.unwrap();
         assert_eq!(
-            counts.iter().map(|c| (c.feed.id, c.unread, c.read)).collect::<Vec<_>>(),
+            counts.feeds.iter().map(|c| (c.feed.id, c.unread, c.read)).collect::<Vec<_>>(),
             vec![(1, Some(0), Some(5)), (2, Some(3), Some(0))]
         );
+        assert_eq!(counts.starred, Some(4));
+        let requests = server.received_requests().await.unwrap();
+        let starred = requests.iter().find(|r| r.url.query().is_some_and(|q| q.contains("starred"))).unwrap();
+        let statuses: Vec<String> =
+            starred.url.query_pairs().filter(|(k, _)| k == "status").map(|(_, v)| v.into_owned()).collect();
+        assert_eq!(statuses, ["unread", "read"], "read and unread ones, and no removed ones");
+    }
+
+    #[tokio::test]
+    async fn starred_entries_are_read_and_unread_newest_first_before_past() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(query_param("starred", "true"))
+            .and(query_param("order", "published_at"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("before", "1761286321"))
+            .and(query_param_is_missing("after"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 3, "entries": [entry_json(5)] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        // The status doesn't narrow the starred list.
+        let page = c.entries(Selection::Starred, EntryStatus::Read, Order::NewestFirst, 1_761_286_321, 50).await;
+        assert_eq!(page.unwrap().total, 3);
+        let requests = server.received_requests().await.unwrap();
+        let statuses: Vec<String> =
+            requests[0].url.query_pairs().filter(|(k, _)| k == "status").map(|(_, v)| v.into_owned()).collect();
+        assert_eq!(statuses, ["unread", "read"]);
+    }
+
+    #[tokio::test]
+    async fn set_starred_toggles_the_bookmark_only_when_the_server_has_it_the_other_way() {
+        let server = MockServer::start().await;
+        // The server says it isn't starred.
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/42"))
+            .and(header("X-Auth-Token", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(entry_json(42)))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries/42/bookmark"))
+            .and(header("X-Auth-Token", "secret"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        c.set_starred(42, true).await.unwrap();
+        // Unstarring what the server already has unstarred (starred elsewhere and back, say) toggles nothing.
+        c.set_starred(42, false).await.unwrap();
     }
 
     #[tokio::test]

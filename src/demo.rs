@@ -2,8 +2,10 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::miniflux::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
+use std::collections::BTreeSet;
+use std::sync::Mutex;
 
 struct DemoFeed {
     id: i64,
@@ -96,6 +98,40 @@ const ENTRIES: &[DemoEntry] = &[
     },
 ];
 
+/// The ids of the articles that start out starred.
+const STARRED_AT_START: [i64; 2] = [2, 5];
+
+/// Which demo articles are starred: a couple to begin with, then what `*` makes of them, in memory for as long as
+/// the app runs (each backend has its own, so tests don't share them).
+#[derive(Debug)]
+pub struct Stars(Mutex<BTreeSet<i64>>);
+
+impl Default for Stars {
+    fn default() -> Self {
+        Self(Mutex::new(STARRED_AT_START.into_iter().collect()))
+    }
+}
+
+impl Stars {
+    pub fn set(&self, id: i64, starred: bool) {
+        let mut ids = self.ids();
+        if starred {
+            ids.insert(id);
+        } else {
+            ids.remove(&id);
+        }
+    }
+
+    fn ids(&self) -> std::sync::MutexGuard<'_, BTreeSet<i64>> {
+        // A poisoned lock only means another thread panicked mid-change; the set is still plain data.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn has(&self, id: i64) -> bool {
+        self.ids().contains(&id)
+    }
+}
+
 fn feed(id: i64) -> &'static DemoFeed {
     FEEDS.iter().find(|f| f.id == id).expect("every demo entry belongs to a listed demo feed")
 }
@@ -105,20 +141,23 @@ fn as_feed(f: &DemoFeed) -> Feed {
 }
 
 /// Every demo article counts as both unread and read, so the history has something to show too.
-pub fn feed_counts() -> Vec<FeedCount> {
-    FEEDS
+pub fn feed_counts(stars: &Stars) -> Counts {
+    let feeds = FEEDS
         .iter()
         .map(|f| {
             let n = ENTRIES.iter().filter(|e| e.feed == f.id).count() as i64;
             FeedCount { feed: as_feed(f), unread: Some(n), read: Some(n) }
         })
-        .collect()
+        .collect();
+    Counts { feeds, starred: Some(stars.ids().len() as i64) }
 }
 
 /// A page, the way Miniflux pages: oldest first, published after `past`, or newest first, published before it
-/// (0: from the start). History shows the same articles again, marked read.
-pub fn entries(sel: Selection, status: EntryStatus, order: Order, past: i64, limit: usize) -> EntryPage {
-    let mut all = selection(sel);
+/// (0: from the start). History shows the same articles again, marked read; the starred ones come as they are,
+/// unread, whatever `status` says.
+pub fn entries(sel: Selection, status: EntryStatus, order: Order, past: i64, limit: usize, stars: &Stars) -> EntryPage {
+    let status = if sel == Selection::Starred { EntryStatus::Unread } else { status };
+    let mut all = selection(sel, stars);
     if order == Order::NewestFirst {
         all.reverse();
     }
@@ -133,9 +172,9 @@ pub fn entries(sel: Selection, status: EntryStatus, order: Order, past: i64, lim
 }
 
 /// Articles whose title or text has every word of `query` (any case), newest first, `limit` from `offset`.
-pub fn search(query: &str, offset: usize, limit: usize) -> EntryPage {
+pub fn search(query: &str, offset: usize, limit: usize, stars: &Stars) -> EntryPage {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut found: Vec<Entry> = selection(Selection::All)
+    let mut found: Vec<Entry> = selection(Selection::All, stars)
         .into_iter()
         .filter(|e| {
             let text = format!("{} {}", e.title, e.content).to_lowercase();
@@ -147,17 +186,17 @@ pub fn search(query: &str, offset: usize, limit: usize) -> EntryPage {
     EntryPage { total, entries: found.into_iter().skip(offset).take(limit).collect() }
 }
 
-pub fn newest_unread_id(sel: Selection) -> i64 {
-    selection(sel).iter().map(|e| e.id).max().unwrap_or(0)
+pub fn newest_unread_id(sel: Selection, stars: &Stars) -> i64 {
+    selection(sel, stars).iter().map(|e| e.id).max().unwrap_or(0)
 }
 
-pub fn unread_count(sel: Selection, up_to: i64) -> i64 {
-    selection(sel).iter().filter(|e| e.id <= up_to).count() as i64
+pub fn unread_count(sel: Selection, up_to: i64, stars: &Stars) -> i64 {
+    selection(sel, stars).iter().filter(|e| e.id <= up_to).count() as i64
 }
 
 /// Pretends to: nothing is ever marked read in demo mode.
-pub fn mark_read_up_to(sel: Selection, up_to: i64) -> usize {
-    selection(sel).iter().filter(|e| e.id <= up_to).count()
+pub fn mark_read_up_to(sel: Selection, up_to: i64, stars: &Stars) -> usize {
+    selection(sel, stars).iter().filter(|e| e.id <= up_to).count()
 }
 
 /// Unix seconds of a demo date; they're all written as `YYYY-MM-DDTHH:MM:SS+HH:MM`.
@@ -177,14 +216,15 @@ fn unix_seconds(date: &str) -> i64 {
 }
 
 /// The selection's articles, unread, oldest first.
-fn selection(sel: Selection) -> Vec<Entry> {
+fn selection(sel: Selection, stars: &Stars) -> Vec<Entry> {
     ENTRIES
         .iter()
         .enumerate()
-        .filter(|(_, e)| match sel {
+        .filter(|(i, e)| match sel {
             Selection::All => true,
             Selection::Category { id } => feed(e.feed).category.0 == id,
             Selection::Feed { id } => e.feed == id,
+            Selection::Starred => stars.has(*i as i64 + 1),
         })
         .map(|(i, e)| Entry {
             id: i as i64 + 1,
@@ -197,6 +237,7 @@ fn selection(sel: Selection) -> Vec<Entry> {
             reading_time: e.minutes,
             feed: EntryFeed { id: e.feed, title: feed(e.feed).title.into() },
             order_ms: 0, // pages by published_at, as Miniflux does
+            starred: stars.has(i as i64 + 1),
         })
         .collect()
 }
@@ -309,7 +350,7 @@ mod tests {
 
     #[test]
     fn feed_counts_match_entries() {
-        let counts = feed_counts();
+        let counts = feed_counts(&Stars::default()).feeds;
         assert_eq!(counts.len(), FEEDS.len());
         let total: i64 = counts.iter().filter_map(|c| c.unread).sum();
         assert_eq!(total, ENTRIES.len() as i64);
@@ -322,41 +363,47 @@ mod tests {
 
     #[test]
     fn selections_filter_consistently() {
-        let all = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 100);
+        let all = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 100, &Stars::default());
         assert_eq!(all.total, ENTRIES.len() as i64);
         assert!(all.entries.iter().all(|e| e.status == EntryStatus::Unread));
         assert_eq!(ids(&all), (1..=ENTRIES.len() as i64).collect::<Vec<_>>());
-        assert_eq!(newest_unread_id(Selection::All), ENTRIES.len() as i64);
+        assert_eq!(newest_unread_id(Selection::All, &Stars::default()), ENTRIES.len() as i64);
 
-        let dev = entries(Selection::Category { id: 1 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries;
+        let dev =
+            entries(Selection::Category { id: 1 }, EntryStatus::Unread, Order::OldestFirst, 0, 100, &Stars::default())
+                .entries;
         assert!(dev.iter().all(|e| [1, 2].contains(&e.feed.id)));
         assert_eq!(dev.len(), all.entries.iter().filter(|e| [1, 2].contains(&e.feed.id)).count());
 
-        let watches = entries(Selection::Feed { id: 5 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries;
+        let watches =
+            entries(Selection::Feed { id: 5 }, EntryStatus::Unread, Order::OldestFirst, 0, 100, &Stars::default())
+                .entries;
         assert_eq!(watches.len(), 2);
         assert!(watches.iter().all(|e| e.feed.title == "Escapement Journal"));
-        assert_eq!(unread_count(Selection::Feed { id: 5 }, watches[0].id), 1);
-        assert_eq!(mark_read_up_to(Selection::Feed { id: 5 }, watches[1].id), 2);
+        assert_eq!(unread_count(Selection::Feed { id: 5 }, watches[0].id, &Stars::default()), 1);
+        assert_eq!(mark_read_up_to(Selection::Feed { id: 5 }, watches[1].id, &Stars::default()), 2);
 
         assert!(
-            entries(Selection::Feed { id: 99 }, EntryStatus::Unread, Order::OldestFirst, 0, 100).entries.is_empty()
+            entries(Selection::Feed { id: 99 }, EntryStatus::Unread, Order::OldestFirst, 0, 100, &Stars::default())
+                .entries
+                .is_empty()
         );
-        assert_eq!(newest_unread_id(Selection::Feed { id: 99 }), 0);
+        assert_eq!(newest_unread_id(Selection::Feed { id: 99 }, &Stars::default()), 0);
     }
 
     #[test]
     fn unread_pages_go_on_after_a_time() {
-        let first = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 3);
+        let first = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 3, &Stars::default());
         assert_eq!((ids(&first), first.total), (vec![1, 2, 3], ENTRIES.len() as i64));
         let past = unix_seconds(&first.entries[2].published_at);
-        let next = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, past, 3);
+        let next = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, past, 3, &Stars::default());
         assert_eq!((ids(&next), next.total), (vec![4, 5, 6], ENTRIES.len() as i64 - 3));
     }
 
     #[test]
     fn history_is_read_newest_first_and_paged() {
         let n = ENTRIES.len() as i64;
-        let all = entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 0, 100);
+        let all = entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 0, 100, &Stars::default());
         assert_eq!(all.total, n);
         assert!(all.entries.iter().all(|e| e.status == EntryStatus::Read));
         assert_eq!(ids(&all), (1..=n).rev().collect::<Vec<_>>());
@@ -367,15 +414,18 @@ mod tests {
             Order::NewestFirst,
             unix_seconds(&all.entries[1].published_at),
             3,
+            &Stars::default(),
         );
         assert_eq!(ids(&page), ids(&all)[2..5]);
         assert_eq!(page.total, n - 2);
-        assert!(entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 1, 3).entries.is_empty());
+        assert!(
+            entries(Selection::All, EntryStatus::Read, Order::NewestFirst, 1, 3, &Stars::default()).entries.is_empty()
+        );
     }
 
     #[test]
     fn unread_newest_first_runs_backwards() {
-        let page = entries(Selection::All, EntryStatus::Unread, Order::NewestFirst, 0, 2);
+        let page = entries(Selection::All, EntryStatus::Unread, Order::NewestFirst, 0, 2, &Stars::default());
         let n = ENTRIES.len() as i64;
         assert_eq!(ids(&page), [n, n - 1]);
         assert!(page.entries.iter().all(|e| e.status == EntryStatus::Unread));
@@ -383,15 +433,35 @@ mod tests {
 
     #[test]
     fn search_finds_every_word_in_any_case_newest_first() {
-        let found = search("WATCH", 0, 100);
+        let found = search("WATCH", 0, 100, &Stars::default());
         assert!(found.total >= 2);
         assert!(ids(&found).windows(2).all(|w| w[0] > w[1]));
-        let tick = search("tick tock", 0, 100);
+        let tick = search("tick tock", 0, 100, &Stars::default());
         assert_eq!(tick.entries.iter().map(|e| e.title.as_str()).next(), Some(ENTRIES[7].title));
-        assert_eq!(search("tick zebra-crossing", 0, 100).total, 0);
-        assert_eq!(search("  ", 0, 100).total, 0);
-        let paged = search("the", 1, 2);
-        assert_eq!(ids(&paged), ids(&search("the", 0, 100))[1..3]);
+        assert_eq!(search("tick zebra-crossing", 0, 100, &Stars::default()).total, 0);
+        assert_eq!(search("  ", 0, 100, &Stars::default()).total, 0);
+        let paged = search("the", 1, 2, &Stars::default());
+        assert_eq!(ids(&paged), ids(&search("the", 0, 100, &Stars::default()))[1..3]);
+    }
+
+    #[test]
+    fn a_couple_start_starred_and_starring_changes_the_list_and_its_count() {
+        let stars = Stars::default();
+        assert_eq!(feed_counts(&stars).starred, Some(2));
+        let starred = entries(Selection::Starred, EntryStatus::Read, Order::NewestFirst, 0, 100, &stars);
+        assert_eq!(ids(&starred), [5, 2], "newest first");
+        assert!(starred.entries.iter().all(|e| e.starred && e.status == EntryStatus::Unread));
+        let all = entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 100, &stars);
+        let marked: Vec<i64> = all.entries.iter().filter(|e| e.starred).map(|e| e.id).collect();
+        assert_eq!(marked, [2, 5], "other lists show the star too");
+
+        stars.set(1, true);
+        stars.set(5, false);
+        assert_eq!(feed_counts(&stars).starred, Some(2));
+        assert_eq!(ids(&entries(Selection::Starred, EntryStatus::Unread, Order::NewestFirst, 0, 100, &stars)), [2, 1]);
+        assert!(search("one article", 0, 10, &stars).entries.iter().any(|e| e.id == 1 && e.starred));
+        assert_eq!(newest_unread_id(Selection::Starred, &stars), 2);
+        assert_eq!(feed_counts(&Stars::default()).starred, Some(2), "each backend has its own");
     }
 
     #[test]

@@ -53,17 +53,27 @@ struct ContentView: View {
                 // with a word.
                 Label(label.isEmpty ? "Feeds" : label,
                       systemImage: state?.history == true ? "clock.arrow.circlepath"
-                          : state?.searching == true ? "magnifyingglass" : "list.bullet")
+                          : state?.searching == true ? "magnifyingglass"
+                          : state?.starredList == true ? "star" : "list.bullet")
                     .labelStyle(.titleAndIcon)
             }
             .help("Feeds (p)")
         }
         if let position = state?.position, !position.isEmpty {
             ToolbarItem(placement: .principal) {
-                Text(state?.history == true ? "History · \(position)"
-                    : state?.searching == true ? "Search · \(position)" : position)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    // The article on screen is starred (*).
+                    if state?.screen == "article", state?.article?.starred == true {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.tint)
+                            .help("Starred (*)")
+                    }
+                    Text(state?.history == true ? "History · \(position)"
+                        : state?.searching == true ? "Search · \(position)"
+                        : state?.starredList == true ? "Starred · \(position)" : position)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {

@@ -401,6 +401,30 @@ fn the_end_of_the_list_says_where_j_goes() {
 }
 
 #[test]
+fn star_puts_a_star_in_the_top_bar_and_the_starred_row_lists_them() {
+    let mut s = Screenful::new(100, 30);
+    // The demo starts with two starred, in a row after All unread.
+    let (_, row) = s.find("Starred");
+    assert!(s.text().lines().nth(usize::from(row)).unwrap().contains('2'), "{}", s.text());
+    s.key(KeyCode::Enter);
+    assert!(!s.text().lines().next().unwrap().contains('★'), "{}", s.text());
+    s.keys("*");
+    let top = s.text().lines().next().unwrap().to_string();
+    assert!(top.contains("★ 1 / 8"), "{top}");
+    assert!(s.shows("Starred"), "the toast: {}", s.text());
+    s.keys("*");
+    assert!(!s.text().lines().next().unwrap().contains('★'), "{}", s.text());
+    s.keys("*");
+    s.keys("p");
+    let (column, row) = s.find("Starred");
+    assert!(s.text().lines().nth(usize::from(row)).unwrap().contains('3'), "now three: {}", s.text());
+    s.mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+    let top = s.text().lines().next().unwrap().to_string();
+    assert!(top.contains("STARRED") && top.contains("★ 1 / 3"), "{top}");
+    assert!(s.shows("Designing with only five colours"), "newest first: {}", s.text());
+}
+
+#[test]
 fn history_has_its_badge() {
     let mut s = Screenful::new(100, 30);
     s.keys("h");
@@ -412,7 +436,7 @@ fn history_has_its_badge() {
 #[test]
 fn a_tall_picker_keeps_the_cursor_in_view() {
     let mut s = Screenful::new(60, 8);
-    for _ in 0..8 {
+    for _ in 1..s.ui.app.picker_items().len() {
         s.keys("j");
     }
     let last = s.ui.app.picker_items().last().unwrap().label.clone();

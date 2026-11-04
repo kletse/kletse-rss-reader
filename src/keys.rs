@@ -17,6 +17,8 @@ pub enum Action {
         up: bool,
     },
     ToggleRead,
+    /// `*`: star or unstar the article on the server.
+    ToggleStar,
     OpenOriginal,
     SaveToReadeck,
     FetchFull,
@@ -53,6 +55,7 @@ pub const READER_KEYS: Keymap = &[
     (&["Enter"], Action::Enter),
     (&[" "], Action::Space { up: false }),
     (&["m"], Action::ToggleRead),
+    (&["*"], Action::ToggleStar),
     (&["o"], Action::OpenOriginal),
     (&["b"], Action::SaveToReadeck),
     (&["f"], Action::FetchFull),
@@ -154,6 +157,7 @@ pub const HELP: &[HelpRow] = &[
     row(&[Plain("n")], "skip (keeps unread)"),
     row(&[Plain("k"), Plain("ArrowUp")], "previous"),
     row(&[Plain("m")], "toggle read / unread"),
+    row(&[Plain("*")], "star / unstar the article"),
     row(&[Plain("o")], "open original in browser"),
     row(&[Plain("b")], "save to Readeck, then next"),
     row(&[Plain("f")], "fetch full article (again for feed version)"),
@@ -301,6 +305,7 @@ mod tests {
         assert_eq!(first, [("j / ↓", "next (marks read)"), ("n", "skip (keeps unread)"), ("k / ↑", "previous")]);
         assert!(lines.contains(&("Shift+A".into(), "mark whole list read (in picker: the selected row)".into())));
         assert!(lines.contains(&("/".into(), "search all feeds, read and unread".into())));
+        assert!(lines.contains(&("*".into(), "star / unstar the article".into())));
         assert!(lines.contains(&("g / p / Tab / Esc / ←".into(), "feeds picker (→ / o picks a row)".into())));
         assert!(lines.contains(&("r".into(), "refresh feeds (in picker)".into())));
         assert!(lines.contains(&("Space / Shift+Space".into(), "scroll; Space at the end = next".into())));

@@ -22,6 +22,8 @@ struct AppState: Decodable {
     let history: Bool
     /// Reading search results.
     let searching: Bool
+    /// Reading the starred items.
+    let starredList: Bool
     let position: String
     let readeck: Bool
     /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
@@ -53,6 +55,8 @@ struct ArticleInfo: Decodable {
     let publishedAt: String
     let readingTime: Int
     let status: String
+    /// Starred on the server (*).
+    let starred: Bool
     /// Only when converted again; the model keeps the last ones.
     let blocks: [Block]?
 }

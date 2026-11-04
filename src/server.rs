@@ -3,7 +3,7 @@
 
 use crate::error::Error;
 use crate::greader;
-use crate::miniflux::{self, EntryPage, EntryStatus, FeedCount, Selection};
+use crate::miniflux::{self, Counts, EntryPage, EntryStatus, Selection};
 use crate::paging::Order;
 
 #[derive(Debug)]
@@ -21,13 +21,16 @@ impl Server {
         }
     }
 
-    pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, Error> {
+    /// Every feed with its counts, and how many entries are starred.
+    pub async fn feed_counts(&self) -> Result<Counts, Error> {
         match self {
             Server::Miniflux(c) => c.feed_counts().await,
             Server::GReader(c) => c.feed_counts().await,
         }
     }
 
+    /// A page of the selection's entries with `status`; for `Selection::Starred`, read and unread alike: the
+    /// status is ignored there.
     pub async fn entries(
         &self,
         sel: Selection,
@@ -74,6 +77,14 @@ impl Server {
         match self {
             Server::Miniflux(c) => c.set_status(ids, status).await,
             Server::GReader(c) => c.set_status(ids, status).await,
+        }
+    }
+
+    /// Stars or unstars an entry. Call it only to change it: Miniflux can only toggle.
+    pub async fn set_starred(&self, id: i64, starred: bool) -> Result<(), Error> {
+        match self {
+            Server::Miniflux(c) => c.set_starred(id, starred).await,
+            Server::GReader(c) => c.set_starred(id, starred).await,
         }
     }
 

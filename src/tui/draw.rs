@@ -66,11 +66,21 @@ fn top_bar(ui: &Ui, frame: &mut Frame, area: Rect) {
     let mut left = vec![Span::raw("☰ "), Span::raw(fitted(label, usize::from(area.width) * 2 / 5))];
     if app.searching() {
         left.extend([Span::raw("  "), Span::styled("SEARCH", ACCENTED)]);
+    } else if app.starred_list() {
+        left.extend([Span::raw("  "), Span::styled("STARRED", ACCENTED)]);
     } else if app.history_badge() {
         left.extend([Span::raw("  "), Span::styled("HISTORY", ACCENTED)]);
     }
     frame.render_widget(Line::from(left), inner);
-    frame.render_widget(Line::styled(app.position(), DIM).centered(), inner);
+    // The article on screen is starred (`*`): a star before where you are, the position itself staying put.
+    let position = app.position();
+    let starred = app.starred() && app.screen() == Screen::Article;
+    let mut middle = vec![Span::styled(position.clone(), DIM)];
+    if starred {
+        middle.splice(0..0, [Span::styled("★ ", ACCENTED)]);
+        middle.push(Span::raw("  "));
+    }
+    frame.render_widget(Line::from(middle).centered(), inner);
     frame.render_widget(Line::styled("? keys", DIM).right_aligned(), inner);
     frame.render_widget(Line::styled("─".repeat(usize::from(area.width)), DIM), row_at(area.y + 1, area));
 }

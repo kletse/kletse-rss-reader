@@ -112,6 +112,7 @@ pub mod tests {
             reading_time: 1,
             feed: EntryFeed { id: 1, title: "Feed".into() },
             order_ms: 0,
+            starred: false,
         }
     }
 

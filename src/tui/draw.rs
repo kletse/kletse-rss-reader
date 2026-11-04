@@ -15,6 +15,8 @@ use unicode_width::UnicodeWidthStr;
 
 const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 const ACCENTED: Style = Style::new().fg(ACCENT);
+/// The logo, as near as text gets: the articles to come and the one you're reading.
+const LOGO: &str = "· • O";
 const ERROR: Style = Style::new().fg(Color::Red);
 
 pub fn draw(ui: &mut Ui, frame: &mut Frame) {
@@ -79,19 +81,23 @@ fn body(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     match ui.app.screen() {
         Screen::Article => reader(ui, frame, area),
         Screen::Settings => settings(ui, frame, area),
-        Screen::Loading => message(ui, frame, "", "Loading…"),
+        Screen::Loading => message(ui, frame, "", "", "Loading…"),
         Screen::End => {
             let (title, hint) = (ui.app.end_title(), ui.app.end_hint());
-            message(ui, frame, title, &hint);
+            message(ui, frame, LOGO, title, &hint);
         }
         Screen::Empty => {}
     }
 }
 
-fn message(ui: &Ui, frame: &mut Frame, title: &str, text: &str) {
+fn message(ui: &Ui, frame: &mut Frame, logo: &str, title: &str, text: &str) {
     let column = ui.column;
     let width = usize::from(column.width);
     let mut rows = vec![Row::default()];
+    if !logo.is_empty() {
+        rows.extend(article::plain(logo, ACCENTED, width));
+        rows.push(Row::default());
+    }
     if !title.is_empty() {
         rows.extend(article::plain(title, BOLD, width));
         rows.push(Row::default());

@@ -45,7 +45,7 @@ ApplicationWindow {
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
     }
 
-    // macOS: follow the system appearance and accent colour (it has no event for the accent, so on focus too).
+    // macOS: follow the system appearance.
     onActiveChanged: if (active) model.recheckTheme()
     Connections {
         target: Application.styleHints

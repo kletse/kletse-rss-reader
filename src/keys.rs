@@ -79,6 +79,7 @@ pub const PICKER_KEYS: Keymap = &[
     (&["h"], Action::ToggleMode),
     (&["?"], Action::Help),
     (&["Escape", "g", "p", "Tab"], Action::PickerClose),
+    (&["q"], Action::Quit),
 ];
 
 /// Ctrl combinations (⌘ on macOS: Qt reports ⌘ as Ctrl there).
@@ -190,7 +191,7 @@ pub const HELP: &[HelpRow] = &[
     row(&[Mod("0")], "reset font size and width"),
     HelpRow { keys: &[Plain(",")], action: "settings", place: Where::Both, picker_note: None },
     HelpRow { keys: &[Plain("?")], action: "this help", place: Where::Both, picker_note: None },
-    row(&[Plain("q")], "quit"),
+    HelpRow { keys: &[Plain("q")], action: "quit", place: Where::Both, picker_note: None },
 ];
 
 /// How the help (and the README) names a key: arrows as glyphs, Esc, Space, a real minus sign.

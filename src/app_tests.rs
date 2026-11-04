@@ -139,7 +139,8 @@ impl Harness {
     }
 
     fn exec(&mut self, effect: Effect) -> Option<Outcome> {
-        let server = !matches!(effect, Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit);
+        let server =
+            !matches!(effect, Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings);
         if server {
             self.calls.push(effect.clone());
         }
@@ -203,7 +204,11 @@ impl Harness {
             }
             Effect::FeedCounts => Some(Outcome::FeedCounts(Ok(self.counts.clone()))),
             Effect::RefreshFeeds => Some(Outcome::Refreshed(self.fail_fetch.clone().map_or(Ok(()), Err))),
-            Effect::ReloadPickerAfter { .. } | Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => None,
+            Effect::ReloadPickerAfter { .. }
+            | Effect::SavePrefs(_)
+            | Effect::ScrollPage { .. }
+            | Effect::Quit
+            | Effect::ShowSettings => None,
             Effect::SaveToReadeck { index, id, .. } => {
                 if self.hold_save {
                     self.held = Some(effect);
@@ -982,6 +987,67 @@ fn a_failed_save_shows_why_and_lets_you_try_again() {
     assert_eq!(form.error, "Miniflux rejected the API key");
     assert!(!form.checking);
     assert_eq!(h.app.overlay(), Overlay::Settings);
+}
+
+#[test]
+fn a_settings_window_leaves_the_reader_as_it_was() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    assert!(h.app.settings().is_some());
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.title(), Some("First"));
+    h.key("j");
+    assert_eq!(h.title(), Some("Second"), "the keys still read");
+
+    let fx = h.app.cancel_settings();
+    h.run(fx);
+    assert!(h.app.settings().is_none());
+    assert_eq!(h.title(), Some("Second"));
+}
+
+#[test]
+fn asking_for_the_open_settings_window_only_brings_it_up() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    let values = SettingsValues { miniflux_url: "typed".into(), ..SettingsValues::default() };
+    h.app.settings.as_mut().unwrap().values = values;
+    let (_, fx) = h.app.key(&KeyPress { key: ",".into(), ..KeyPress::default() });
+    assert!(matches!(fx.as_slice(), [Effect::ShowSettings]), "the form isn't loaded again");
+}
+
+#[test]
+fn saving_in_the_settings_window_starts_over_from_the_picker() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.app.settings().is_none());
+    assert_eq!(h.toast(), Some("Settings saved"));
+    assert!(h.picker_loaded());
+}
+
+#[test]
+fn a_settings_window_doesnt_replace_onboarding() {
+    let mut h = Harness::new(items(2));
+    h.app.use_settings_window();
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.start();
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+    h.press(KeyPress { key: ",".into(), ..KeyPress::default() });
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn q_quits_from_the_picker() {
+    let mut h = first_second();
+    h.key("p");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    let (used, fx) = h.app.key(&KeyPress { key: "q".into(), ..KeyPress::default() });
+    assert!(used);
+    assert!(matches!(fx.as_slice(), [Effect::Quit]));
 }
 
 #[test]

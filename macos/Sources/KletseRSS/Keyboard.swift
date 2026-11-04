@@ -1,10 +1,12 @@
 // Every key goes to the core first, named as the web's `KeyboardEvent.key` names it (src/keys.rs has the
-// keymaps). What the core doesn't use carries on as usual: ⌘Q, ⌘C, typing in a settings field.
+// keymaps). What the core doesn't use carries on as usual: ⌘Q, ⌘C, typing in a field. The Settings window keeps its
+// keys to itself, or j on a popup button would move the reader along behind it.
 import AppKit
 
 @MainActor
 enum Keyboard {
     private static var monitor: Any?
+    static weak var settingsWindow: NSWindow?
 
     static func install(model: Model) {
         guard monitor == nil else { return }
@@ -15,6 +17,7 @@ enum Keyboard {
     }
 
     private static func handle(_ event: NSEvent, model: Model) -> Bool {
+        if let settingsWindow, event.window === settingsWindow { return false }
         guard let name = name(of: event) else { return false }
         let flags = event.modifierFlags
         return model.key(

@@ -12,6 +12,7 @@ const QML: &[&str] = &[
     "qml/Blocks.qml",
     "qml/RichText.qml",
     "qml/Message.qml",
+    "qml/Logo.qml",
     "qml/Picker.qml",
     "qml/Help.qml",
     "qml/Confirm.qml",

@@ -1,4 +1,4 @@
-// The window: the toolbar, the reader (an article, a message or the settings form), and what goes over it:
+// The window: the toolbar, the reader (an article or a message; on first run, onboarding), and what goes over it:
 // the feeds picker, the keys and the search box (sheets), the confirm dialog (an alert), the image viewer and
 // toasts.
 import SwiftUI
@@ -6,12 +6,13 @@ import SwiftUI
 struct ContentView: View {
     @State private var model = Model.shared
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let state = model.state
         Group {
             if state?.screen == "settings" {
-                SettingsView(model: model)
+                OnboardingView(model: model)
             } else {
                 ReaderView(model: model)
             }
@@ -42,6 +43,8 @@ struct ContentView: View {
             return .handled
         })
         .onChange(of: colorScheme) { model.themeChanged() }
+        // Also brings it to the front when it's open already.
+        .onChange(of: model.settingsRequests) { openSettings() }
     }
 
     @ToolbarContentBuilder
@@ -134,7 +137,7 @@ struct ToastView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(toast.error ? Color.red : Color.accentColor.opacity(0.6)))
+                .overlay(Capsule().strokeBorder(toast.error ? Color.red : Brand.accent.opacity(0.6)))
                 .padding(16)
                 .transition(.opacity)
                 // Errors stay up longer, to be read.

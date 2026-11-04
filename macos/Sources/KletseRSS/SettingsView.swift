@@ -1,138 +1,232 @@
-// Onboarding (first run) and Settings: a feed server is required (Miniflux, or a Google Reader API server such as
-// FreshRSS), Readeck optional. Saving checks both servers before anything is written. Shown in place of the
-// article; Esc cancels (the core decides), except on first run.
+// The server details, in two places. `SettingsWindow` is the app's Settings window, beside the reader; `OnboardingView`
+// is the same fields in the main window on first run, when there is nothing to read until they're filled in.
+// A feed server is required (Miniflux, or a Google Reader API server such as FreshRSS), Readeck optional. Saving
+// checks both servers before anything is written, which is why these have a Save button where most Mac settings
+// apply as you go.
+import AppKit
 import SwiftUI
 
-struct SettingsView: View {
+/// The field to start in: the chosen server's first empty one, or its last.
+private enum Field {
+    case minifluxUrl, minifluxApiKey, greaderUrl, greaderUsername, greaderPassword
+
+    static func first(_ values: SettingsValues) -> Field {
+        let fields: [(Field, String)] = values.server == "greader"
+            ? [(.greaderUrl, values.greaderUrl), (.greaderUsername, values.greaderUsername),
+               (.greaderPassword, values.greaderPassword)]
+            : [(.minifluxUrl, values.minifluxUrl), (.minifluxApiKey, values.minifluxApiKey)]
+        return (fields.first { $0.1.isEmpty } ?? fields[fields.count - 1]).0
+    }
+}
+
+/// Applies at once, unlike the servers: there's nothing to check.
+private struct AppIconPane: View {
+    @AppStorage(AppIcon.key) private var icon = AppIcon.automatic
+
+    var body: some View {
+        Form {
+            Picker("App icon", selection: $icon) {
+                Text("Light or dark, as the system").tag(AppIcon.automatic)
+                Text("Orange").tag(AppIcon.orange)
+            }
+            .pickerStyle(.radioGroup)
+        }
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: icon) { AppIcon.change() }
+    }
+}
+
+struct SettingsWindow: View {
     let model: Model
 
-    /// "miniflux" or "greader": which fields show. The other kind's are kept, for switching back.
-    @State private var server = "miniflux"
-    @State private var minifluxUrl = ""
-    @State private var minifluxApiKey = ""
-    @State private var greaderUrl = ""
-    @State private var greaderUsername = ""
-    @State private var greaderPassword = ""
-    @State private var readeckUrl = ""
-    @State private var readeckToken = ""
+    @State private var values = SettingsValues.empty
+    /// As loaded, for Revert and to tell whether there is anything to save.
+    @State private var saved = SettingsValues.empty
     @FocusState private var focus: Field?
-
-    private enum Field { case minifluxUrl, minifluxApiKey, greaderUrl, greaderUsername, greaderPassword }
 
     var body: some View {
         let settings = model.state?.settings
-        let firstRun = model.state?.overlay == "onboarding"
+        TabView {
+            Tab("Feed Server", systemImage: "antenna.radiowaves.left.and.right") {
+                pane(settings) { FeedServerSections(values: $values, focus: $focus) }
+            }
+            Tab("Readeck", systemImage: "bookmark") {
+                pane(settings) { ReadeckSection(values: $values) }
+            }
+            Tab("App Icon", systemImage: "app") {
+                AppIconPane()
+            }
+        }
+        .frame(width: 480)
+        .background(WindowNote())
+        // The form starts from the saved values once (the serial says when they are in); after that it keeps what
+        // is typed, also when a check fails.
+        .onChange(of: settings?.serial, initial: true) {
+            guard settings != nil, let loaded = model.settingsValues else { return }
+            values = loaded
+            saved = loaded
+            focus = .first(loaded)
+        }
+        // What's left unsaved when the window closes is dropped. A save closes it from `Model`.
+        .onDisappear { model.cancelSettings() }
+    }
+
+    private func pane(_ settings: SettingsInfo?, @ViewBuilder content: () -> some View) -> some View {
+        let checking = settings?.checking == true
+        return VStack(spacing: 0) {
+            Form {
+                MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+                content()
+                MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
+            }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if checking {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Revert") { values = saved }
+                    .disabled(values == saved || checking)
+                Button("Save") { model.submitSettings(values) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(checking || (values == saved && settings?.problem.isEmpty != false))
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+    }
+}
+
+/// Tells `Keyboard` which window is this one: its keys are its own, not the reader's.
+private struct WindowNote: NSViewRepresentable {
+    final class Note: NSView {
+        override func viewDidMoveToWindow() {
+            if let window { Keyboard.settingsWindow = window }
+        }
+    }
+
+    func makeNSView(context: Context) -> Note { Note() }
+    func updateNSView(_ view: Note, context: Context) {}
+}
+
+/// First run. It can't be cancelled.
+struct OnboardingView: View {
+    let model: Model
+
+    @State private var values = SettingsValues.empty
+    @FocusState private var focus: Field?
+
+    var body: some View {
+        let settings = model.state?.settings
+        let checking = settings?.checking == true
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(firstRun ? "Welcome to Kletse RSS" : "Settings").font(.largeTitle.bold())
-                    Text(firstRun
-                        ? "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b."
-                        : "Changes are checked against your servers before they are saved.")
+                    LogoMark(width: 72).padding(.bottom, 6)
+                    Text("Welcome to Kletse RSS").font(.largeTitle.bold())
+                    Text("Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b.")
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }
             // What was wrong with the config file, above the fields it is about.
-            if let problem = settings?.problem, !problem.isEmpty {
-                Section {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .symbolRenderingMode(.multicolor)
-                }
-            }
-            Section {
-                Picker("Server", selection: $server) {
-                    Text("Miniflux").tag("miniflux")
-                    Text("Google Reader API (FreshRSS, …)").tag("greader")
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: server) { focusFirst() }
-            } header: {
-                Text("Server")
-            }
-            if server == "greader" {
-                Section {
-                    TextField("Server URL", text: $greaderUrl,
-                              prompt: Text("https://freshrss.example.com/api/greader.php"))
-                        .focused($focus, equals: .greaderUrl)
-                    TextField("Username", text: $greaderUsername)
-                        .focused($focus, equals: .greaderUsername)
-                    SecureField("Password", text: $greaderPassword)
-                        .focused($focus, equals: .greaderPassword)
-                } header: {
-                    Text("Google Reader API")
-                } footer: {
-                    Text(verbatim: "Required. FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.")
-                }
-            } else {
-                Section {
-                    TextField("Miniflux URL", text: $minifluxUrl, prompt: Text("https://miniflux.example.com"))
-                        .focused($focus, equals: .minifluxUrl)
-                    SecureField("API key", text: $minifluxApiKey)
-                        .focused($focus, equals: .minifluxApiKey)
-                } header: {
-                    Text("Miniflux")
-                } footer: {
-                    Text("Required. Settings → API Keys → Create a new API key.")
-                }
-            }
-            Section {
-                TextField("Readeck URL", text: $readeckUrl, prompt: Text("https://readeck.example.com"))
-                SecureField("API token", text: $readeckToken)
-            } header: {
-                Text("Readeck")
-            } footer: {
-                Text("Optional: leave empty to hide the bookmark button. Profile → API Tokens (needs “Bookmarks: write”).")
-            }
-            if let error = settings?.error, !error.isEmpty {
-                Section {
-                    Text(error).foregroundStyle(.red)
-                }
-            }
+            MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+            FeedServerSections(values: $values, focus: $focus)
+            ReadeckSection(values: $values)
+            MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
             HStack {
                 Spacer()
-                if !firstRun {
-                    Button("Cancel") { model.cancelSettings() }
-                }
-                Button(settings?.checking == true ? "Checking…" : (firstRun ? "Connect" : "Save"), action: submit)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(settings?.checking == true)
+                Button(checking ? "Checking…" : "Connect") { model.submitSettings(values) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(checking)
             }
         }
         .formStyle(.grouped)
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity)
-        .onSubmit(submit)
-        // The form starts from the saved values once (the serial says when they are in); after that it keeps what
-        // is typed, also when a check fails.
-        .onChange(of: settings?.serial, initial: true) { fill(settings?.values) }
+        .onChange(of: settings?.serial, initial: true) {
+            guard settings != nil, let loaded = model.settingsValues else { return }
+            values = loaded
+            focus = .first(loaded)
+        }
+    }
+}
+
+private struct FeedServerSections: View {
+    @Binding var values: SettingsValues
+    var focus: FocusState<Field?>.Binding
+
+    var body: some View {
+        Section {
+            Picker("Server type", selection: $values.server) {
+                Text("Miniflux").tag("miniflux")
+                Text("Google Reader API").tag("greader")
+            }
+            .onChange(of: values.server) { focus.wrappedValue = .first(values) }
+            if values.server == "greader" {
+                TextField("Server URL", text: $values.greaderUrl,
+                          prompt: Text(verbatim: "https://freshrss.example.com/api/greader.php"))
+                    .focused(focus, equals: .greaderUrl)
+                TextField("Username", text: $values.greaderUsername)
+                    .focused(focus, equals: .greaderUsername)
+                SecureField("Password", text: $values.greaderPassword)
+                    .focused(focus, equals: .greaderPassword)
+            } else {
+                TextField("Server URL", text: $values.minifluxUrl,
+                          prompt: Text(verbatim: "https://miniflux.example.com"))
+                    .focused(focus, equals: .minifluxUrl)
+                SecureField("API key", text: $values.minifluxApiKey)
+                    .focused(focus, equals: .minifluxApiKey)
+            }
+        } footer: {
+            Group {
+                if values.server == "greader" {
+                    Text(verbatim: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.")
+                } else {
+                    Text("In Miniflux: Settings → API Keys → Create a new API key.")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct ReadeckSection: View {
+    @Binding var values: SettingsValues
+
+    var body: some View {
+        Section {
+            TextField("Readeck URL", text: $values.readeckUrl,
+                      prompt: Text(verbatim: "https://readeck.example.com"))
+            SecureField("API token", text: $values.readeckToken)
+        } footer: {
+            Text("Optional: leave empty to hide the bookmark button. In Readeck: Profile → API Tokens (needs “Bookmarks: write”).")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Nothing when there is nothing to say.
+private struct MessageSection: View {
+    let message: String
+    let systemImage: String
+
+    init(_ message: String?, systemImage: String) {
+        self.message = message ?? ""
+        self.systemImage = systemImage
     }
 
-    private func fill(_ values: SettingsValues?) {
-        guard let values else { return }
-        server = values.server == "greader" ? "greader" : "miniflux"
-        minifluxUrl = values.minifluxUrl
-        minifluxApiKey = values.minifluxApiKey
-        greaderUrl = values.greaderUrl
-        greaderUsername = values.greaderUsername
-        greaderPassword = values.greaderPassword
-        readeckUrl = values.readeckUrl
-        readeckToken = values.readeckToken
-        focusFirst()
-    }
-
-    /// The chosen server's first empty field, or its last.
-    private func focusFirst() {
-        let fields: [(Field, String)] = server == "greader"
-            ? [(.greaderUrl, greaderUrl), (.greaderUsername, greaderUsername), (.greaderPassword, greaderPassword)]
-            : [(.minifluxUrl, minifluxUrl), (.minifluxApiKey, minifluxApiKey)]
-        focus = (fields.first { $0.1.isEmpty } ?? fields[fields.count - 1]).0
-    }
-
-    private func submit() {
-        model.submitSettings(SettingsValues(
-            server: server, minifluxUrl: minifluxUrl, minifluxApiKey: minifluxApiKey, greaderUrl: greaderUrl,
-            greaderUsername: greaderUsername, greaderPassword: greaderPassword, readeckUrl: readeckUrl,
-            readeckToken: readeckToken))
+    var body: some View {
+        if !message.isEmpty {
+            Section {
+                Label(message, systemImage: systemImage)
+                    .symbolRenderingMode(.multicolor)
+            }
+        }
     }
 }

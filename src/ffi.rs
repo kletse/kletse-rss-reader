@@ -109,12 +109,10 @@ impl std::fmt::Debug for Core {
 enum Command {
     Start {
         dark: bool,
-        accent: String,
     },
-    /// The system appearance or accent colour changed.
+    /// The system appearance changed.
     Theme {
         dark: bool,
-        accent: String,
     },
     Key {
         key: String,
@@ -310,8 +308,10 @@ impl Core {
     fn new(waker: Waker) -> Self {
         let demo = std::env::var("KLETSE_RSS_DEMO").is_ok_and(|v| v == "1");
         let (answers, waiting) = mpsc::channel();
+        let mut app = App::new(prefs::load(), true);
+        app.use_settings_window();
         Self {
-            app: App::new(prefs::load(), true),
+            app,
             backend: Arc::new(Backend::new(demo)),
             palette: Palette::default(),
             answers,
@@ -327,23 +327,23 @@ impl Core {
         }
     }
 
-    fn set_theme(&mut self, dark: bool, accent: &str) {
-        self.palette = Palette::from(&theme::macos(dark, accent));
+    fn set_theme(&mut self, dark: bool) {
+        self.palette = Palette::from(&theme::macos(dark));
     }
 
     fn handle(&mut self, command: Command) -> Reply {
         let mut events = Vec::new();
         let mut used = true;
         let fx = match command {
-            Command::Start { dark, accent } => {
-                self.set_theme(dark, &accent);
+            Command::Start { dark } => {
+                self.set_theme(dark);
                 // Loading the grammars takes a moment; better now than on the first code block.
                 std::thread::spawn(crate::content::highlight::warm_up);
                 let status = self.backend.status();
                 self.app.start(status)
             }
-            Command::Theme { dark, accent } => {
-                self.set_theme(dark, &accent);
+            Command::Theme { dark } => {
+                self.set_theme(dark);
                 Vec::new()
             }
             Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom } => {
@@ -431,6 +431,7 @@ impl Core {
                 }
                 Effect::ScrollPage { up } => events.push(if up { "scroll_up" } else { "scroll_down" }),
                 Effect::Quit => events.push("quit"),
+                Effect::ShowSettings => events.push("show_settings"),
                 effect => {
                     let backend = Arc::clone(&self.backend);
                     let answers = self.answers.clone();
@@ -680,7 +681,7 @@ mod tests {
         unsafe { std::env::set_var("KLETSE_RSS_DEMO", "1") };
         let core = kr_new(count, std::ptr::null_mut());
         assert!(send(core, r#"{"cmd":"nonsense"}"#)["error"].is_string());
-        let started = send(core, r##"{"cmd":"start","dark":true,"accent":"#0a84ff"}"##);
+        let started = send(core, r#"{"cmd":"start","dark":true}"#);
         assert_eq!(started["state"]["overlay"], "picker");
 
         let mut state = started["state"].clone();

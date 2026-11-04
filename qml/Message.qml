@@ -7,10 +7,16 @@ Column {
     required property var ui
     property string title: ""
     property string text: ""
+    property bool logo: false
 
     topPadding: ui.height * 0.2
     spacing: 16
 
+    Logo {
+        visible: m.logo
+        anchors.horizontalCenter: parent.horizontalCenter
+        color: m.ui.model.accent
+    }
     Text {
         visible: m.title !== ""
         width: m.width

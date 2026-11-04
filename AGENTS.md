@@ -227,6 +227,11 @@ Traps here:
   with ⌘ as `ctrl` and Control as `meta`. Keys the core doesn't use carry on (⌘Q, typing in a field). Overlays
   map onto native presentation: the picker and help are sheets, confirm an alert. Their bindings only
   ask the core to close them.
+- **Settings is a window beside the reader** (`App::use_settings_window`, set by `ffi.rs` only), the stock `Settings`
+  scene with toolbar tabs. There the form isn't an overlay: the reader keeps working, and the core asks for the window
+  with `Effect::ShowSettings`. Closing it drops the form; a save closes it. Saving checks the servers, so it has a
+  Save button rather than applying as you go. `Keyboard` leaves that window's keys alone. Onboarding stays in the main window.
+- **AppKit won't quit while a sheet is up**, so `Model.quit` ends sheets first, and the Quit menu item goes through it.
 - **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
   are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
   toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
@@ -239,6 +244,11 @@ Traps here:
   isolated to it and traps when tokio calls it; `wake` in `Core.swift` is a top-level function for that reason.
 - **The window must be told to open at launch** (`.defaultLaunchBehavior(.presented)`): macOS remembers a
   `Window` that was closed at the last quit, per bundle id, and otherwise starts with no window at all.
+- **The icon and the colours are the logo's.** `packaging/logo/AppIcon.icon` holds a light and a dark version, and
+  `build-app.sh` compiles it with `actool` into `Assets.car`, so macOS 26+ switches by itself. `macos/icon.icns` is the
+  light one for older systems, made by the same `actool` run: redo it when the icon changes. The orange icon in Settings
+  is `AppIcon` in `Brand.swift`. The palette in `src/theme/macos.rs` and `Brand` in Swift must agree. On Omarchy and in a
+  terminal the logo takes the theme's accent, since following the theme is the point there.
 - **Snapshots work as for Qt:** `KLETSE_RSS_DEMO=1 KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter ?"
   "packaging/Kletse RSS.app/Contents/MacOS/kletse-rss"`. The window really opens on screen. An open sheet is drawn
   over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap.

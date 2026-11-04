@@ -57,12 +57,12 @@ struct PickerView: View {
                             Spacer(minLength: 12)
                             Text(row.count.map(String.init) ?? "")
                                 .monospacedDigit()
-                                .foregroundStyle(current ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary))
+                                .foregroundStyle(current ? AnyShapeStyle(Brand.onAccent.opacity(0.85)) : AnyShapeStyle(.secondary))
                         }
-                        .foregroundStyle(current ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .foregroundStyle(current ? AnyShapeStyle(Brand.onAccent) : AnyShapeStyle(.primary))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(current ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 6))
+                        .background(current ? Brand.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                         .onTapGesture { model.chooseRow(i) }
                         .padding(.top, row.depth == 0 && i > 0 ? 6 : 0)

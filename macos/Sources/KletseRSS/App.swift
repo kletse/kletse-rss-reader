@@ -1,4 +1,4 @@
-// Kletse RSS for macOS: one window, its toolbar and the menus. Everything it shows comes from the Rust core
+// Kletse RSS for macOS: the reader's window, its toolbar, the menus and the Settings window. Everything it shows comes from the Rust core
 // (src/ffi.rs) through `Model`; keys and clicks go back to it.
 import AppKit
 import SwiftUI
@@ -11,6 +11,9 @@ struct KletseApp: App {
         Window("Kletse RSS", id: "main") {
             ContentView()
                 .frame(minWidth: 360, minHeight: 300)
+                .background(Brand.background)
+                .toolbarBackground(Brand.background, for: .windowToolbar)
+                .tint(Brand.accent)
         }
         .defaultSize(width: 900, height: 1000)
         // Also when it was closed at the last quit; there is only this one window.
@@ -20,6 +23,7 @@ struct KletseApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { Model.shared.press("settings") }
                     .keyboardShortcut(",")
+                    .disabled(Model.shared.state?.overlay == "onboarding")
             }
             // Single keys can't be menu shortcuts: AppKit would take them from the settings fields too.
             CommandMenu("Article") {
@@ -41,16 +45,29 @@ struct KletseApp: App {
                 Button("View Images (v)") { Model.shared.key("v") }
                 Button("Oldest or Newest First (s)") { Model.shared.press("order") }
             }
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Kletse RSS") { Model.shared.quit() }
+                    .keyboardShortcut("q")
+            }
             CommandGroup(replacing: .help) {
                 Button("Keyboard Shortcuts (?)") { Model.shared.press("help") }
             }
         }
+
+        Settings {
+            SettingsWindow(model: Model.shared)
+                .tint(Brand.accent)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { Model.shared.start() }
+        MainActor.assumeIsolated {
+            AppIcon.applyAtLaunch()
+            Model.shared.start()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

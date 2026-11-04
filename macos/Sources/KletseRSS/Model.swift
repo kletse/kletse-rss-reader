@@ -11,6 +11,10 @@ final class Model {
     private(set) var state: AppState?
     /// The article body, kept from the last reply that had it.
     private(set) var blocks: [Block] = []
+    /// The server details, kept from the reply that had them: the Settings window may open after it.
+    private(set) var settingsValues: SettingsValues?
+    /// Bumped each time the core asks for the Settings window.
+    private(set) var settingsRequests = 0
     /// Bumped for each page scroll the core asks for.
     private(set) var scrollSerial = 0
     private(set) var scrollUp = false
@@ -35,7 +39,7 @@ final class Model {
         Snapshot.startIfAsked(model: self)
     }
 
-    /// The system appearance or accent colour changed.
+    /// The system appearance changed.
     func themeChanged() {
         var command = theme()
         command["cmd"] = "theme"
@@ -44,7 +48,7 @@ final class Model {
 
     private func theme() -> [String: Any] {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return ["dark": dark, "accent": NSColor.controlAccentColor.hex]
+        return ["dark": dark]
     }
 
     func pump() {
@@ -83,12 +87,26 @@ final class Model {
         ])
     }
 
+    /// AppKit won't quit while a sheet is up, and the picker is one, so they go first.
+    func quit() {
+        for window in NSApp.windows.reversed() {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+    }
+
     @discardableResult
     private func send(_ command: [String: Any]) -> Reply? {
         guard let reply = core.send(command) else { return nil }
+        let formClosed = state?.settings != nil && reply.state.settings == nil
         state = reply.state
+        // Here and not in the window's view: SwiftUI holds a hidden window's changes back until it opens again.
+        if formClosed { Keyboard.settingsWindow?.close() }
         if let blocks = reply.state.article?.blocks {
             self.blocks = blocks
+        }
+        if let values = reply.state.settings?.values {
+            settingsValues = values
         }
         RemoteImage.prefetch(reply.state.prefetchImages)
         for event in reply.events {
@@ -96,8 +114,10 @@ final class Model {
             case "scroll_up", "scroll_down":
                 scrollUp = event == "scroll_up"
                 scrollSerial += 1
+            case "show_settings":
+                settingsRequests += 1
             case "quit":
-                NSApp.terminate(nil)
+                quit()
             default:
                 break
             }
@@ -106,11 +126,3 @@ final class Model {
     }
 }
 
-extension NSColor {
-    /// `#rrggbb` in sRGB.
-    var hex: String {
-        guard let c = usingColorSpace(.sRGB) else { return "#0a84ff" }
-        let v = [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
-        return String(format: "#%02x%02x%02x", v[0], v[1], v[2])
-    }
-}

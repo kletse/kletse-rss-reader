@@ -35,6 +35,7 @@ enum Snapshot {
     private static func main() -> NSWindow? {
         NSApp.windows.first {
             $0.isVisible && $0.styleMask.contains(.titled) && $0.sheetParent == nil && $0.frame.width >= 360
+                && $0 !== Keyboard.settingsWindow
         }
     }
 

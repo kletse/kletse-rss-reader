@@ -1,5 +1,5 @@
 //! The look of the app comes from the desktop it runs on: the live Omarchy theme on Linux,
-//! the system appearance (light/dark + accent colour) on macOS. Both fill the same `Theme`,
+//! the system appearance (light or dark) on macOS. Both fill the same `Theme`,
 //! which `Palette` turns into the colours the window and the article renderer use.
 
 use std::{collections::HashMap, sync::Arc};
@@ -32,11 +32,11 @@ pub fn load() -> Theme {
     provider::load()
 }
 
-/// The macOS theme for an appearance and accent colour (`#rrggbb`). The native app reads both from AppKit,
-/// which knows them better than `defaults` does, and is told when they change.
+/// The macOS theme for an appearance. The native app reads it from AppKit, which knows it better than `defaults`
+/// does, and is told when it changes.
 #[cfg(target_os = "macos")]
-pub fn macos(dark: bool, accent: &str) -> Theme {
-    provider::theme(dark, accent)
+pub fn macos(dark: bool) -> Theme {
+    provider::theme(dark)
 }
 
 /// Follows theme changes for as long as the returned watcher lives.

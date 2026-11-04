@@ -99,16 +99,20 @@ struct SettingsInfo: Decodable {
     let values: SettingsValues?
 }
 
-struct SettingsValues: Decodable {
-    /// "miniflux" or "greader".
-    let server: String
-    let minifluxUrl: String
-    let minifluxApiKey: String
-    let greaderUrl: String
-    let greaderUsername: String
-    let greaderPassword: String
-    let readeckUrl: String
-    let readeckToken: String
+struct SettingsValues: Decodable, Equatable {
+    /// "miniflux" or "greader". The other kind's fields are kept, for switching back.
+    var server: String
+    var minifluxUrl: String
+    var minifluxApiKey: String
+    var greaderUrl: String
+    var greaderUsername: String
+    var greaderPassword: String
+    var readeckUrl: String
+    var readeckToken: String
+
+    static let empty = SettingsValues(
+        server: "miniflux", minifluxUrl: "", minifluxApiKey: "", greaderUrl: "", greaderUsername: "",
+        greaderPassword: "", readeckUrl: "", readeckToken: "")
 }
 
 enum Block: Decodable {

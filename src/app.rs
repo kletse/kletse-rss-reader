@@ -229,6 +229,8 @@ pub enum Effect {
         label: String,
         up_to: i64,
     },
+    /// Bring up the settings window (`App::use_settings_window`), or to the front if it's up.
+    ShowSettings,
     LoadSettings,
     SaveSettings(SettingsValuesBox),
     SavePrefs(Prefs),
@@ -395,6 +397,9 @@ pub struct App {
     /// See `Status::fetches`.
     fetches: bool,
     settings: Option<SettingsForm>,
+    /// The form lives in a window of its own: it takes no keys and doesn't replace the article.
+    settings_in_window: bool,
+    settings_window_open: bool,
 
     prefs: Prefs,
     /// Whether the help says ⌘ or Ctrl.
@@ -441,6 +446,8 @@ impl App {
             readeck: false,
             fetches: true,
             settings: None,
+            settings_in_window: false,
+            settings_window_open: false,
             prefs,
             mac,
         }
@@ -486,6 +493,11 @@ impl App {
 
     pub fn overlay(&self) -> Overlay {
         self.overlay
+    }
+
+    /// For the Mac app, where Settings is a window beside the reader. Onboarding stays in the main window.
+    pub fn use_settings_window(&mut self) {
+        self.settings_in_window = true;
     }
 
     pub fn in_settings(&self) -> bool {
@@ -1343,16 +1355,26 @@ impl App {
 
     /// Opens the settings form. On first run (onboarding) it can't be cancelled.
     fn open_settings(&mut self, first_run: bool, fx: &mut Vec<Effect>) {
-        if !self.in_settings() {
-            self.overlay = if first_run { Overlay::Onboarding } else { Overlay::Settings };
-            self.settings = None;
-            fx.push(Effect::LoadSettings);
+        if self.in_settings() {
+            return;
         }
+        if self.settings_in_window && !first_run {
+            fx.push(Effect::ShowSettings);
+            if self.settings_window_open {
+                return;
+            }
+            self.settings_window_open = true;
+        } else {
+            self.overlay = if first_run { Overlay::Onboarding } else { Overlay::Settings };
+        }
+        self.settings = None;
+        fx.push(Effect::LoadSettings);
     }
 
     /// Called with the new status after a successful save, or `None` when cancelled.
     fn close_settings(&mut self, status: Option<Status>, fx: &mut Vec<Effect>) {
         let first_run = self.overlay == Overlay::Onboarding;
+        let in_window = std::mem::take(&mut self.settings_window_open);
         if let Some(status) = status {
             self.readeck = status.readeck;
             self.fetches = status.fetches;
@@ -1364,6 +1386,9 @@ impl App {
             self.clear_queue();
             self.picker_list = PickerList::Loading;
             self.open_picker(None, fx);
+        } else if in_window {
+            // The reader behind it never stopped.
+            self.settings = None;
         } else if !first_run {
             self.settings = None;
             self.overlay = Overlay::None;
@@ -1388,7 +1413,7 @@ impl App {
     /// The form's Cancel button: Esc.
     pub fn cancel_settings(&mut self) -> Vec<Effect> {
         let mut fx = Vec::new();
-        if self.overlay == Overlay::Settings {
+        if self.overlay == Overlay::Settings || self.settings_window_open {
             self.close_settings(None, &mut fx);
         }
         fx
@@ -1604,7 +1629,7 @@ impl App {
                 self.row_marked_read(selection, &label, up_to, result, &mut fx);
             }
             Outcome::SettingsLoaded { values, problem } => {
-                if self.in_settings() {
+                if self.in_settings() || self.settings_window_open {
                     self.settings = Some(SettingsForm { values, problem, error: String::new(), checking: false });
                 }
             }

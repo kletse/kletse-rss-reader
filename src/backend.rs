@@ -327,7 +327,7 @@ impl Backend {
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
             Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
-            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => return None,
+            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings => return None,
         })
     }
 

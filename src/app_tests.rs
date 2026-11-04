@@ -90,7 +90,7 @@ struct Harness {
     fail_fetch: Option<String>,
     full_content: String,
     problem: Option<String>,
-    save_result: Result<Status, String>,
+    save_result: Result<Saved, String>,
 }
 
 fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
@@ -99,6 +99,10 @@ fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
         unread: Some(unread),
         read: Some(read),
     }]
+}
+
+fn saved(status: Status) -> Saved {
+    Saved { status, readeck_problem: None }
 }
 
 impl Harness {
@@ -120,7 +124,7 @@ impl Harness {
             fail_fetch: None,
             full_content: "<p>Full text</p>".into(),
             problem: None,
-            save_result: Ok(Status { configured: true, readeck: false, fetches: true }),
+            save_result: Ok(saved(Status { configured: true, readeck: false, fetches: true })),
         }
     }
 
@@ -1016,7 +1020,7 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
 fn onboarding_cant_be_cancelled_and_connects_on_submit() {
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, fetches: true };
-    h.save_result = Ok(Status { configured: true, readeck: true, fetches: true });
+    h.save_result = Ok(saved(Status { configured: true, readeck: true, fetches: true }));
     h.start();
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
     h.key("Escape");
@@ -1081,6 +1085,45 @@ fn saving_in_the_settings_window_starts_over_from_the_picker() {
     assert!(h.app.settings().is_none());
     assert_eq!(h.toast(), Some("Settings saved"));
     assert!(h.picker_loaded());
+}
+
+#[test]
+fn readeck_values_that_failed_are_reported_after_the_form_closes() {
+    let mut h = first_second();
+    h.key(",");
+    let status = Status { configured: true, readeck: true, fetches: true };
+    h.save_result = Ok(Saved { status, readeck_problem: Some("Readeck rejected the token".into()) });
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.app.settings().is_none(), "the feed server is saved, so the form is done");
+    assert_eq!(h.app.toast().map(|t| t.kind), Some(ToastKind::Error));
+    assert_eq!(h.toast(), Some("Settings saved. Readeck wasn't changed: Readeck rejected the token"));
+    assert!(h.app.readeck(), "the Readeck saved before stays");
+    assert!(h.picker_loaded());
+}
+
+#[test]
+fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run_too() {
+    let problem = Some("Readeck rejected the token".to_string());
+    let status = Status { configured: true, readeck: false, fetches: true };
+
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    h.save_result = Ok(Saved { status, readeck_problem: problem.clone() });
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.app.settings().is_none());
+    assert_eq!(h.toast(), Some("Settings saved. Readeck wasn't changed: Readeck rejected the token"));
+
+    let mut h = Harness::new(items(2));
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.save_result = Ok(Saved { status, readeck_problem: problem });
+    h.start();
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert!(h.picker_loaded());
+    assert_eq!(h.toast(), Some("Settings saved. Readeck wasn't changed: Readeck rejected the token"));
 }
 
 #[test]
@@ -1593,7 +1636,7 @@ fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
     assert_eq!(h.toast(), Some(crate::greader::REFRESH_REFUSED));
     assert!(!h.calls.iter().any(|c| matches!(c, Effect::FetchContent { .. } | Effect::RefreshFeeds)));
     // Saved settings for a Miniflux server bring them back.
-    h.save_result = Ok(Status { configured: true, readeck: false, fetches: true });
+    h.save_result = Ok(saved(Status { configured: true, readeck: false, fetches: true }));
     h.key(",");
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);

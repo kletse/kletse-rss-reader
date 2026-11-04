@@ -96,6 +96,14 @@ pub struct Status {
     pub fetches: bool,
 }
 
+/// What a save of the settings comes to. The feed server is saved; Readeck may not be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    pub status: Status,
+    /// Why the Readeck values weren't saved: the Readeck saved before them stays.
+    pub readeck_problem: Option<String>,
+}
+
 /// The settings form, flat: which server, the fields of both kinds (only the chosen one's are used, the other's
 /// are kept for switching back), and Readeck, whose empty fields mean "not set up".
 /// Its `Debug` shows nothing on purpose: it holds the API key, password and token.
@@ -329,7 +337,7 @@ pub enum Outcome {
         values: SettingsValues,
         problem: Option<String>,
     },
-    SettingsSaved(Result<Status, String>),
+    SettingsSaved(Result<Saved, String>),
 }
 
 impl std::fmt::Debug for Outcome {
@@ -1444,16 +1452,14 @@ impl App {
         fx.push(Effect::LoadSettings);
     }
 
-    /// Called with the new status after a successful save, or `None` when cancelled.
-    fn close_settings(&mut self, status: Option<Status>, fx: &mut Vec<Effect>) {
+    /// Called with what was saved after a successful save, or `None` when cancelled.
+    fn close_settings(&mut self, saved: Option<Saved>, fx: &mut Vec<Effect>) {
         let first_run = self.overlay == Overlay::Onboarding;
         let in_window = std::mem::take(&mut self.settings_window_open);
-        if let Some(status) = status {
-            self.readeck = status.readeck;
-            self.fetches = status.fetches;
-            if !first_run {
-                self.toast_info("Settings saved");
-            }
+        if let Some(saved) = saved {
+            self.readeck = saved.status.readeck;
+            self.fetches = saved.status.fetches;
+            self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
             self.clear_queue();
@@ -1468,6 +1474,15 @@ impl App {
             if self.queue.is_empty() {
                 self.open_picker(None, fx);
             }
+        }
+    }
+
+    /// A toast, as the form that could have said so is closing, and on the Mac it's a window of its own.
+    fn announce_saved(&mut self, saved: &Saved, first_run: bool) {
+        match &saved.readeck_problem {
+            Some(problem) => self.toast_error(format!("Settings saved. Readeck wasn't changed: {problem}")),
+            None if !first_run => self.toast_info("Settings saved"),
+            None => {}
         }
     }
 
@@ -1718,7 +1733,7 @@ impl App {
                 }
             }
             Outcome::SettingsSaved(result) => match result {
-                Ok(status) => self.close_settings(Some(status), &mut fx),
+                Ok(saved) => self.close_settings(Some(saved), &mut fx),
                 Err(message) => {
                     if let Some(form) = self.settings.as_mut() {
                         form.error = message;

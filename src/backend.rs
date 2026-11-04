@@ -2,7 +2,7 @@
 //! file and the browser. The answer to each comes
 //! back as an `Outcome`. With `ONWARD_DEMO=1` it serves the built-in sample data and never touches a server.
 
-use crate::app::{Effect, Outcome, SettingsValues, Status};
+use crate::app::{Effect, Outcome, Saved, SettingsValues, Status};
 use crate::config;
 use crate::demo;
 use crate::error::Error;
@@ -26,6 +26,13 @@ pub struct Backend {
     demo: bool,
     /// The demo's starred articles, which `*` changes in memory.
     stars: demo::Stars,
+}
+
+/// Settings that passed the checks, ready to save.
+struct Checked {
+    cfg: config::Config,
+    /// Why the Readeck in `cfg` isn't the one in the form.
+    readeck_problem: Option<String>,
 }
 
 impl std::fmt::Debug for Backend {
@@ -120,14 +127,26 @@ impl Backend {
         Ok(kept.get_or_insert_with(|| Arc::new(self.client_for(&cfg))).clone())
     }
 
-    /// Validates the settings against the real servers, then saves and applies them. The other kind of server's
-    /// fields are kept when they're complete, so switching back needs no typing; otherwise they're dropped.
-    async fn save_settings(&self, values: SettingsValues) -> Result<Status, Error> {
-        let has_readeck_url = !values.readeck_url.trim().is_empty();
-        let has_readeck_token = !values.readeck_token.trim().is_empty();
-        if has_readeck_url != has_readeck_token {
-            return Err(Error::Setup("Fill in both Readeck fields, or leave both empty.".into()));
+    /// Validates the settings against the real servers, then saves and applies them. A feed server that fails
+    /// stops everything; Readeck values that fail don't: see `check_readeck`.
+    async fn save_settings(&self, values: SettingsValues) -> Result<Saved, Error> {
+        let Checked { cfg, readeck_problem } = self.check_settings(values).await?;
+        if !self.demo {
+            // Writing and flushing the file blocks; keep it off the runtime's few workers.
+            let saved = cfg.clone();
+            tokio::task::spawn_blocking(move || config::save(&saved)).await.map_err(|e| Error::Io {
+                context: "Could not save the settings".into(),
+                source: std::io::Error::other(e),
+            })??;
         }
+        self.set_config(cfg);
+        Ok(Saved { status: self.status(), readeck_problem })
+    }
+
+    /// What to save, once the servers have had their say. The other kind of server's fields are kept when they're
+    /// complete, so switching back needs no typing; otherwise they're dropped.
+    async fn check_settings(&self, values: SettingsValues) -> Result<Checked, Error> {
+        let half_filled = values.readeck_url.trim().is_empty() != values.readeck_token.trim().is_empty();
         let mut cfg = config::Config {
             server: Some(values.server),
             miniflux: config::Miniflux { url: values.miniflux_url, api_key: values.miniflux_api_key },
@@ -149,21 +168,36 @@ impl Backend {
                 }
             }
         }
+        let readeck = cfg.readeck.take();
         cfg.validate()?;
         if !self.demo {
             self.client_for(&cfg).check().await?;
-            if let Some(readeck) = &cfg.readeck {
+        }
+        let (readeck, readeck_problem) = match self.check_readeck(readeck, half_filled).await {
+            Ok(readeck) => (readeck, None),
+            Err(e) => (self.config().readeck, Some(e.message())),
+        };
+        cfg.readeck = readeck;
+        Ok(Checked { cfg, readeck_problem })
+    }
+
+    /// The Readeck to save, if its values hold up. They're optional, so unlike the feed server's they never stop a
+    /// save: when they fail, the Readeck already saved stays, and the message says why.
+    async fn check_readeck(
+        &self,
+        readeck: Option<config::Readeck>,
+        half_filled: bool,
+    ) -> Result<Option<config::Readeck>, Error> {
+        if half_filled {
+            return Err(Error::Setup("Fill in both Readeck fields, or leave both empty.".into()));
+        }
+        if let Some(readeck) = &readeck {
+            config::validate_url(&readeck.url)?;
+            if !self.demo {
                 readeck::check(&self.http, readeck).await?;
             }
-            // Writing and flushing the file blocks; keep it off the runtime's few workers.
-            let saved = cfg.clone();
-            tokio::task::spawn_blocking(move || config::save(&saved)).await.map_err(|e| Error::Io {
-                context: "Could not save the settings".into(),
-                source: std::io::Error::other(e),
-            })??;
         }
-        self.set_config(cfg);
-        Ok(self.status())
+        Ok(readeck)
     }
 
     async fn entries(&self, sel: Selection, status: EntryStatus, request: PageRequest) -> Result<EntryPage, Error> {
@@ -454,7 +488,7 @@ mod tests {
         }
     }
 
-    async fn save(values: SettingsValues) -> Result<Status, String> {
+    async fn save(values: SettingsValues) -> Result<Saved, String> {
         let backend = Backend::new(true);
         match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
             Some(Outcome::SettingsSaved(result)) => result,
@@ -463,10 +497,97 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn settings_need_both_readeck_fields_or_neither() {
-        let err = save(values("https://m.example.com", "https://r.example.com", " ")).await.err();
-        assert_eq!(err.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
-        assert!(save(values("https://m.example.com", "", "")).await.is_ok());
+    async fn half_a_readeck_setup_is_reported_and_doesnt_stop_the_feed_server() {
+        let saved = save(values("https://m.example.com", "https://r.example.com", " ")).await.unwrap();
+        assert_eq!(saved.readeck_problem.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
+        let saved = save(values("https://m.example.com", " ", "tok")).await.unwrap();
+        assert_eq!(saved.readeck_problem.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
+        assert_eq!(save(values("https://m.example.com", "", "")).await.unwrap().readeck_problem, None);
+    }
+
+    /// A backend that really checks, with this Readeck saved. Tests go through `check_settings`, which writes
+    /// nothing: `save_settings` would replace the config of whoever runs them.
+    fn live_backend(readeck: Option<config::Readeck>) -> Backend {
+        let backend = Backend { demo: false, ..Backend::new(true) };
+        backend.set_config(config::Config { readeck, ..config::Config::default() });
+        backend
+    }
+
+    fn old_readeck() -> config::Readeck {
+        config::Readeck { url: "https://old.example.com".into(), token: "old".into() }
+    }
+
+    /// A Miniflux that lets anyone in, and a Readeck that answers `readeck` to its profile check.
+    async fn servers(readeck: u16) -> wiremock::MockServer {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let me = ResponseTemplate::new(200).set_body_json(serde_json::json!({ "username": "ward" }));
+        Mock::given(path("/v1/me")).respond_with(me).mount(&server).await;
+        Mock::given(path("/api/profile")).respond_with(ResponseTemplate::new(readeck)).mount(&server).await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_readeck_that_says_no_keeps_the_saved_one_and_still_takes_the_feed_server() {
+        let server = servers(401).await;
+        let backend = live_backend(Some(old_readeck()));
+        let checked = backend.check_settings(values(&server.uri(), &server.uri(), "wrong")).await.unwrap();
+        assert_eq!(checked.cfg.miniflux.url, server.uri());
+        assert_eq!(checked.cfg.readeck, Some(old_readeck()));
+        assert!(checked.readeck_problem.unwrap().starts_with("Readeck rejected the token"));
+    }
+
+    #[tokio::test]
+    async fn a_readeck_address_that_isnt_one_keeps_the_saved_one_and_still_takes_the_feed_server() {
+        let server = servers(200).await;
+        let backend = live_backend(Some(old_readeck()));
+        let checked = backend.check_settings(values(&server.uri(), "readeck.example.com", "tok")).await.unwrap();
+        assert_eq!(checked.cfg.miniflux.url, server.uri());
+        assert_eq!(checked.cfg.readeck, Some(old_readeck()));
+        assert_eq!(checked.readeck_problem.as_deref(), Some("readeck.example.com is not a valid URL"));
+    }
+
+    #[tokio::test]
+    async fn a_readeck_that_cant_be_reached_keeps_the_saved_one() {
+        let server = servers(200).await;
+        let backend = live_backend(Some(old_readeck()));
+        let checked = backend.check_settings(values(&server.uri(), "http://127.0.0.1:1", "tok")).await.unwrap();
+        assert_eq!(checked.cfg.readeck, Some(old_readeck()));
+        assert!(checked.readeck_problem.unwrap().starts_with("Could not reach Readeck at http://127.0.0.1:1"));
+    }
+
+    #[tokio::test]
+    async fn with_no_readeck_saved_a_bad_one_leaves_it_unset() {
+        let server = servers(401).await;
+        let backend = live_backend(None);
+        let checked = backend.check_settings(values(&server.uri(), &server.uri(), "wrong")).await.unwrap();
+        assert_eq!(checked.cfg.readeck, None);
+        assert!(checked.readeck_problem.is_some());
+    }
+
+    #[tokio::test]
+    async fn good_readeck_values_replace_the_saved_ones_and_empty_ones_clear_them() {
+        let server = servers(200).await;
+        let backend = live_backend(Some(old_readeck()));
+        let checked = backend.check_settings(values(&server.uri(), &server.uri(), "new")).await.unwrap();
+        assert_eq!(checked.cfg.readeck, Some(config::Readeck { url: server.uri(), token: "new".into() }));
+        assert_eq!(checked.readeck_problem, None);
+        let checked = backend.check_settings(values(&server.uri(), "", "")).await.unwrap();
+        assert_eq!((checked.cfg.readeck, checked.readeck_problem), (None, None));
+    }
+
+    #[tokio::test]
+    async fn a_bad_feed_server_still_fails_whatever_readeck_says() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/me")).respond_with(ResponseTemplate::new(401)).mount(&server).await;
+        let backend = live_backend(None);
+        let err = backend.check_settings(values(&server.uri(), &server.uri(), "tok")).await.err().unwrap();
+        assert_eq!(err.message(), "Miniflux rejected the API key");
+        let err = backend.check_settings(values("miniflux.example.com", "half", "")).await.err().unwrap();
+        assert_eq!(err.message(), "miniflux.example.com is not a valid URL");
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@
 pkgname=onward
 replaces=('kletse-rss')
 conflicts=('kletse-rss')
-pkgver=6.0.0
+pkgver=6.1.0
 pkgrel=1
 pkgdesc="A one-article-at-a-time Miniflux reader for Omarchy"
 arch=('x86_64')

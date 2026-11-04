@@ -100,6 +100,8 @@ pub struct Status {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saved {
     pub status: Status,
+    /// Who the feed server says you are, when it was asked.
+    pub username: Option<String>,
     /// Why the Readeck values weren't saved: the Readeck saved before them stays.
     pub readeck_problem: Option<String>,
 }
@@ -1524,9 +1526,11 @@ impl App {
 
     /// A toast, as the form that could have said so is closing, and on the Mac it's a window of its own.
     fn announce_saved(&mut self, saved: &Saved, first_run: bool) {
+        let name = saved.username.as_deref().map(str::trim).filter(|name| !name.is_empty());
+        let done = name.map_or_else(|| "Settings saved".to_string(), |name| format!("Signed in as {name}"));
         match &saved.readeck_problem {
-            Some(problem) => self.toast_error(format!("Settings saved. Readeck wasn't changed: {problem}")),
-            None if !first_run => self.toast_info("Settings saved"),
+            Some(problem) => self.toast_error(format!("{done}. Readeck wasn't changed: {problem}")),
+            None if name.is_some() || !first_run => self.toast_info(done),
             None => {}
         }
     }

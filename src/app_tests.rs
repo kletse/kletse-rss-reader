@@ -106,7 +106,7 @@ fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
 }
 
 fn saved(status: Status) -> Saved {
-    Saved { status, readeck_problem: None }
+    Saved { status, username: None, readeck_problem: None }
 }
 
 impl Harness {
@@ -1108,7 +1108,7 @@ fn readeck_values_that_failed_are_reported_after_the_form_closes() {
     let mut h = first_second();
     h.key(",");
     let status = Status { configured: true, readeck: true, fetches: true };
-    h.save_result = Ok(Saved { status, readeck_problem: Some("Readeck rejected the token".into()) });
+    h.save_result = Ok(Saved { status, username: None, readeck_problem: Some("Readeck rejected the token".into()) });
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert!(h.app.settings().is_none(), "the feed server is saved, so the form is done");
@@ -1126,7 +1126,7 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
     let mut h = first_second();
     h.app.use_settings_window();
     h.key(",");
-    h.save_result = Ok(Saved { status, readeck_problem: problem.clone() });
+    h.save_result = Ok(Saved { status, username: None, readeck_problem: problem.clone() });
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert!(h.app.settings().is_none());
@@ -1134,12 +1134,67 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
 
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, fetches: true };
-    h.save_result = Ok(Saved { status, readeck_problem: problem });
+    h.save_result = Ok(Saved { status, username: None, readeck_problem: problem });
     h.start();
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert!(h.picker_loaded());
     assert_eq!(h.toast(), Some("Settings saved. Readeck wasn't changed: Readeck rejected the token"));
+}
+
+#[test]
+fn saving_says_who_you_are_signed_in_as() {
+    let status = Status { configured: true, readeck: false, fetches: true };
+    let mut h = first_second();
+    h.key(",");
+    h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(h.toast(), Some("Signed in as ward"));
+    assert_eq!(h.app.toast().map(|t| t.kind), Some(ToastKind::Info));
+
+    // On first run too, where a plain "Settings saved" says nothing new.
+    let mut h = Harness::new(items(2));
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
+    h.start();
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(h.toast(), Some("Signed in as ward"));
+}
+
+#[test]
+fn a_nameless_sign_in_shows_no_empty_name() {
+    let status = Status { configured: true, readeck: false, fetches: true };
+    for username in [None, Some(String::new()), Some("  ".to_string())] {
+        let mut h = first_second();
+        h.key(",");
+        h.save_result = Ok(Saved { status, username: username.clone(), readeck_problem: None });
+        let fx = h.app.submit_settings(SettingsValues::default());
+        h.run(fx);
+        assert_eq!(h.toast(), Some("Settings saved"), "{username:?}");
+
+        let mut h = Harness::new(items(2));
+        h.status = Status { configured: false, readeck: false, fetches: true };
+        h.save_result = Ok(Saved { status, username, readeck_problem: None });
+        h.start();
+        let fx = h.app.submit_settings(SettingsValues::default());
+        h.run(fx);
+        assert_eq!(h.toast(), None, "the first run says nothing");
+    }
+}
+
+#[test]
+fn the_name_and_a_readeck_problem_are_both_in_the_toast() {
+    let status = Status { configured: true, readeck: false, fetches: true };
+    let mut h = first_second();
+    h.key(",");
+    let readeck_problem = Some("Readeck rejected the token".to_string());
+    h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem });
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(h.toast(), Some("Signed in as ward. Readeck wasn't changed: Readeck rejected the token"));
+    assert_eq!(h.app.toast().map(|t| t.kind), Some(ToastKind::Error));
 }
 
 #[test]

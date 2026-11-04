@@ -31,6 +31,8 @@ pub struct Backend {
 /// Settings that passed the checks, ready to save.
 struct Checked {
     cfg: config::Config,
+    /// Who the feed server says this is; demo mode asks no server.
+    username: Option<String>,
     /// Why the Readeck in `cfg` isn't the one in the form.
     readeck_problem: Option<String>,
 }
@@ -130,7 +132,7 @@ impl Backend {
     /// Validates the settings against the real servers, then saves and applies them. A feed server that fails
     /// stops everything; Readeck values that fail don't: see `check_readeck`.
     async fn save_settings(&self, values: SettingsValues) -> Result<Saved, Error> {
-        let Checked { cfg, readeck_problem } = self.check_settings(values).await?;
+        let Checked { cfg, username, readeck_problem } = self.check_settings(values).await?;
         if !self.demo {
             // Writing and flushing the file blocks; keep it off the runtime's few workers.
             let saved = cfg.clone();
@@ -140,7 +142,7 @@ impl Backend {
             })??;
         }
         self.set_config(cfg);
-        Ok(Saved { status: self.status(), readeck_problem })
+        Ok(Saved { status: self.status(), username, readeck_problem })
     }
 
     /// What to save, once the servers have had their say. The other kind of server's fields are kept when they're
@@ -170,15 +172,13 @@ impl Backend {
         }
         let readeck = cfg.readeck.take();
         cfg.validate()?;
-        if !self.demo {
-            self.client_for(&cfg).check().await?;
-        }
+        let username = if self.demo { None } else { Some(self.client_for(&cfg).check().await?) };
         let (readeck, readeck_problem) = match self.check_readeck(readeck, half_filled).await {
             Ok(readeck) => (readeck, None),
             Err(e) => (self.config().readeck, Some(e.message())),
         };
         cfg.readeck = readeck;
-        Ok(Checked { cfg, readeck_problem })
+        Ok(Checked { cfg, username, readeck_problem })
     }
 
     /// The Readeck to save, if its values hold up. They're optional, so unlike the feed server's they never stop a
@@ -500,6 +500,7 @@ mod tests {
     async fn half_a_readeck_setup_is_reported_and_doesnt_stop_the_feed_server() {
         let saved = save(values("https://m.example.com", "https://r.example.com", " ")).await.unwrap();
         assert_eq!(saved.readeck_problem.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
+        assert_eq!(saved.username, None, "demo mode asks no server");
         let saved = save(values("https://m.example.com", " ", "tok")).await.unwrap();
         assert_eq!(saved.readeck_problem.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
         assert_eq!(save(values("https://m.example.com", "", "")).await.unwrap().readeck_problem, None);
@@ -534,6 +535,7 @@ mod tests {
         let backend = live_backend(Some(old_readeck()));
         let checked = backend.check_settings(values(&server.uri(), &server.uri(), "wrong")).await.unwrap();
         assert_eq!(checked.cfg.miniflux.url, server.uri());
+        assert_eq!(checked.username.as_deref(), Some("ward"));
         assert_eq!(checked.cfg.readeck, Some(old_readeck()));
         assert!(checked.readeck_problem.unwrap().starts_with("Readeck rejected the token"));
     }

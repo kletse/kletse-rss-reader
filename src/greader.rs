@@ -104,6 +104,17 @@ fn long_item_id(id: i64) -> String {
     format!("{ITEM_PREFIX}{:016x}", id as u64)
 }
 
+/// `null` for a field reads as if it weren't there; `#[serde(default)]` alone only covers that. Some servers send it
+/// for a feed with no author, say, and one such item would fail the whole batch it came in, or, in the subscriptions,
+/// the picker. An item with no id ends up skipped, like one whose id doesn't parse.
+fn null_is_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Deserialize)]
 struct Subscriptions {
     subscriptions: Vec<Subscription>,
@@ -112,22 +123,22 @@ struct Subscriptions {
 #[derive(Deserialize)]
 struct Subscription {
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     categories: Vec<SubscriptionCategory>,
 }
 
 #[derive(Deserialize)]
 struct SubscriptionCategory {
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     label: String,
 }
 
 #[derive(Deserialize)]
 struct ItemRefs {
-    #[serde(default, rename = "itemRefs")]
+    #[serde(default, rename = "itemRefs", deserialize_with = "null_is_default")]
     item_refs: Vec<ItemRef>,
     /// FreshRSS sends a string, Miniflux a number (0 for none).
     #[serde(default)]
@@ -160,34 +171,36 @@ impl ItemRefs {
 
 #[derive(Deserialize)]
 struct ItemRef {
+    #[serde(default, deserialize_with = "null_is_default")]
     id: String,
 }
 
 #[derive(Deserialize)]
 struct Contents {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     items: Vec<Item>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Item {
+    #[serde(default, deserialize_with = "null_is_default")]
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     author: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     published: i64,
     #[serde(default)]
     timestamp_usec: Option<String>,
     #[serde(default)]
     crawl_time_msec: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     alternate: Vec<Link>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     canonical: Vec<Link>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     categories: Vec<String>,
     #[serde(default)]
     summary: Option<Text>,
@@ -199,21 +212,22 @@ struct Item {
 
 #[derive(Deserialize)]
 struct Link {
+    #[serde(default, deserialize_with = "null_is_default")]
     href: String,
 }
 
 #[derive(Deserialize)]
 struct Text {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     content: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Origin {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     stream_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     title: String,
 }
 
@@ -228,7 +242,8 @@ impl Item {
             .and_then(|t| t.parse::<i64>().ok().map(|usec| usec / 1000))
             .or_else(|| self.crawl_time_msec.and_then(|t| t.parse().ok()))
             .unwrap_or(self.published * 1000);
-        let url = self.alternate.into_iter().chain(self.canonical).map(|l| l.href).next().unwrap_or_default();
+        let links = self.alternate.into_iter().chain(self.canonical);
+        let url = links.map(|l| l.href).find(|href| !href.is_empty()).unwrap_or_default();
         let content = [self.content, self.summary].into_iter().flatten().map(|t| t.content).find(|c| !c.is_empty());
         let origin = self.origin.unwrap_or(Origin { stream_id: String::new(), title: String::new() });
         let content = content.unwrap_or_default();
@@ -396,7 +411,7 @@ impl Client {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct UserInfo {
-            #[serde(default)]
+            #[serde(default, deserialize_with = "null_is_default")]
             user_name: String,
         }
         *lock(&self.auth) = None;
@@ -1321,6 +1336,92 @@ mod tests {
 
     /// 24 hex digits, as The Old Reader's API documents them: too long for a 64-bit id.
     const LONG_ID: &str = "5f8a1b2c3d4e5f6071829304";
+
+    #[tokio::test]
+    async fn null_title_and_author_dont_fail_the_batch() {
+        let server = MockServer::start().await;
+        let mut plain = item(8, 8_000_000, false);
+        plain["title"] = json!(null);
+        plain["author"] = json!(null);
+        lists(&server, json!([{ "id": "7" }, { "id": "8" }]), json!([item(7, 7_000_000, false), plain])).await;
+        let page = unread_page(&client(&server)).await.unwrap();
+        assert_eq!(page.entries.len(), 2, "one such item used to fail all of them");
+        let entry = page.entries.iter().find(|e| e.id == 8).unwrap();
+        assert_eq!((entry.title.as_str(), entry.author.as_str()), ("", ""));
+    }
+
+    #[tokio::test]
+    async fn null_in_any_other_field_of_an_item_doesnt_fail_the_batch() {
+        let server = MockServer::start().await;
+        let nulls = json!({
+            "id": format!("{ITEM_PREFIX}0000000000000008"),
+            "title": null,
+            "author": null,
+            "published": null,
+            "timestampUsec": null,
+            "crawlTimeMsec": null,
+            "alternate": [{ "href": null }],
+            "canonical": null,
+            "categories": null,
+            "summary": { "content": null },
+            "content": null,
+            "origin": { "streamId": null, "title": null },
+        });
+        let no_id = json!({ "id": null });
+        lists(
+            &server,
+            json!([{ "id": "7" }, { "id": "8" }, { "id": null }]),
+            json!([item(7, 7_000_000, false), nulls, no_id]),
+        )
+        .await;
+        let page = unread_page(&client(&server)).await.unwrap();
+        assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), [7, 8], "no id: skipped like any bad one");
+    }
+
+    #[tokio::test]
+    async fn null_lists_are_empty_lists() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        Mock::given(path("/reader/api/0/stream/items/ids"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "itemRefs": null })))
+            .mount(&server)
+            .await;
+        assert_eq!(unread_page(&client(&server)).await.unwrap().total, 0);
+    }
+
+    #[tokio::test]
+    async fn null_names_in_the_subscriptions_dont_fail_the_picker() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        let subscriptions = json!({ "subscriptions": [
+            { "id": "feed/1", "title": null, "categories": null },
+            { "id": "feed/2", "title": "Two", "categories": [{ "id": "user/-/label/Dev", "label": null }] },
+        ] });
+        Mock::given(path("/reader/api/0/subscription/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(subscriptions))
+            .mount(&server)
+            .await;
+        Mock::given(path("/reader/api/0/unread-count"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "unreadcounts": [] })))
+            .mount(&server)
+            .await;
+        Mock::given(path("/reader/api/0/stream/items/ids"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "itemRefs": [] })))
+            .mount(&server)
+            .await;
+        assert_eq!(client(&server).feed_counts().await.unwrap().feeds.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_null_user_name_falls_back_on_the_username_typed() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        Mock::given(path("/reader/api/0/user-info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "userName": null })))
+            .mount(&server)
+            .await;
+        assert_eq!(client(&server).check().await.unwrap(), "ward");
+    }
 
     #[tokio::test]
     async fn a_listing_with_no_id_it_can_read_is_an_error_not_an_empty_list() {

@@ -84,6 +84,10 @@ struct Harness {
     hold_save: bool,
     held: Option<Effect>,
     fail_next_page: Option<String>,
+    /// What the server says to the next search's first page, instead of answering.
+    fail_next_search: Option<String>,
+    /// Keeps the next search's first page back, in `held`.
+    hold_next_search: bool,
     fail_next_status: Option<String>,
     fail_next_star: Option<String>,
     /// What the server says to `f` and `r`, instead of doing it.
@@ -119,6 +123,8 @@ impl Harness {
             hold_save: false,
             held: None,
             fail_next_page: None,
+            fail_next_search: None,
+            hold_next_search: false,
             fail_next_status: None,
             fail_next_star: None,
             fail_fetch: None,
@@ -179,15 +185,20 @@ impl Harness {
                 Some(Outcome::Page { load, arrivals, result })
             }
             Effect::Search { load, ref query, offset, limit, first } => {
-                if !first && std::mem::take(&mut self.hold_next_page) {
+                let hold = if first { &mut self.hold_next_search } else { &mut self.hold_next_page };
+                if std::mem::take(hold) {
                     self.held = Some(effect);
                     return None;
                 }
-                let page = self.fake.search(query, offset, limit);
+                let failure = if first { self.fail_next_search.take() } else { self.fail_next_page.take() };
+                let result = match failure {
+                    Some(message) => Err(message),
+                    None => Ok(self.fake.search(query, offset, limit)),
+                };
                 Some(if first {
-                    Outcome::Opened { load, result: Ok((page, 0)) }
+                    Outcome::Opened { load, result: result.map(|page| (page, 0)) }
                 } else {
-                    Outcome::Page { load, arrivals: false, result: Ok(page) }
+                    Outcome::Page { load, arrivals: false, result }
                 })
             }
             Effect::CountRow { selection, label } => {
@@ -350,6 +361,11 @@ fn items(n: i64) -> Vec<Entry> {
 }
 
 /// Read entries titled "Read 1" … "Read n", oldest first.
+/// One unread item per title, ids from 1.
+fn titled(titles: &[&str]) -> Vec<Entry> {
+    titles.iter().zip(1..).map(|(title, id)| entry(id, title)).collect()
+}
+
 fn read_items(n: i64) -> Vec<Entry> {
     range(1, n).into_iter().map(|id| entry_at(id, &format!("Read {id}"), EntryStatus::Read, id)).collect()
 }
@@ -1345,6 +1361,272 @@ fn search_results_load_a_page_at_a_time_by_offset() {
     let shown = h.press_through(&["n"]);
     assert_eq!(shown, expected[PAGE - 10..]);
     assert!(h.caught_up());
+}
+
+#[test]
+fn a_failed_search_leaves_the_list_and_the_place_in_it() {
+    let mut h = Harness::new(items(5));
+    h.open(false);
+    h.key("j");
+    let id = h.app.current().unwrap().id;
+    let (label, position, shift_a_before) =
+        (h.app.selection_label().to_string(), h.app.position(), h.app.newest_at_open);
+    let requests = h.entries_calls().len();
+
+    h.key("/");
+    h.fail_next_search = Some("This server has no search".into());
+    let fx = h.app.search("Rust");
+    h.run(fx);
+
+    assert_eq!(h.toast(), Some("This server has no search"));
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.app.screen(), Screen::Article);
+    assert_eq!(h.app.current().unwrap().id, id);
+    assert_eq!(h.app.queue().len(), 5);
+    assert_eq!(h.app.selection_label(), label);
+    assert_eq!(h.app.position(), position);
+    assert_eq!(h.app.newest_at_open, shift_a_before);
+    assert!(!h.app.searching());
+    assert_eq!(h.app.search_query(), "Rust", "the box offers it again, to change or to try once more");
+    assert_eq!(h.entries_calls().len(), requests + 1, "the list isn't loaded again");
+
+    // It carries on as if nothing happened: j moves on and marks read, Shift+A still counts this list.
+    h.key("j");
+    assert_eq!(h.app.position(), "3 / 5");
+    h.key("A");
+    assert!(h.app.confirm_text().contains(&label), "{}", h.app.confirm_text());
+}
+
+#[test]
+fn a_failed_search_from_another_search_keeps_its_results() {
+    let mut h = Harness::new(titled(&["Rust one", "Rust two", "Rust three", "Zig"]));
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    h.key("j");
+    let id = h.app.current().unwrap().id;
+
+    h.key("/");
+    assert_eq!(h.app.search_query(), "Rust");
+    h.fail_next_search = Some("Could not reach the server".into());
+    let fx = h.app.search("Zig");
+    h.run(fx);
+
+    assert!(h.app.searching());
+    assert_eq!(h.app.selection_label(), "“Rust”");
+    assert_eq!(h.app.current().unwrap().id, id);
+    assert_eq!(h.app.position(), "2 / 3");
+}
+
+#[test]
+fn a_failed_search_from_the_picker_goes_back_to_the_picker() {
+    let mut h = Harness::new(items(3));
+    h.start();
+    assert!(h.picker_loaded());
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    assert_eq!((h.app.overlay(), h.app.screen()), (Overlay::None, Screen::Loading), "nothing to show meanwhile");
+
+    let Some(Effect::Search { load, .. }) = h.held.take() else { panic!("no search held") };
+    let fx = h.app.apply(Outcome::Opened { load, result: Err("This server has no search".into()) });
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.toast(), Some("This server has no search"));
+    assert!(h.app.queue().is_empty() && !h.app.searching());
+    assert_eq!(h.app.selection_label(), "");
+}
+
+#[test]
+fn a_failed_search_over_a_list_still_opening_goes_to_the_picker() {
+    let mut h = Harness::new(items(3));
+    h.start();
+    let (_, opening) = h.app.key(&KeyPress { key: "Enter".into(), ..KeyPress::default() });
+    assert!(matches!(opening.as_slice(), [Effect::OpenSelection { .. }]), "left unanswered");
+    h.key("/");
+    h.fail_next_search = Some("This server has no search".into());
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker, "that answer is lost, so there's nothing to read");
+    assert_eq!(h.toast(), Some("This server has no search"));
+}
+
+#[test]
+fn the_article_stays_on_screen_until_the_search_answers() {
+    let mut h = Harness::new(titled(&["Rust one", "Plain", "Rust two"]));
+    h.open(false);
+    h.key("j");
+    let id = h.app.current().unwrap().id;
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Rust");
+    h.run(fx);
+
+    // Every window scrolls back to the top on another screen, so "Loading…" would lose the place in the article.
+    assert_eq!(h.app.screen(), Screen::Article);
+    assert_eq!(h.app.current().unwrap().id, id);
+    assert!(!h.app.searching());
+    assert_eq!(h.toast(), Some("Searching…"));
+
+    let Some(Effect::Search { load, .. }) = h.held.take() else { panic!("no search held") };
+    let page = h.fake.search("Rust", 0, PAGE);
+    let fx = h.app.apply(Outcome::Opened { load, result: Ok((page, 0)) });
+    h.run(fx);
+    assert!(h.app.searching());
+    assert_eq!(h.app.selection_label(), "“Rust”");
+    assert_eq!(h.app.position(), "1 / 2");
+    assert_eq!(h.toast(), None, "it's there, so \"Searching…\" is over");
+}
+
+#[test]
+fn a_search_that_finds_nothing_is_an_answer_and_replaces_the_list() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Nothing like it");
+    h.run(fx);
+    assert!(h.app.searching());
+    assert!(h.app.queue().is_empty());
+    assert_eq!(h.app.selection_label(), "“Nothing like it”");
+    assert_eq!(h.app.screen(), Screen::Empty);
+}
+
+#[test]
+fn a_page_of_the_old_list_doesnt_join_search_results() {
+    let mut h = Harness::new(items(120));
+    h.open(false);
+    // Near the end of the first page, with the next one on its way.
+    h.hold_next_page = true;
+    for _ in 0..PAGE - 10 {
+        h.key("j");
+    }
+    let old_page = h.held.take().expect("the next page is loading");
+    let Effect::LoadPage { load, .. } = old_page else { panic!("not a page") };
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Item");
+    h.run(fx);
+    let Some(Effect::Search { load: search, .. }) = h.held.take() else { panic!("no search held") };
+
+    // The old list's page comes in late, and no new one goes out in the meantime.
+    let late = h.fake.page(
+        Selection::All,
+        EntryStatus::Unread,
+        PageRequest { past: 0, limit: PAGE, order: Order::OldestFirst },
+    );
+    let fx = h.app.apply(Outcome::Page { load, arrivals: false, result: Ok(late) });
+    assert!(fx.is_empty());
+    let calls = h.entries_calls().len();
+    h.key("j");
+    assert_eq!(h.entries_calls().len(), calls, "a page asked for now would land in the search results");
+
+    let page = h.fake.search("Item", 0, 10);
+    let fx = h.app.apply(Outcome::Opened { load: search, result: Ok((page, 0)) });
+    h.run(fx);
+    assert!(h.app.searching());
+    assert_eq!(h.app.queue().len(), 10);
+}
+
+#[test]
+fn a_failed_search_lets_the_old_list_page_on() {
+    let mut h = Harness::new(items(120));
+    h.open(false);
+    h.hold_next_page = true;
+    for _ in 0..PAGE - 10 {
+        h.key("j");
+    }
+    assert!(h.held.take().is_some(), "the next page was on its way");
+    h.key("/");
+    h.fail_next_search = Some("No".into());
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    assert_eq!(h.app.queue().len(), PAGE);
+
+    h.key("j");
+    assert!(h.app.queue().len() > PAGE, "the page that was dropped is asked for again");
+}
+
+#[test]
+fn a_stale_search_changes_nothing_good_or_bad() {
+    let mut h = Harness::new(titled(&["Rust one", "Rust two", "Zig"]));
+    h.open(false);
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    let Some(Effect::Search { load: first, .. }) = h.held.take() else { panic!("no search held") };
+
+    // `/` while it's on its way: the newer search is the one that counts.
+    h.key("/");
+    assert_eq!(h.app.overlay(), Overlay::Search);
+    h.hold_next_search = true;
+    let fx = h.app.search("Zig");
+    h.run(fx);
+    let Some(Effect::Search { load: second, .. }) = h.held.take() else { panic!("no search held") };
+
+    h.app.apply(Outcome::Opened { load: first, result: Err("late".into()) });
+    assert_ne!(h.toast(), Some("late"));
+    let page = h.fake.search("Rust", 0, PAGE);
+    h.app.apply(Outcome::Opened { load: first, result: Ok((page, 0)) });
+    assert!(!h.app.searching(), "the first answer is out of date");
+
+    let page = h.fake.search("Zig", 0, PAGE);
+    h.app.apply(Outcome::Opened { load: second, result: Ok((page, 0)) });
+    assert_eq!(h.app.selection_label(), "“Zig”");
+    assert_eq!(h.app.position(), "1 / 1");
+}
+
+#[test]
+fn opening_something_else_drops_a_search_on_its_way() {
+    let mut h = Harness::new(titled(&["Rust one", "Plain"]));
+    h.open(false);
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Rust");
+    h.run(fx);
+    let Some(Effect::Search { load, .. }) = h.held.take() else { panic!("no search held") };
+
+    h.key("p");
+    h.key("Enter");
+    assert_eq!(h.app.selection_label(), "All unread");
+    h.app.apply(Outcome::Opened { load, result: Err("late".into()) });
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_ne!(h.toast(), Some("late"));
+}
+
+#[test]
+fn shift_a_waits_for_the_search_on_its_way() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    h.key("/");
+    h.hold_next_search = true;
+    let fx = h.app.search("Item");
+    h.run(fx);
+    let calls = h.calls.len();
+    h.key("A");
+    assert_eq!(h.calls.len(), calls, "the list it would mark is about to go");
+}
+
+#[test]
+fn a_failed_second_page_of_a_search_keeps_the_results_and_tries_again() {
+    let mut h = Harness::new(items(120));
+    h.open(false);
+    h.key("/");
+    let fx = h.app.search("Item");
+    h.run(fx);
+    assert_eq!(h.app.queue().len(), PAGE);
+    h.fail_next_page = Some("Could not reach the server".into());
+    for _ in 0..PAGE - 10 {
+        h.key("j");
+    }
+    assert_eq!(h.toast(), Some("Could not reach the server"));
+    assert!(h.app.searching());
+    assert_eq!(h.app.queue().len(), PAGE);
+    assert_eq!(h.app.position(), format!("{} / 120", PAGE - 9));
+    h.key("j");
+    assert!(h.app.queue().len() > PAGE, "the next move asks again");
 }
 
 #[test]

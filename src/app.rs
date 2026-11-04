@@ -153,6 +153,17 @@ enum Opened {
     Starred,
 }
 
+/// A search whose first answer hasn't come. Whether a server can search shows only in that answer, so the open list
+/// stays until then, and a search that fails leaves it as it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwaitedSearch {
+    query: String,
+    /// Where the box was opened from.
+    from: Overlay,
+    /// The "Searching…" toast, which the results make out of date.
+    toast: u64,
+}
+
 /// The image viewer: the article's images, and the one on screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Viewer {
@@ -394,6 +405,7 @@ pub struct App {
     /// Opening another selection makes the loads still in flight no-ops: each remembers this and compares.
     latest_load: u64,
     opened: Option<Opened>,
+    awaited_search: Option<AwaitedSearch>,
     /// The newest unread item's id when the selection was opened (0 in history). Shift+A marks up to there.
     newest_at_open: i64,
     /// Saving to Readeck or fetching the full article: one at a time.
@@ -452,6 +464,7 @@ impl App {
             checking: false,
             latest_load: 0,
             opened: None,
+            awaited_search: None,
             newest_at_open: 0,
             busy: false,
             loading_more: false,
@@ -729,6 +742,7 @@ impl App {
         self.latest_load += 1;
         self.loading_more = false;
         self.checking = false;
+        self.awaited_search = None;
         self.latest_load
     }
 
@@ -764,12 +778,25 @@ impl App {
             return;
         }
         self.loading = false;
+        let search = self.awaited_search.take();
         match result {
             Ok((page, newest)) => {
+                if let Some(search) = search {
+                    self.open_results(search);
+                }
                 self.newest_at_open = newest;
                 self.append_page(page);
             }
-            Err(message) => self.toast_error(message),
+            Err(message) => {
+                // The search box went on Enter. Back to the picker it came from, or that has something to open.
+                if let Some(search) = search
+                    && self.overlay == Overlay::None
+                    && (search.from == Overlay::Picker || self.queue.is_empty())
+                {
+                    self.overlay = Overlay::Picker;
+                }
+                self.toast_error(message);
+            }
         }
     }
 
@@ -787,7 +814,8 @@ impl App {
     /// Asks for the page after what's loaded; one at a time. Returns whether it did. New arrivals are always
     /// looked for after the newest item loaded, also when the list runs newest first.
     fn load_page(&mut self, arrivals: bool, fx: &mut Vec<Effect>) -> bool {
-        if self.loading_more {
+        // With a search on its way the list may be about to go, and this page would land in the results.
+        if self.loading_more || self.awaited_search.is_some() {
             return false;
         }
         let load = self.latest_load;
@@ -1084,6 +1112,10 @@ impl App {
     /// `newest_at_open` is 0, so that's just the items marked unread here.) The server counts, so the question
     /// stays true even after reading elsewhere.
     fn mark_all_read(&mut self, fx: &mut Vec<Effect>) {
+        // The dialog would still be up over the search results, and go on to mark the list before them.
+        if self.awaited_search.is_some() {
+            return;
+        }
         let selection = match &self.opened {
             Some(Opened::Feeds(selection)) => *selection,
             Some(Opened::Search(_)) => {
@@ -1320,7 +1352,10 @@ impl App {
         }
     }
 
-    /// The search box's Enter: the results open like any list, best match first. Nothing typed closes the box.
+    /// The search box's Enter: the results open like any list, best match first, once they're in; if none come,
+    /// everything stays as it was (`opened`). Until then an article stays on screen and works as usual: the windows
+    /// scroll to the top on any change of screen, so "Loading…" would lose your place in it. The words stay in the
+    /// box either way, to change or to try again. Nothing typed closes the box.
     pub fn search(&mut self, query: &str) -> Vec<Effect> {
         let mut fx = Vec::new();
         if self.overlay != Overlay::Search {
@@ -1333,13 +1368,23 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.search_query.clone_from(&query);
+        // A search replacing one on its way goes back where that one would have.
+        let from = self.awaited_search.as_ref().map_or(self.before_search, |search| search.from);
         self.new_load();
-        self.opened = Some(Opened::Search(query.clone()));
-        self.newest_at_open = 0;
-        self.reset_queue(format!("“{query}”"));
-        self.loading = true;
+        self.loading = self.current().is_none();
+        self.toast_info("Searching…");
+        let toast = self.toast_serial;
+        self.awaited_search = Some(AwaitedSearch { query: query.clone(), from, toast });
         fx.push(Effect::Search { load: self.latest_load, query, offset: 0, limit: PAGE, first: true });
         fx
+    }
+
+    /// The first answer is in, so the results take over from the open list.
+    fn open_results(&mut self, search: AwaitedSearch) {
+        self.dismiss_toast(search.toast);
+        self.reset_queue(format!("“{}”", search.query));
+        self.opened = Some(Opened::Search(search.query));
+        self.newest_at_open = 0;
     }
 
     /// The search box's Cancel: Esc.

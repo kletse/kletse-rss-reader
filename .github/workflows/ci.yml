@@ -45,6 +45,21 @@ jobs:
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
             test -s /tmp/shot.png
           done
+      # The demo skips first run, so the runs above never reach its QML. With no config and no demo, the window opens
+      # on onboarding, which needs no keys; any QML warning is fatal here as well.
+      - name: Smoke test first run
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FATAL_WARNINGS: "1"
+          QT_FORCE_STDERR_LOGGING: "1"
+          LANG: C.UTF-8
+        run: |
+          empty=$(mktemp -d)
+          mkdir "$empty/config" "$empty/state"
+          rm -f /tmp/shot.png
+          XDG_CONFIG_HOME="$empty/config" XDG_STATE_HOME="$empty/state" \
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS=" " timeout 60 target/debug/onward
+          test -s /tmp/shot.png
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

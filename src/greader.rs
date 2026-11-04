@@ -48,6 +48,8 @@ const BATCH: usize = 100;
 const MAX_PAGE: usize = 1000;
 
 const NO_SEARCH: &str = "This server has no search";
+/// The login worked and the server has items, but none of them in a form this client takes.
+const UNREADABLE_IDS: &str = "The server sent item ids Onward can't read, so it can't show these items";
 /// A wrong API password and one that was never set look the same from here, so this covers both.
 pub const LOGIN_REJECTED: &str = "The Google Reader API server turned down the username or API password. This isn't \
                                   your login password: FreshRSS has you set one in your profile, Miniflux under \
@@ -135,6 +137,15 @@ struct ItemRefs {
 impl ItemRefs {
     fn ids(&self) -> Vec<i64> {
         self.item_refs.iter().filter_map(|r| parse_item_id(&r.id)).collect()
+    }
+
+    /// The ids that parse. Skipping a few is fine; skipping all of them would pass for an empty list.
+    fn readable_ids(&self) -> Result<Vec<i64>, Error> {
+        let ids = self.ids();
+        if ids.is_empty() && !self.item_refs.is_empty() {
+            return Err(Error::unexpected(UNREADABLE_IDS));
+        }
+        Ok(ids)
     }
 
     /// Where the next listing starts, if there is one.
@@ -503,7 +514,12 @@ impl Client {
                 .send(reqwest::Method::POST, "stream/items/contents", &[("output", "json".into())], Body::Form(&form))
                 .await?;
             let contents: Contents = resp.json().await.map_err(|e| Error::reading(Service::GReader, &self.base, e))?;
-            entries.extend(contents.items.into_iter().filter_map(Item::into_entry).map(|e| (e.id, e)));
+            let sent = contents.items.len();
+            let readable: Vec<Entry> = contents.items.into_iter().filter_map(Item::into_entry).collect();
+            if sent > 0 && readable.is_empty() {
+                return Err(Error::unexpected(UNREADABLE_IDS));
+            }
+            entries.extend(readable.into_iter().map(|e| (e.id, e)));
         }
         Ok(ids.iter().filter_map(|id| entries.remove(id)).collect())
     }
@@ -541,7 +557,7 @@ impl Client {
             query.push((if order == Order::OldestFirst { "ot" } else { "nt" }, past.to_string()));
         }
         let refs = self.item_ids(&query).await.map_err(|e| no_labels(sel, e))?;
-        let ids = refs.ids();
+        let ids = refs.readable_ids()?;
         let total = i64::try_from(ids.len()).unwrap_or(i64::MAX) + i64::from(refs.next().is_some());
         let mut entries = self.contents(&ids[..ids.len().min(limit)]).await?;
         // Miniflux ignores `it` on a feed and lists its unread items too.
@@ -572,7 +588,7 @@ impl Client {
         }
         let refs: ItemRefs =
             serde_json::from_value(value).map_err(|_| Error::unexpected("Unexpected search results"))?;
-        let ids = refs.ids();
+        let ids = refs.readable_ids()?;
         let total = i64::try_from(ids.len()).unwrap_or(i64::MAX) + i64::from(refs.next().is_some());
         let page: Vec<i64> = ids.iter().copied().skip(offset).take(limit).collect();
         Ok(EntryPage { total, entries: self.contents(&page).await? })
@@ -589,7 +605,7 @@ impl Client {
                 query.push(("c", c.clone()));
             }
             let refs = self.item_ids(&query).await.map_err(|e| no_labels(sel, e))?;
-            ids.extend(refs.ids());
+            ids.extend(refs.readable_ids()?);
             let next = refs.next();
             // A server that ignored `c` would hand out the same listing forever.
             if next.is_none() || next == from || refs.item_refs.is_empty() {
@@ -806,6 +822,17 @@ mod tests {
             .and(header("Authorization", AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "userId": "1", "userName": "ward" })))
             .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(client(&server).check().await.unwrap(), "ward");
+    }
+
+    #[tokio::test]
+    async fn check_falls_back_on_the_username_typed_when_the_server_names_nobody() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        Mock::given(path("/reader/api/0/user-info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "userName": "" })))
             .mount(&server)
             .await;
         assert_eq!(client(&server).check().await.unwrap(), "ward");
@@ -1242,6 +1269,83 @@ mod tests {
             .await;
         let page = client(&server).search("rust async", 1, 1).await.unwrap();
         assert_eq!((page.total, page.entries[0].id), (3, 8));
+    }
+
+    /// Listing answers with these ids; contents with these items.
+    async fn lists(server: &MockServer, ids: serde_json::Value, items: serde_json::Value) {
+        logged_in(server).await;
+        Mock::given(path("/reader/api/0/stream/items/ids"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "itemRefs": ids })))
+            .mount(server)
+            .await;
+        Mock::given(path("/reader/api/0/search/items/ids"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "itemRefs": ids })))
+            .mount(server)
+            .await;
+        Mock::given(path("/reader/api/0/stream/items/contents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": items })))
+            .mount(server)
+            .await;
+    }
+
+    fn unread_page(c: &Client) -> impl Future<Output = Result<EntryPage, Error>> {
+        c.entries(Selection::Starred, EntryStatus::Unread, Order::NewestFirst, 0, 50)
+    }
+
+    /// 24 hex digits, as The Old Reader's API documents them: too long for a 64-bit id.
+    const LONG_ID: &str = "5f8a1b2c3d4e5f6071829304";
+
+    #[tokio::test]
+    async fn a_listing_with_no_id_it_can_read_is_an_error_not_an_empty_list() {
+        let server = MockServer::start().await;
+        lists(&server, json!([{ "id": LONG_ID }, { "id": "not a number" }]), json!([])).await;
+        let c = client(&server);
+        for err in [
+            unread_page(&c).await.unwrap_err(),
+            c.search("rust", 0, 50).await.unwrap_err(),
+            c.newest_unread_id(Selection::All).await.unwrap_err(),
+            c.unread_count(Selection::All, 5).await.unwrap_err(),
+            c.mark_read_up_to(Selection::All, 5).await.unwrap_err(),
+        ] {
+            assert_eq!(err.message(), UNREADABLE_IDS);
+            assert_eq!(err.kind(), ErrorKind::Server);
+        }
+    }
+
+    #[tokio::test]
+    async fn contents_with_no_id_it_can_read_are_an_error_not_an_empty_list() {
+        let server = MockServer::start().await;
+        let unreadable = json!({ "id": format!("{ITEM_PREFIX}{LONG_ID}"), "published": 1 });
+        lists(&server, json!([{ "id": "7" }]), json!([unreadable])).await;
+        let err = unread_page(&client(&server)).await.unwrap_err();
+        assert_eq!(err.message(), UNREADABLE_IDS);
+    }
+
+    #[tokio::test]
+    async fn some_ids_it_cant_read_among_good_ones_are_skipped() {
+        let server = MockServer::start().await;
+        let unreadable = json!({ "id": format!("{ITEM_PREFIX}{LONG_ID}"), "published": 1 });
+        lists(&server, json!([{ "id": "7" }, { "id": LONG_ID }]), json!([item(7, 7_000_000, false), unreadable])).await;
+        let page = unread_page(&client(&server)).await.unwrap();
+        assert_eq!((page.total, page.entries.len(), page.entries[0].id), (1, 1, 7));
+    }
+
+    #[tokio::test]
+    async fn an_empty_answer_is_still_an_empty_list() {
+        let server = MockServer::start().await;
+        lists(&server, json!([]), json!([])).await;
+        let c = client(&server);
+        let page = unread_page(&c).await.unwrap();
+        assert_eq!((page.total, page.entries.len()), (0, 0));
+        assert_eq!(c.search("rust", 0, 50).await.unwrap().total, 0);
+        assert_eq!(c.newest_unread_id(Selection::All).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn items_gone_by_the_time_they_are_fetched_are_still_an_empty_page() {
+        let server = MockServer::start().await;
+        lists(&server, json!([{ "id": "7" }]), json!([])).await;
+        assert!(unread_page(&client(&server)).await.unwrap().entries.is_empty());
     }
 
     #[tokio::test]

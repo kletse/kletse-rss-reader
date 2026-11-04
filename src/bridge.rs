@@ -441,8 +441,6 @@ impl qobject::Model {
     }
 
     pub fn start(mut self: Pin<&mut Self>) {
-        let help = serde_json::to_string(&self.as_mut().state().app.help_lines()).unwrap_or_else(|_| "[]".into());
-        self.as_mut().set_help_lines(qs(&help));
         let kinds: Vec<_> = Server::ALL.map(|k| serde_json::json!({ "name": k.name(), "label": k.label() })).to_vec();
         self.as_mut().set_server_kinds(qs(&serde_json::Value::from(kinds).to_string()));
         self.as_mut().apply_theme(theme::load());
@@ -652,6 +650,7 @@ impl qobject::Model {
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
         let refreshes = app.capabilities().refresh;
+        let help = serde_json::to_string(&app.help_lines()).unwrap_or_else(|_| "[]".into());
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
@@ -675,6 +674,7 @@ impl qobject::Model {
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
         self.as_mut().set_refreshes(refreshes);
+        self.as_mut().set_help_lines(qs(&help));
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
             Some(t) => {

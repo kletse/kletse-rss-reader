@@ -606,7 +606,7 @@ impl App {
     }
 
     pub fn help_lines(&self) -> Vec<(String, String)> {
-        keys::help_lines(self.mac)
+        keys::help_lines(self.mac, self.capabilities)
     }
 
     /// "3 / 120" while reading, counting the pages not loaded yet.

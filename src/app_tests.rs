@@ -1984,12 +1984,16 @@ fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
     h.key("r");
     assert_eq!(h.toast(), Some(crate::feeds::REFRESH_REFUSED));
     assert!(!h.calls.iter().any(|c| matches!(c, Effect::FetchContent { .. } | Effect::RefreshFeeds)));
+    let listed = |h: &Harness, key: &str| h.app.help_lines().iter().any(|(keys, _)| keys == key);
+    assert!(!listed(&h, "f") && !listed(&h, "r"), "the help leaves them out");
+    assert!(listed(&h, "/"), "whether it has search only shows by trying");
     // Saved settings for a Miniflux server bring them back.
     h.save_result = Ok(saved(Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING }));
     h.key(",");
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert!(h.app.capabilities().fetch_full);
+    assert!(listed(&h, "f") && listed(&h, "r"));
 }
 
 #[test]

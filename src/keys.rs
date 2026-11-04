@@ -2,6 +2,7 @@
 //! names them ("j", "A", "ArrowDown", " ", "Escape"); the QML side translates Qt's key events into these names.
 //! A test keeps the help and the keymaps from drifting apart.
 
+use crate::feeds::Capabilities;
 use crate::paging::Mode;
 
 /// What a key does. Some depend on where you are (`Space`, `Enter`); the app decides.
@@ -150,10 +151,33 @@ pub struct HelpRow {
     pub place: Where,
     /// Picker keys the line mentions in passing, e.g. "(→ / o picks a row)".
     pub picker_note: Option<(&'static [Chord], &'static str)>,
+    /// What the server must be able to do for the line to show.
+    pub needs: Needs,
+}
+
+/// What a help line depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Needs {
+    Nothing,
+    FetchFull,
+    Refresh,
+    Search,
+}
+
+impl Needs {
+    /// Search stays listed where only trying will tell.
+    fn met(self, can: Capabilities) -> bool {
+        match self {
+            Needs::Nothing => true,
+            Needs::FetchFull => can.fetch_full,
+            Needs::Refresh => can.refresh,
+            Needs::Search => can.search != Some(false),
+        }
+    }
 }
 
 const fn row(keys: &'static [Chord], action: &'static str) -> HelpRow {
-    HelpRow { keys, action, place: Where::Reader, picker_note: None }
+    HelpRow { keys, action, place: Where::Reader, picker_note: None, needs: Needs::Nothing }
 }
 
 use Chord::{Mod, Plain, Shift};
@@ -167,41 +191,57 @@ pub const HELP: &[HelpRow] = &[
     row(&[Plain("*")], "star / unstar the article"),
     row(&[Plain("o")], "open original in browser"),
     row(&[Plain("b")], "save to Readeck, then next"),
-    row(&[Plain("f")], "fetch full article (again for feed version)"),
+    HelpRow { needs: Needs::FetchFull, ..row(&[Plain("f")], "fetch full article (again for feed version)") },
     HelpRow {
         keys: &[Plain("A")],
         action: "mark whole list read (in picker: the selected row)",
         place: Where::Both,
         picker_note: None,
+        needs: Needs::Nothing,
     },
     row(&[Plain("v")], "view the article's images (← / → between them)"),
-    HelpRow { keys: &[Plain("/")], action: "search all feeds, read and unread", place: Where::Both, picker_note: None },
+    HelpRow {
+        keys: &[Plain("/")],
+        action: "search all feeds, read and unread",
+        place: Where::Both,
+        picker_note: None,
+        needs: Needs::Search,
+    },
     HelpRow {
         keys: &[Plain("s")],
         action: "unread oldest / newest first (remembered)",
         place: Where::Both,
         picker_note: None,
+        needs: Needs::Nothing,
     },
     HelpRow {
         keys: &[Plain("g"), Plain("p"), Plain("Tab"), Plain("Escape"), Plain("ArrowLeft")],
         action: "feeds picker",
         place: Where::Reader,
         picker_note: Some((&[Plain("ArrowRight"), Plain("o")], "picks a row")),
+        needs: Needs::Nothing,
     },
-    HelpRow { keys: &[Plain("r")], action: "refresh feeds", place: Where::Picker, picker_note: None },
+    HelpRow {
+        keys: &[Plain("r")],
+        action: "refresh feeds",
+        place: Where::Picker,
+        picker_note: None,
+        needs: Needs::Refresh,
+    },
     HelpRow {
         keys: &[Plain("h")],
         action: "history: read items, newest first (again for unread)",
         place: Where::Both,
         picker_note: None,
+        needs: Needs::Nothing,
     },
     row(&[Plain(" "), Shift(" ")], "scroll; Space at the end = next"),
     row(&[Mod("+"), Mod("-")], "font size"),
     row(&[Plain("["), Plain("]")], "narrower / wider column"),
     row(&[Mod("0")], "reset font size and width"),
-    HelpRow { keys: &[Plain(",")], action: "settings", place: Where::Both, picker_note: None },
-    HelpRow { keys: &[Plain("?")], action: "this help", place: Where::Both, picker_note: None },
-    HelpRow { keys: &[Plain("q")], action: "quit", place: Where::Both, picker_note: None },
+    HelpRow { keys: &[Plain(",")], action: "settings", place: Where::Both, picker_note: None, needs: Needs::Nothing },
+    HelpRow { keys: &[Plain("?")], action: "this help", place: Where::Both, picker_note: None, needs: Needs::Nothing },
+    HelpRow { keys: &[Plain("q")], action: "quit", place: Where::Both, picker_note: None, needs: Needs::Nothing },
 ];
 
 /// How the help (and the README) names a key: arrows as glyphs, Esc, Space, a real minus sign.
@@ -232,9 +272,10 @@ fn label(chords: &[Chord], mac: bool) -> String {
     chords.iter().map(|&c| chord_label(c, mac)).collect::<Vec<_>>().join(" / ")
 }
 
-/// The help overlay's lines: the keys, then what they do.
-pub fn help_lines(mac: bool) -> Vec<(String, String)> {
+/// The help overlay's lines: the keys, then what they do, leaving out what this server can't do.
+pub fn help_lines(mac: bool, can: Capabilities) -> Vec<(String, String)> {
     HELP.iter()
+        .filter(|row| row.needs.met(can))
         .map(|row| {
             let place = if row.place == Where::Picker { " (in picker)" } else { "" };
             let note =
@@ -307,7 +348,7 @@ mod tests {
 
     #[test]
     fn reads_as_before() {
-        let lines = help_lines(false);
+        let lines = help_lines(false, Capabilities::EVERYTHING);
         let first: Vec<(&str, &str)> = lines.iter().take(3).map(|(k, a)| (k.as_str(), a.as_str())).collect();
         assert_eq!(first, [("j / ↓", "next (marks read)"), ("n", "skip (keeps unread)"), ("k / ↑", "previous")]);
         assert!(lines.contains(&("Shift+A".into(), "mark whole list read (in picker: the selected row)".into())));
@@ -317,7 +358,25 @@ mod tests {
         assert!(lines.contains(&("r".into(), "refresh feeds (in picker)".into())));
         assert!(lines.contains(&("Space / Shift+Space".into(), "scroll; Space at the end = next".into())));
         assert!(lines.contains(&("Ctrl + / Ctrl −".into(), "font size".into())));
-        assert!(help_lines(true).contains(&("⌘ 0".into(), "reset font size and width".into())));
+        assert!(
+            help_lines(true, Capabilities::EVERYTHING).contains(&("⌘ 0".into(), "reset font size and width".into()))
+        );
+    }
+
+    #[test]
+    fn the_help_leaves_out_what_the_server_cant_do() {
+        let keys = |can| help_lines(false, can).into_iter().map(|(keys, _)| keys).collect::<Vec<_>>();
+        let has = |can, key: &str| keys(can).iter().any(|k| k == key);
+        let everything = Capabilities::EVERYTHING;
+        assert!(["f", "r", "/"].iter().all(|key| has(everything, key)));
+        assert_eq!(keys(everything).len(), HELP.len());
+
+        let no_full = Capabilities { fetch_full: false, ..everything };
+        assert!(!has(no_full, "f") && has(no_full, "r"));
+        let no_refresh = Capabilities { refresh: false, ..everything };
+        assert!(has(no_refresh, "f") && !has(no_refresh, "r"));
+        assert!(has(Capabilities { search: None, ..everything }, "/"), "only trying will tell");
+        assert!(!has(Capabilities { search: Some(false), ..everything }, "/"));
     }
 
     #[test]

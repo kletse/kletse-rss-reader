@@ -8,6 +8,7 @@ use super::images::{self, Job};
 use super::ui::{Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status};
 use crate::backend::Backend;
+use crate::config::Server;
 use crate::feeds::Capabilities;
 use crate::prefs::Prefs;
 use base64::Engine as _;
@@ -479,6 +480,16 @@ fn the_help_says_how_it_works_here() {
     assert!(!keys.iter().any(|k| k.contains("Shift+Space")), "most terminals don't report it: {keys:?}");
     assert!(keys.iter().any(|k| k.contains("PgDn")));
     assert!(keys.contains(&"q"));
+}
+
+#[test]
+fn the_help_leaves_out_what_the_server_cant_do() {
+    let on_greader = Status { configured: true, readeck: false, capabilities: Server::GReader.capabilities() };
+    let s = Screenful::starting(100, 30, on_greader);
+    let lines = s.ui.help_lines();
+    let keys: Vec<&str> = lines.iter().map(|(keys, _)| keys.as_str()).collect();
+    assert!(!keys.contains(&"f") && !keys.contains(&"r"), "{keys:?}");
+    assert!(keys.contains(&"/"));
 }
 
 #[test]

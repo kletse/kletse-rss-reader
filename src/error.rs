@@ -17,7 +17,7 @@ impl Service {
     fn credential(self) -> &'static str {
         match self {
             Service::Miniflux => "API key",
-            Service::GReader => "password",
+            Service::GReader => "API password",
             Service::Readeck => "token",
         }
     }

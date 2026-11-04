@@ -48,6 +48,10 @@ const BATCH: usize = 100;
 const MAX_PAGE: usize = 1000;
 
 const NO_SEARCH: &str = "This server has no search";
+/// A wrong API password and one that was never set look the same from here, so this covers both.
+pub const LOGIN_REJECTED: &str = "The Google Reader API server turned down the username or API password. This isn't \
+                                  your login password: FreshRSS has you set one in your profile, Miniflux under \
+                                  Settings → Integrations.";
 
 /// `Debug` leaves out the password and the tokens.
 pub struct Client {
@@ -300,9 +304,7 @@ impl Client {
                 *lock(&self.auth) = Some(token.clone());
                 Ok(token)
             }
-            401 | 403 => {
-                Err(Error::Rejected("The Google Reader API server turned down the username or password".into()))
-            }
+            401 | 403 => Err(Error::Rejected(LOGIN_REJECTED.into())),
             404 | 405 => Err(self.not_greader()),
             code => Err(Error::unexpected(format!("The Google Reader API server answered with HTTP {code}"))),
         }
@@ -819,7 +821,10 @@ mod tests {
             .await;
         let err = c.check().await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Rejected);
-        assert_eq!(err.message(), "The Google Reader API server turned down the username or password");
+        assert_eq!(err.message(), LOGIN_REJECTED);
+        for name in ["API password", "FreshRSS", "Miniflux"] {
+            assert!(err.message().contains(name), "{name}");
+        }
         drop(guard);
 
         // FreshRSS's address without /api/greader.php: its web page, which has no ClientLogin.
@@ -1135,7 +1140,7 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::Rejected);
         assert_eq!(
             err.message(),
-            "Google Reader API turned down the password (401 Unauthorized). Check it in Settings."
+            "Google Reader API turned down the API password (401 Unauthorized). Check it in Settings."
         );
     }
 

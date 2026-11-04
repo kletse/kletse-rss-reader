@@ -620,7 +620,7 @@ mod tests {
             .await;
         let backend = Backend { demo: false, ..Backend::new(true) };
         let err = backend.save_settings(greader_values(&server.uri(), "wrong")).await.unwrap_err();
-        assert_eq!(err.message(), "The Google Reader API server turned down the username or password");
+        assert_eq!(err.message(), greader::LOGIN_REJECTED);
         let cfg = config::Config {
             server: Some(config::Server::GReader),
             greader: Some(config::GReader { url: server.uri(), username: "u".into(), password: "p".into() }),

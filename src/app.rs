@@ -15,8 +15,7 @@
 
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
-use crate::feeds::{Counts, Entry, EntryPage, EntryStatus, Selection};
-use crate::greader;
+use crate::feeds::{self, Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::keys::{self, Action};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
@@ -1071,7 +1070,7 @@ impl App {
     fn fetch_full(&mut self, fx: &mut Vec<Effect>) {
         let Some(entry) = self.current() else { return };
         if !self.fetches {
-            self.toast_info(greader::FETCH_CONTENT_REFUSED);
+            self.toast_info(feeds::FETCH_CONTENT_REFUSED);
             return;
         }
         let (id, index) = (entry.id, self.index);
@@ -1713,7 +1712,7 @@ impl App {
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
-            Action::PickerRefresh if !self.fetches => self.toast_info(greader::REFRESH_REFUSED),
+            Action::PickerRefresh if !self.fetches => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
                 fx.push(Effect::RefreshFeeds);

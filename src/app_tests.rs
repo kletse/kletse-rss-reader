@@ -1967,10 +1967,10 @@ fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
     h.open(false);
     assert!(!h.app.fetches());
     h.key("f");
-    assert_eq!(h.toast(), Some(crate::greader::FETCH_CONTENT_REFUSED));
+    assert_eq!(h.toast(), Some(crate::feeds::FETCH_CONTENT_REFUSED));
     h.key("p");
     h.key("r");
-    assert_eq!(h.toast(), Some(crate::greader::REFRESH_REFUSED));
+    assert_eq!(h.toast(), Some(crate::feeds::REFRESH_REFUSED));
     assert!(!h.calls.iter().any(|c| matches!(c, Effect::FetchContent { .. } | Effect::RefreshFeeds)));
     // Saved settings for a Miniflux server bring them back.
     h.save_result = Ok(saved(Status { configured: true, readeck: false, fetches: true }));

@@ -103,3 +103,20 @@ pub enum Selection {
     /// The starred entries of every feed, read and unread alike: a status doesn't narrow it (see `entries`).
     Starred,
 }
+
+// What the app says when a server can't do something: `Error::Refused`'s words, and the toasts of keys the app
+// already knows won't work.
+
+/// What `f` says on a server that can't fetch the full article.
+pub const FETCH_CONTENT_REFUSED: &str = "Fetching the full article isn't available with a Google Reader API server";
+/// What `r` says on a server that can't be told to refresh.
+pub const REFRESH_REFUSED: &str =
+    "Refreshing feeds isn't available with a Google Reader API server; it refreshes them on its own";
+/// What a search says on a server that turns out to have none.
+pub const NO_SEARCH: &str = "This server has no search";
+/// A category the server can't list on its own.
+pub const NO_CATEGORY_ITEMS: &str = "This server can't list a category's items. Open its feeds one at a time.";
+/// The row for feeds in no category, on a server with no stream for it.
+pub const NO_FOLDER: &str = "These feeds are in no folder: open them one at a time";
+/// A row that was on the server when the list was made.
+pub const GONE: &str = "That feed or category isn't on the server any more";

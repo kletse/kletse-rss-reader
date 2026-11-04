@@ -160,7 +160,9 @@ so keep that in mind before sharing a screenshot. Prefs (font size, width, order
   (`cargo rustc --lib --no-default-features --features ffi --crate-type staticlib`) and the Swift package in
   `macos/` around it, with `MACOSX_DEPLOYMENT_TARGET` matching the package's macOS 15. macOS-only Rust
   (`src/theme/macos.rs`, `src/ffi.rs`) can't be compiled on Linux, so the macOS CI job is its only check. The Qt
-  window still builds and runs on a Mac (`cargo run`, with Homebrew Qt), which is handy for comparing.
+  window still builds and runs on a Mac (`ONWARD_DEMO=1 cargo qt`, with Homebrew Qt), which is handy for comparing: the
+  same QML and core, but the Mac's theme, fonts and scrolling. It shares `prefs.toml` and the servers with the Mac app, so
+  use the demo.
 
 ## The terminal version (`src/tui/`)
 

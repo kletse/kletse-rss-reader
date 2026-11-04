@@ -1,3 +1,5 @@
 [alias]
+# The Qt window, the Linux app: on a Mac with `brew install qt`, beside the native one. `ONWARD_DEMO=1 cargo qt`.
+qt = "run --bin onward"
 # The terminal version, without Qt: `cargo tui`, `ONWARD_DEMO=1 cargo tui`.
 tui = "run --no-default-features --features tui --bin onward-tui"

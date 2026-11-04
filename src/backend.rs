@@ -5,7 +5,7 @@
 use crate::app::{Effect, Outcome, Saved, SettingsValues, Status};
 use crate::config;
 use crate::demo;
-use crate::error::Error;
+use crate::error::{Error, RedirectRefused};
 use crate::greader;
 use crate::miniflux::{self, EntryPage, EntryStatus, Selection};
 use crate::paging::PageRequest;
@@ -13,6 +13,9 @@ use crate::readeck;
 use crate::server::Server;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+
+/// As many as reqwest's own policy follows.
+const MAX_REDIRECTS: usize = 10;
 
 pub struct Backend {
     /// The config can change at runtime (onboarding / settings), hence the lock.
@@ -23,6 +26,9 @@ pub struct Backend {
     /// login and which stream each feed id stands for. A new config drops it.
     server: Mutex<Option<Arc<Server>>>,
     http: reqwest::Client,
+    /// For images, wherever they live: nothing we sign in with goes through it.
+    #[cfg(feature = "tui")]
+    images: reqwest::Client,
     demo: bool,
     /// The demo's starred articles, which `*` changes in memory.
     stars: demo::Stars,
@@ -37,6 +43,39 @@ struct Checked {
     readeck_problem: Option<String>,
 }
 
+fn client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent(concat!("onward/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(30))
+}
+
+/// The client for the servers we sign in to. A login gate in front of one answers with a redirect to itself, and
+/// that mustn't get what we send: reqwest keeps `Authorization` from another host, but not `X-Auth-Token`, and a 307
+/// sends a POST's body again, which for a Google Reader login is the password. So it only follows redirects that
+/// stay on the server. Anything else goes through `client()`, where redirects are free: images live on CDNs.
+pub(crate) fn api_client() -> reqwest::Client {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        let start = attempt.previous().first();
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            attempt.error("too many redirects")
+        } else if start.is_none_or(|start| stays_on_server(start, attempt.url())) {
+            attempt.follow()
+        } else {
+            let to = attempt.url().origin().ascii_serialization();
+            attempt.error(RedirectRefused { to })
+        }
+    });
+    client().redirect(policy).build().expect("the HTTP client only needs built-in TLS roots")
+}
+
+/// The same host and port and scheme, or the same host going from http to https, on whichever port. Back from https
+/// to http is out: it would send the secret in the clear.
+fn stays_on_server(start: &reqwest::Url, next: &reqwest::Url) -> bool {
+    let same_origin = start.scheme() == next.scheme() && start.port_or_known_default() == next.port_or_known_default();
+    let secured = start.scheme() == "http" && next.scheme() == "https";
+    start.host_str() == next.host_str() && (same_origin || secured)
+}
+
 impl std::fmt::Debug for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Backend { .. }")
@@ -45,11 +84,7 @@ impl std::fmt::Debug for Backend {
 
 impl Backend {
     pub fn new(demo: bool) -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("onward/", env!("CARGO_PKG_VERSION")))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("the HTTP client only needs built-in TLS roots");
+        let http = api_client();
         let (config, problem) = match config::read() {
             Ok(config) => (config, None),
             Err(e) => {
@@ -62,6 +97,8 @@ impl Backend {
             problem: RwLock::new(problem),
             server: Mutex::new(None),
             http,
+            #[cfg(feature = "tui")]
+            images: client().build().expect("the HTTP client only needs built-in TLS roots"),
             demo,
             stars: demo::Stars::default(),
         }
@@ -241,7 +278,7 @@ impl Backend {
             return Err(Error::Refused(format!("Not loading {url}")));
         }
         let failed = |source| Error::Unexpected { context: "The image didn't load".into(), source: Some(source) };
-        let response = self.http.get(url).send().await.and_then(|r| r.error_for_status()).map_err(failed)?;
+        let response = self.images.get(url).send().await.and_then(|r| r.error_for_status()).map_err(failed)?;
         Ok(response.bytes().await.map_err(failed)?.to_vec())
     }
 
@@ -466,6 +503,48 @@ mod tests {
         assert_eq!(backend.fetch_image(&format!("{}/a.png", server.uri())).await.unwrap_or_default(), b"png");
         assert!(backend.fetch_image(&format!("{}/missing.png", server.uri())).await.is_err());
         assert!(backend.fetch_image("file:///etc/passwd").await.is_err());
+    }
+
+    #[cfg(feature = "tui")]
+    #[tokio::test]
+    async fn images_still_follow_a_redirect_to_another_host() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let cdn = MockServer::start().await;
+        Mock::given(path("/a.png")).respond_with(ResponseTemplate::new(200).set_body_bytes(*b"png")).mount(&cdn).await;
+        let site = MockServer::start().await;
+        let to = format!("{}/a.png", cdn.uri().replace("127.0.0.1", "localhost"));
+        Mock::given(path("/image"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", to.as_str()))
+            .mount(&site)
+            .await;
+        let image = Backend::new(false).fetch_image(&format!("{}/image", site.uri())).await;
+        assert_eq!(image.unwrap_or_default(), b"png");
+    }
+
+    #[test]
+    fn only_redirects_that_stay_on_the_server_are_followed() {
+        let url = |s: &str| reqwest::Url::parse(s).unwrap();
+        for (start, next) in [
+            ("https://rss.example.com/v1/me", "https://rss.example.com/v1/me/"),
+            ("https://rss.example.com/v1/me", "https://rss.example.com:443/other"),
+            ("http://rss.example.com/v1/me", "https://rss.example.com/v1/me"),
+            ("http://rss.example.com:8080/v1/me", "https://rss.example.com:8443/v1/me"),
+            ("http://localhost:8080/a", "http://localhost:8080/b"),
+        ] {
+            assert!(stays_on_server(&url(start), &url(next)), "{start} to {next}");
+        }
+        for (start, next) in [
+            ("https://rss.example.com/", "https://auth.example.com/"),
+            ("https://example.com/", "https://www.example.com/"),
+            ("https://example.com/", "https://example.com.evil.test/"),
+            ("https://rss.example.com/", "http://rss.example.com/"),
+            ("https://rss.example.com/", "https://rss.example.com:8443/"),
+            ("http://127.0.0.1:8080/", "http://127.0.0.1:9090/"),
+            ("http://127.0.0.1:8080/", "http://localhost:8080/"),
+        ] {
+            assert!(!stays_on_server(&url(start), &url(next)), "{start} to {next}");
+        }
     }
 
     fn values(url: &str, readeck_url: &str, readeck_token: &str) -> SettingsValues {

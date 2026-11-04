@@ -140,6 +140,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   otherwise. Gold fails with `undefined reference to 'cxx_qt_init_crate_onward'` (and the other
   `cxx_qt_init_*`) since `bridge.rs` moved into the library. Arch's `rust` package pulls in `lld`; with rustup,
   install it (`sudo pacman -S lld`). The PKGBUILD lists it in `makedepends`.
+- **Two HTTP clients.** `api_client()` in `backend.rs` is for the servers we sign in to, and follows a redirect only
+  if it stays on the server; images use a plain one, as they live on CDNs. Don't send anything signed in through it.
 - **Test-only accessors** in `app.rs` are `#[cfg(test)]`. Clippy runs with `-D warnings`, so an unused one fails
   CI.
 

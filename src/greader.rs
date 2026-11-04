@@ -874,6 +874,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn neither_the_password_nor_the_login_token_follow_a_redirect_to_another_host() {
+        // A 307 sends the form again as it was, password and all, and reqwest's care for `Authorization` is no help.
+        let elsewhere = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&elsewhere)
+            .await;
+        let to = format!("{}/login", elsewhere.uri().replace("127.0.0.1", "localhost"));
+        let redirect = ResponseTemplate::new(307).insert_header("Location", to.as_str());
+
+        let server = MockServer::start().await;
+        Mock::given(path("/accounts/ClientLogin")).respond_with(redirect.clone()).mount(&server).await;
+        let cfg = config::GReader { url: server.uri(), username: "ward".into(), password: "pw".into() };
+        let err = Client::new(crate::backend::api_client(), &cfg).check().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Setup);
+        assert!(err.message().contains("API password"), "{}", err.message());
+
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        Mock::given(path("/reader/api/0/user-info")).respond_with(redirect).mount(&server).await;
+        let cfg = config::GReader { url: server.uri(), username: "ward".into(), password: "pw".into() };
+        let err = Client::new(crate::backend::api_client(), &cfg).check().await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Setup);
+    }
+
+    #[tokio::test]
     async fn check_reports_an_unreachable_server() {
         let cfg = config::GReader { url: "http://127.0.0.1:1".into(), username: "u".into(), password: "p".into() };
         let err = Client::new(reqwest::Client::new(), &cfg).check().await.unwrap_err();

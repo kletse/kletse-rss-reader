@@ -506,6 +506,96 @@ mod tests {
         drop(guard);
     }
 
+    /// Answers `path` with a redirect to `to`.
+    async fn redirects(server: &MockServer, path_to: &str, code: u16, to: &str) {
+        Mock::given(path(path_to))
+            .respond_with(ResponseTemplate::new(code).insert_header("Location", to))
+            .mount(server)
+            .await;
+    }
+
+    /// The same server by another name, so only the host differs.
+    fn by_name(server: &MockServer) -> String {
+        server.uri().replace("127.0.0.1", "localhost")
+    }
+
+    fn api_client_for(server: &MockServer) -> Client {
+        let cfg = config::Miniflux { url: server.uri(), api_key: "secret".into() };
+        Client::new(crate::backend::api_client(), &cfg)
+    }
+
+    #[tokio::test]
+    async fn the_api_key_doesnt_follow_a_redirect_to_another_host() {
+        let server = MockServer::start().await;
+        let elsewhere = MockServer::start().await;
+        Mock::given(path("/login")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&elsewhere).await;
+        for code in [301, 302, 303, 307, 308] {
+            let guard = Mock::given(path("/v1/me"))
+                .respond_with(
+                    ResponseTemplate::new(code).insert_header("Location", format!("{}/login", by_name(&elsewhere))),
+                )
+                .mount_as_scoped(&server)
+                .await;
+            let err = api_client_for(&server).check().await.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Setup, "HTTP {code}");
+            let message = err.message();
+            for part in ["redirected to http://localhost", "API key", "sign-in page"] {
+                assert!(message.contains(part), "{part}: {message}");
+            }
+            drop(guard);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_api_key_doesnt_follow_a_redirect_to_the_same_server_by_another_name() {
+        let server = MockServer::start().await;
+        redirects(&server, "/v1/me", 302, &format!("{}/login", by_name(&server))).await;
+        Mock::given(path("/login")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        assert_eq!(api_client_for(&server).check().await.unwrap_err().kind(), ErrorKind::Setup);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_while_reading_says_so_rather_than_failing_to_parse() {
+        let server = MockServer::start().await;
+        redirects(&server, "/v1/entries", 302, "https://auth.example.com/login?rd=secret").await;
+        let page = api_client_for(&server)
+            .entries(Selection::All, EntryStatus::Unread, Order::OldestFirst, 0, 10)
+            .await
+            .unwrap_err()
+            .message();
+        assert!(page.contains("redirected to https://auth.example.com,"), "{page}");
+        assert!(!page.contains("rd=secret"), "only the host: {page}");
+    }
+
+    #[tokio::test]
+    async fn redirects_on_the_same_server_still_work_and_keep_the_key() {
+        let server = MockServer::start().await;
+        redirects(&server, "/v1/me", 301, "/v1/me/").await;
+        Mock::given(path("/v1/me/"))
+            .and(header("X-Auth-Token", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "username": "ward" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(api_client_for(&server).check().await.unwrap(), "ward");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_another_port_on_the_same_host_is_refused() {
+        let server = MockServer::start().await;
+        let other = MockServer::start().await;
+        Mock::given(path("/login")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&other).await;
+        redirects(&server, "/v1/me", 302, &format!("{}/login", other.uri())).await;
+        assert_eq!(api_client_for(&server).check().await.unwrap_err().kind(), ErrorKind::Setup);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_that_goes_round_in_circles_ends() {
+        let server = MockServer::start().await;
+        redirects(&server, "/v1/me", 302, "/v1/me").await;
+        assert_eq!(api_client_for(&server).check().await.unwrap_err().kind(), ErrorKind::Unreachable);
+    }
+
     #[tokio::test]
     async fn check_reports_unreachable_server() {
         // Port 1 is never listening; a freed mock port could be reused by a parallel test.

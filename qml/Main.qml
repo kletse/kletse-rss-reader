@@ -213,7 +213,8 @@ ApplicationWindow {
         property var pending: null
         interval: 400
         repeat: true
-        running: model.snapshotPath !== "" && model.pickerState === "ready" && pending === null
+        running: model.snapshotPath !== "" && (model.pickerState === "ready" || model.overlay === "onboarding")
+                 && pending === null
         onTriggered: {
             // One key per tick, so what a key starts (opening a selection) is done before the next one.
             if (pending === null)

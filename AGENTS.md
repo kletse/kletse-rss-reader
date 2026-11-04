@@ -106,6 +106,12 @@ Note: the settings form shows the **real** config of the machine it runs on (dem
 so keep that in mind before sharing a screenshot. Prefs (font size, width, order) are read from the real
 `prefs.toml` but never written in demo mode.
 
+For the README's shots (`docs/screenshots/`), add `-qwindowgeometry 1200x860` to the command, and set
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` to an empty folder with `omarchy/current/theme` in the state one linked to
+`/usr/share/omarchy/themes/tokyo-night`: that keeps the real config out and gives the theme the caption names.
+Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. The terminal shots are foot captures
+(see below), with tmux inside it to send the keys, so no real picture shows; foot's palette goes under `[colors-dark]`.
+
 `ONWARD_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
 
 ## Traps found so far

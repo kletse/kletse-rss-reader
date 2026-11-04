@@ -27,7 +27,7 @@ Most feed readers give you three panes and a wall of headlines. Onward shows **j
 You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks the server once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_: **j** goes on to the next feed (or category) with unread items, and **Enter** takes you back to the feed picker.
 
 <p align="center">
-  <img src="docs/screenshots/macos/article.png" alt="Reading an article" width="900">
+  <img src="docs/screenshots/omarchy/article.png" alt="Reading an article" width="900">
 </p>
 
 - **Unread first.** Read items don't appear, except ones you passed during this session, so **k** can take you back to undo.
@@ -36,17 +36,9 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes, or pick Onward Dark or Onward Light in **Settings** to keep the logo's colours instead. On macOS: light or dark mode, the moment you change it, along with the app icon.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
 - **In a terminal too.** `onward-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
-- **Native, no web view.** The window is Qt Quick, driven from Rust: articles are laid out as native text and images, not in a browser engine.
+- **Native, no web view.** The window is Qt Quick on Linux and SwiftUI on macOS, over the same Rust core: articles are laid out as native text and images, not in a browser engine.
 
 ## Screenshots
-
-### macOS
-
-| Feeds picker                                                                                                   | Code, highlighted in theme colours                                                             | Keys (<kbd>?</kbd>)                                                         |
-| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| <img src="docs/screenshots/macos/picker.png" alt="Feeds and categories picker">                                | <img src="docs/screenshots/macos/code.png" alt="Article with a syntax-highlighted code block"> | <img src="docs/screenshots/macos/help.png" alt="Keyboard shortcut overlay"> |
-| **First-run setup**                                                                                            |                                                                                                |                                                                             |
-| <img src="docs/screenshots/macos/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details"> |                                                                                                |                                                                             |
 
 ### Omarchy
 
@@ -56,7 +48,13 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | **Keys (<kbd>?</kbd>)**                                                                  | **First-run setup**                                                                                                          |                                                                                                             |
 | <img src="docs/screenshots/omarchy/help.png" alt="Keyboard shortcut overlay on Omarchy"> | <img src="docs/screenshots/omarchy/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details, on Omarchy"> |                                                                                                             |
 
-<sub>Screenshots use the built-in demo data (`ONWARD_DEMO=1`): macOS in dark mode, Omarchy with the Tokyo Night theme. The colours follow the system appearance on macOS and the active theme on Omarchy.</sub>
+### In a terminal
+
+| Feeds picker                                                                                     | Code, in the terminal's own colours                                                                        | Keys (<kbd>?</kbd>)                                                                     |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| <img src="docs/screenshots/terminal/picker.png" alt="Feeds and categories picker in a terminal"> | <img src="docs/screenshots/terminal/code.png" alt="Article with a syntax-highlighted code block in a terminal"> | <img src="docs/screenshots/terminal/help.png" alt="Keyboard shortcut overlay in a terminal"> |
+
+<sub>Screenshots use the built-in demo data (`ONWARD_DEMO=1`): Omarchy with the Tokyo Night theme, and the terminal version in foot with the same colours. The colours follow the active theme on Omarchy, the system appearance on macOS, and the terminal's palette in a terminal.</sub>
 
 ## Keys
 
@@ -86,7 +84,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
-The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
+The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
 Press <kbd>Shift</kbd>+<kbd>A</kbd> in the picker to mark the selected feed or category read without opening it. It asks first, and, as in the reader, leaves alone what arrives after it counted.
 
@@ -94,7 +92,7 @@ Press <kbd>h</kbd> (or **History** at the top of the picker) to switch the picke
 
 Press <kbd>/</kbd> to search, from the reader or the picker. Miniflux looks through every feed, read and unread items alike, and the results open as a list like any other, best match first, with a **Search** badge in the top bar: <kbd>j</kbd> marks a result read and moves on, <kbd>m</kbd> toggles it, <kbd>b</kbd> saves it. <kbd>/</kbd> again starts from your last search.
 
-Unread items come oldest first, so you read them in the order they were written. Press <kbd>s</kbd> (or the button in the picker) to read the newest first instead; the app remembers. New arrivals still follow on at the end. History is always newest first.
+Unread items come oldest first, so you read them in the order they were written. Press <kbd>s</kbd> (or the button at the bottom of the picker) to read the newest first instead; the app remembers. New arrivals still follow on at the end. History is always newest first.
 
 Press <kbd>v</kbd>, or click an image, to see the article's images one at a time over the whole window. <kbd>←</kbd> / <kbd>→</kbd> go between them, <kbd>o</kbd> opens the one on screen (or the link it's in) in your browser, and <kbd>Esc</kbd>, <kbd>Space</kbd> or a click closes the viewer.
 
@@ -116,7 +114,9 @@ cd onward-rss-reader/packaging
 makepkg -si
 ```
 
-This installs `/usr/bin/onward`, a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → _Onward_) and the icon. To uninstall, run `sudo pacman -R onward`.
+This installs `/usr/bin/onward`, `/usr/bin/onward-tui` (see [In a terminal](#in-a-terminal)), a launcher entry (open it with <kbd>Super</kbd>+<kbd>Space</kbd> → _Onward_) and the icon. To uninstall, run `sudo pacman -R onward`.
+
+Onward was called Kletse RSS until 5.2. The package replaces `kletse-rss`, so say yes when pacman asks, and your servers and preferences come over by themselves on the first run.
 
 ### macOS
 
@@ -131,7 +131,7 @@ packaging/macos/build-app.sh
 cp -r "packaging/Onward.app" /Applications/
 ```
 
-Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading, and the toolbar shows where you are in the list. The feeds picker, the keys and the search box float over the article: click beside them to close them. Text is set in New York, headings in SF, code in SF Mono, and scrolling is the system's own. Size and position are remembered between launches. The app follows the system light/dark mode, in the colours of its logo, and on macOS 26 or later the Dock icon follows too. **Settings** has an orange icon, and the original look with your system accent colour, if you prefer them. The **Article** menu has the reading actions, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd>, <kbd>⌘</kbd><kbd>H</kbd> and <kbd>⌘</kbd><kbd>,</kbd> work.
+Open it from Spotlight or the Dock. The window title, shown in Mission Control and the Window menu, is the article you're reading, and the toolbar shows where you are in the list. The feeds picker, the keys and the search box float over the article: click beside them to close them. Settings is a window of its own, so the reader keeps working behind it. Text is set in New York, headings in SF, code in SF Mono, and scrolling is the system's own. Size and position are remembered between launches. The app follows the system light/dark mode, in the colours of its logo, and on macOS 26 or later the Dock icon follows too. **Settings** has an orange icon, and the original look with your system accent colour, if you prefer them. The **Article** menu has the reading actions, and the usual <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>M</kbd>, <kbd>⌘</kbd><kbd>H</kbd> and <kbd>⌘</kbd><kbd>,</kbd> work.
 
 **Updating from source:** pull, rebuild, and replace the copy in `/Applications` (quit the app first, otherwise macOS keeps running the old binary):
 
@@ -224,6 +224,7 @@ password = "…"     # FreshRSS: the API password, not the one you log in with
 ```bash
 cargo run          # the app (ONWARD_DEMO=1 cargo run: with built-in sample data, no server needed)
 cargo tui          # the terminal version, without Qt (ONWARD_DEMO=1 works here too)
+cargo qt           # the Qt window by name: on a Mac with `brew install qt`, beside the native app
 cargo test         # everything the app does, driven by key presses against a fake Miniflux; no Qt window needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt
@@ -248,6 +249,7 @@ src/
   app.rs             everything the app does: queue, paging, picker, overlays, settings, keys (no Qt, no network)
   app_tests.rs       its tests: key presses against a fake Miniflux
   bridge.rs          the QObject the QML sees; runs effects on tokio, copies state into properties
+  ffi.rs             the same for Swift: the C interface the Mac app links
   tui_main.rs, tui/  the terminal version: runs effects, keeps the scroll position, draws cells (ratatui)
   backend.rs         the server side of effects: the feed server, Readeck, the config file, opening links
   keys.rs            the keymaps and the help overlay's text, checked against each other and the README
@@ -256,14 +258,17 @@ src/
   prefs.rs           font size, column width and the order of unread items, remembered
   content/convert.rs feed HTML → blocks of native layout (paragraphs, images, code, quotes, lists, tables, embeds)
   content/highlight.rs  code blocks highlighted with syntect, in theme colours
-  theme/             the Omarchy theme (watched live) or the macOS appearance, as a palette
+  content/native.rs  the blocks' inline HTML → styled runs, for Swift and the terminal
+  theme/             the Omarchy theme (watched live), the macOS appearance or the logo's colours, as a palette
   server.rs          the feed server: Miniflux or a Google Reader API server, one set of calls
   miniflux.rs        Miniflux API client
   greader.rs         Google Reader API client (FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's integration)
   readeck.rs         Readeck "save bookmark"
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
+  moved.rs           moves the kletse-rss folders to onward on first use
   demo.rs            sample data for ONWARD_DEMO=1
 qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings
+macos/               the Mac app: SwiftUI over the same core
 assets/fonts/        Literata and Inter (SIL Open Font License), compiled into the binary
 packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, release scripts
 ```

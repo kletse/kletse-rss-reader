@@ -6,6 +6,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config;
+use crate::dates;
 use crate::error::{Error, Service, ok_status};
 use crate::paging::Order;
 
@@ -76,6 +77,19 @@ pub struct Entry {
     #[serde(default)]
     pub reading_time: i64,
     pub feed: EntryFeed,
+    /// Where the server has the entry in its order, in unix milliseconds, when that isn't `published_at`: a
+    /// Google Reader API server pages by its own timestamp (FreshRSS: when the entry arrived). 0 for Miniflux,
+    /// which pages by `published_at`. See `order_millis`.
+    #[serde(default)]
+    pub order_ms: i64,
+}
+
+impl Entry {
+    /// The time the server orders and pages the entry by, in unix milliseconds: what `paging::next_page` starts
+    /// the next page from. `published_at` stays the article's date, for the header.
+    pub fn order_millis(&self) -> Option<i64> {
+        if self.order_ms > 0 { Some(self.order_ms) } else { dates::unix_millis(&self.published_at) }
+    }
 }
 
 /// One page of entries, plus how many the server has in total for the query.
@@ -110,12 +124,14 @@ struct FetchedContent {
     content: String,
 }
 
-/// What the picker shows: every feed with its category and its unread and read counts.
+/// What the picker shows: every feed with its category and its unread and read counts. `None` is a count the
+/// server can't give: the Google Reader API has no read counts, and Miniflux's Google Reader integration no
+/// unread ones either. The picker then lists the feed without a number.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FeedCount {
     pub feed: Feed,
-    pub unread: i64,
-    pub read: i64,
+    pub unread: Option<i64>,
+    pub read: Option<i64>,
 }
 
 /// Which set of entries to read.
@@ -313,7 +329,7 @@ fn merge_counts(feeds: Vec<Feed>, counters: &Counters) -> Vec<FeedCount> {
             let id = feed.id.to_string();
             let unread = counters.unreads.get(&id).copied().unwrap_or(0);
             let read = counters.reads.get(&id).copied().unwrap_or(0);
-            FeedCount { feed, unread, read }
+            FeedCount { feed, unread: Some(unread), read: Some(read) }
         })
         .collect()
 }
@@ -372,6 +388,8 @@ mod tests {
         assert_eq!(e.content, "");
         assert_eq!(e.reading_time, 0);
         assert_eq!(e.status, EntryStatus::Unread);
+        assert_eq!(e.order_ms, 0);
+        assert_eq!(e.order_millis(), dates::unix_millis("2026-10-24T08:12:00+02:00"), "Miniflux pages by published_at");
     }
 
     #[test]
@@ -385,8 +403,8 @@ mod tests {
         assert_eq!(
             counts,
             vec![
-                FeedCount { feed: feeds[0].clone(), unread: 4, read: 0 },
-                FeedCount { feed: feeds[1].clone(), unread: 0, read: 7 }
+                FeedCount { feed: feeds[0].clone(), unread: Some(4), read: Some(0) },
+                FeedCount { feed: feeds[1].clone(), unread: Some(0), read: Some(7) }
             ]
         );
     }
@@ -477,7 +495,7 @@ mod tests {
         let counts = client(&server).feed_counts().await.unwrap();
         assert_eq!(
             counts.iter().map(|c| (c.feed.id, c.unread, c.read)).collect::<Vec<_>>(),
-            vec![(1, 0, 5), (2, 3, 0)]
+            vec![(1, Some(0), Some(5)), (2, Some(3), Some(0))]
         );
     }
 

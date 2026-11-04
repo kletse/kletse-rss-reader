@@ -1,14 +1,17 @@
-//! Runs the app's server effects: Miniflux, Readeck, the config file and the browser. The answer to each comes
+//! Runs the app's server effects: the feed server (Miniflux or a Google Reader API server), Readeck, the config
+//! file and the browser. The answer to each comes
 //! back as an `Outcome`. With `KLETSE_RSS_DEMO=1` it serves the built-in sample data and never touches a server.
 
 use crate::app::{Effect, Outcome, SettingsValues, Status};
 use crate::config;
 use crate::demo;
 use crate::error::Error;
+use crate::greader;
 use crate::miniflux::{self, EntryPage, EntryStatus, Selection};
 use crate::paging::PageRequest;
 use crate::readeck;
-use std::sync::RwLock;
+use crate::server::Server;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 pub struct Backend {
@@ -16,6 +19,9 @@ pub struct Backend {
     config: RwLock<config::Config>,
     /// What was wrong with the config file at startup, until a save replaces it.
     problem: RwLock<Option<String>>,
+    /// The client for the configured server, made on first use and kept: a Google Reader client remembers its
+    /// login and which stream each feed id stands for. A new config drops it.
+    server: Mutex<Option<Arc<Server>>>,
     http: reqwest::Client,
     demo: bool,
 }
@@ -40,7 +46,7 @@ impl Backend {
                 (config::Config::default(), Some(e.message()))
             }
         };
-        Self { config: RwLock::new(config), problem: RwLock::new(problem), http, demo }
+        Self { config: RwLock::new(config), problem: RwLock::new(problem), server: Mutex::new(None), http, demo }
     }
 
     fn config(&self) -> config::Config {
@@ -51,6 +57,7 @@ impl Backend {
     fn set_config(&self, cfg: config::Config) {
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = cfg;
         *self.problem.write().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// `KLETSE_RSS_DEMO=1`: sample data, and nothing is saved, prefs included.
@@ -60,43 +67,82 @@ impl Backend {
 
     pub fn status(&self) -> Status {
         let cfg = self.config();
-        Status { configured: self.demo || cfg.is_complete(), readeck: self.demo || cfg.readeck.is_some() }
+        Status {
+            configured: self.demo || cfg.is_complete(),
+            readeck: self.demo || cfg.readeck.is_some(),
+            fetches: self.demo || cfg.server() == config::Server::Miniflux,
+        }
     }
 
     fn settings(&self) -> SettingsValues {
         let cfg = self.config();
+        let server = cfg.server();
         let readeck = cfg.readeck.unwrap_or_default();
+        let greader = cfg.greader.unwrap_or_default();
         SettingsValues {
+            server,
             miniflux_url: cfg.miniflux.url,
             miniflux_api_key: cfg.miniflux.api_key,
+            greader_url: greader.url,
+            greader_username: greader.username,
+            greader_password: greader.password,
             readeck_url: readeck.url,
             readeck_token: readeck.token,
         }
     }
 
-    fn miniflux(&self) -> Result<miniflux::Client, Error> {
-        let cfg = self.config();
-        if !cfg.is_complete() {
-            return Err(Error::Setup("Miniflux is not set up yet".into()));
+    /// A client for the server in `cfg`.
+    fn client_for(&self, cfg: &config::Config) -> Server {
+        match (cfg.server(), &cfg.greader) {
+            (config::Server::GReader, Some(greader)) => {
+                Server::GReader(greader::Client::new(self.http.clone(), greader))
+            }
+            _ => Server::Miniflux(miniflux::Client::new(self.http.clone(), &cfg.miniflux)),
         }
-        Ok(miniflux::Client::new(self.http.clone(), &cfg.miniflux))
     }
 
-    /// Validates the settings against the real servers, then saves and applies them.
+    /// The configured server's client, the same one each time until the config changes.
+    fn server(&self) -> Result<Arc<Server>, Error> {
+        let cfg = self.config();
+        if !cfg.is_complete() {
+            return Err(Error::Setup("The feed server is not set up yet".into()));
+        }
+        let mut kept = self.server.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(kept.get_or_insert_with(|| Arc::new(self.client_for(&cfg))).clone())
+    }
+
+    /// Validates the settings against the real servers, then saves and applies them. The other kind of server's
+    /// fields are kept when they're complete, so switching back needs no typing; otherwise they're dropped.
     async fn save_settings(&self, values: SettingsValues) -> Result<Status, Error> {
         let has_readeck_url = !values.readeck_url.trim().is_empty();
         let has_readeck_token = !values.readeck_token.trim().is_empty();
         if has_readeck_url != has_readeck_token {
             return Err(Error::Setup("Fill in both Readeck fields, or leave both empty.".into()));
         }
-        let cfg = config::Config {
+        let mut cfg = config::Config {
+            server: Some(values.server),
             miniflux: config::Miniflux { url: values.miniflux_url, api_key: values.miniflux_api_key },
+            greader: Some(config::GReader {
+                url: values.greader_url,
+                username: values.greader_username,
+                password: values.greader_password,
+            }),
             readeck: Some(config::Readeck { url: values.readeck_url, token: values.readeck_token }),
         }
         .normalized();
+        match values.server {
+            config::Server::Miniflux => {
+                cfg.greader = cfg.greader.filter(|g| g.is_complete() && config::validate_url(&g.url).is_ok());
+            }
+            config::Server::GReader => {
+                if !(cfg.miniflux.is_complete() && config::validate_url(&cfg.miniflux.url).is_ok()) {
+                    cfg.miniflux = config::Miniflux::default();
+                }
+            }
+        }
         cfg.validate()?;
         if !self.demo {
-            miniflux::Client::new(self.http.clone(), &cfg.miniflux).check().await?;
+            self.client_for(&cfg).check().await?;
             if let Some(readeck) = &cfg.readeck {
                 readeck::check(&self.http, readeck).await?;
             }
@@ -116,24 +162,21 @@ impl Backend {
         if self.demo {
             return Ok(demo::entries(sel, status, order, past, limit));
         }
-        self.miniflux()?.entries(sel, status, order, past, limit).await
+        self.server()?.entries(sel, status, order, past, limit).await
     }
 
     async fn search(&self, query: &str, offset: usize, limit: usize) -> Result<EntryPage, Error> {
         if self.demo {
             return Ok(demo::search(query, offset, limit));
         }
-        self.miniflux()?.search(query, offset, limit).await
+        self.server()?.search(query, offset, limit).await
     }
 
     /// The selection's newest unread id, and how many are unread up to it.
     async fn count_row(&self, sel: Selection) -> Result<(i64, i64), Error> {
         let newest = self.newest_unread_id(sel).await?;
-        let count = if self.demo {
-            demo::unread_count(sel, newest)
-        } else {
-            self.miniflux()?.unread_count(sel, newest).await?
-        };
+        let count =
+            if self.demo { demo::unread_count(sel, newest) } else { self.server()?.unread_count(sel, newest).await? };
         Ok((newest, count))
     }
 
@@ -141,7 +184,7 @@ impl Backend {
         if self.demo {
             return Ok(demo::newest_unread_id(sel));
         }
-        self.miniflux()?.newest_unread_id(sel).await
+        self.server()?.newest_unread_id(sel).await
     }
 
     /// The image at `url`, for a window that fetches its own images: the terminal's viewer. Demo mode has
@@ -190,7 +233,7 @@ impl Backend {
                 let result = if self.demo {
                     Ok(demo::content(id))
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => client.fetch_content(id).await,
                         Err(e) => Err(e),
                     }
@@ -201,7 +244,7 @@ impl Backend {
                 let result = if self.demo {
                     Ok(demo::feed_counts())
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => client.feed_counts().await,
                         Err(e) => Err(e),
                     }
@@ -212,7 +255,7 @@ impl Backend {
                 let result = if self.demo {
                     Ok(())
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => client.refresh_all().await,
                         Err(e) => Err(e),
                     }
@@ -241,7 +284,7 @@ impl Backend {
                 let result = if self.demo {
                     Ok(demo::unread_count(selection, up_to))
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => client.unread_count(selection, up_to).await,
                         Err(e) => Err(e),
                     }
@@ -253,7 +296,7 @@ impl Backend {
                     demo::mark_read_up_to(selection, up_to);
                     Ok(())
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => tokio::try_join!(
                             client.mark_read_up_to(selection, up_to),
                             client.set_status(&later, EntryStatus::Read)
@@ -272,7 +315,7 @@ impl Backend {
                     demo::mark_read_up_to(selection, up_to);
                     Ok(())
                 } else {
-                    match self.miniflux() {
+                    match self.server() {
                         Ok(client) => client.mark_read_up_to(selection, up_to).await.map(|_| ()),
                         Err(e) => Err(e),
                     }
@@ -289,7 +332,7 @@ impl Backend {
     }
 
     async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), Error> {
-        self.miniflux()?.set_status(ids, status).await
+        self.server()?.set_status(ids, status).await
     }
 }
 
@@ -325,6 +368,7 @@ pub fn open_in_browser(url: &str) -> Result<(), Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::app::SettingsValuesBox;
@@ -371,6 +415,17 @@ mod tests {
             miniflux_api_key: "key".into(),
             readeck_url: readeck_url.into(),
             readeck_token: readeck_token.into(),
+            ..SettingsValues::default()
+        }
+    }
+
+    fn greader_values(url: &str, password: &str) -> SettingsValues {
+        SettingsValues {
+            server: config::Server::GReader,
+            greader_url: url.into(),
+            greader_username: "ward".into(),
+            greader_password: password.into(),
+            ..SettingsValues::default()
         }
     }
 
@@ -396,9 +451,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_google_reader_server_needs_all_three_fields_and_a_real_url() {
+        let err = save(greader_values("https://rss.example.com/api/greader.php", "")).await.err();
+        assert_eq!(err.as_deref(), Some("The Google Reader API server needs a URL, a username and a password."));
+        let err = save(greader_values("rss.example.com", "pw")).await.err();
+        assert_eq!(err.as_deref(), Some("rss.example.com is not a valid URL"));
+        // Half a Miniflux setup next to it, left over in the hidden fields, doesn't stand in the way.
+        let mut values = greader_values("https://rss.example.com/api/greader.php", "pw");
+        values.miniflux_url = "https://m.example.com".into();
+        assert!(save(values).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn saving_checks_the_chosen_server_and_says_what_it_can_do() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let backend = Backend { demo: false, ..Backend::new(true) };
+        let err = backend.save_settings(greader_values(&server.uri(), "wrong")).await.unwrap_err();
+        assert_eq!(err.message(), "The Google Reader API server turned down the username or password");
+        let cfg = config::Config {
+            server: Some(config::Server::GReader),
+            greader: Some(config::GReader { url: server.uri(), username: "u".into(), password: "p".into() }),
+            ..config::Config::default()
+        };
+        backend.set_config(cfg);
+        assert_eq!(backend.status(), Status { configured: true, readeck: false, fetches: false });
+        assert_eq!(backend.settings().server, config::Server::GReader);
+        assert!(matches!(*backend.server().unwrap(), Server::GReader(_)));
+        let same = Arc::ptr_eq(&backend.server().unwrap(), &backend.server().unwrap());
+        assert!(same, "the client, its login and its streams are kept");
+    }
+
+    #[tokio::test]
     async fn demo_mode_serves_the_sample_data() {
         let backend = Backend::new(true);
-        assert_eq!(backend.status(), Status { configured: true, readeck: true });
+        assert_eq!(backend.status(), Status { configured: true, readeck: true, fetches: true });
         let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
             panic!("no feed counts");
         };

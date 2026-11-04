@@ -55,7 +55,7 @@ struct PickerView: View {
                                 .lineLimit(1)
                                 .padding(.leading, row.depth == 1 ? 16 : 0)
                             Spacer(minLength: 12)
-                            Text("\(row.count)")
+                            Text(row.count.map(String.init) ?? "")
                                 .monospacedDigit()
                                 .foregroundStyle(current ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary))
                         }
@@ -82,7 +82,8 @@ struct PickerView: View {
         switch picker?.state {
         case "error": return picker?.error ?? ""
         case "ready":
-            return picker?.history == true ? "Nothing read yet. Press h for unread items."
+            if picker?.history == true { return "Nothing read yet. Press h for unread items." }
+            return model.state?.fetches == false ? "Nothing unread. Press h for history."
                 : "Nothing unread. Press r to refresh, or h for history."
         default: return "Loading…"
         }

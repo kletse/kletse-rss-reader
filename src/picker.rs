@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 pub struct PickerItem {
     pub selection: Selection,
     pub label: String,
-    pub count: i64,
+    /// `None` when the server can't count (read items on a Google Reader API server): shown without a number.
+    pub count: Option<i64>,
     /// 0 for "All …" and categories, 1 for feeds.
     pub depth: u8,
 }
@@ -18,7 +19,8 @@ fn by_title(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Turns feed counts into the picker rows: "All unread" (or "All read" in history mode),
-/// then each category (sorted) with its feeds. Anything with nothing to show is left out.
+/// then each category (sorted) with its feeds. Anything with nothing to show is left out; what the server can't
+/// count stays in, as it may have something.
 pub fn build(counts: &[FeedCount], mode: Mode) -> Vec<PickerItem> {
     rows(counts, mode, false)
 }
@@ -31,16 +33,26 @@ pub fn next_after(counts: &[FeedCount], mode: Mode, current: Selection) -> Optio
     let all = rows(counts, mode, true);
     let at = all.iter().position(|r| r.selection == current)?;
     let same_kind = |s: &Selection| std::mem::discriminant(s) == std::mem::discriminant(&current);
-    all.iter().cycle().skip(at + 1).take(all.len() - 1).find(|r| same_kind(&r.selection) && r.count > 0).cloned()
+    all.iter().cycle().skip(at + 1).take(all.len() - 1).find(|r| same_kind(&r.selection) && has_some(r.count)).cloned()
+}
+
+/// Something to show, or a count the server doesn't know.
+fn has_some(count: Option<i64>) -> bool {
+    count != Some(0)
+}
+
+/// The counts added up; unknown if any of them is.
+fn sum(counts: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
+    counts.into_iter().sum()
 }
 
 fn rows(counts: &[FeedCount], mode: Mode, keep_empty: bool) -> Vec<PickerItem> {
     let count_of = |fc: &FeedCount| if mode == Mode::History { fc.read } else { fc.unread };
-    let total: i64 = counts.iter().map(count_of).sum();
+    let total = sum(counts.iter().map(count_of));
 
     // Feeds with something to show, grouped by category id.
     let mut groups: BTreeMap<i64, (String, Vec<&FeedCount>)> = BTreeMap::new();
-    for fc in counts.iter().filter(|fc| keep_empty || count_of(fc) > 0) {
+    for fc in counts.iter().filter(|fc| keep_empty || has_some(count_of(fc))) {
         let category = &fc.feed.category;
         groups.entry(category.id).or_insert_with(|| (category.title.clone(), Vec::new())).1.push(fc);
     }
@@ -48,13 +60,13 @@ fn rows(counts: &[FeedCount], mode: Mode, keep_empty: bool) -> Vec<PickerItem> {
     groups.sort_by(|a, b| by_title(&a.1.0, &b.1.0));
 
     let mut rows = Vec::new();
-    if total > 0 || keep_empty {
+    if (has_some(total) && !counts.is_empty()) || keep_empty {
         let label = if mode == Mode::History { "All read" } else { "All unread" };
         rows.push(PickerItem { selection: Selection::All, label: label.into(), count: total, depth: 0 });
     }
     for (id, (title, mut feeds)) in groups {
         feeds.sort_by(|a, b| by_title(&a.feed.title, &b.feed.title));
-        let count = feeds.iter().map(|fc| count_of(fc)).sum();
+        let count = sum(feeds.iter().map(|fc| count_of(fc)));
         rows.push(PickerItem { selection: Selection::Category { id }, label: title, count, depth: 0 });
         rows.extend(feeds.into_iter().map(|fc| PickerItem {
             selection: Selection::Feed { id: fc.feed.id },
@@ -74,13 +86,13 @@ mod tests {
     fn fc(id: i64, title: &str, category: (i64, &str), unread: i64, read: i64) -> FeedCount {
         FeedCount {
             feed: Feed { id, title: title.into(), category: Category { id: category.0, title: category.1.into() } },
-            unread,
-            read,
+            unread: Some(unread),
+            read: Some(read),
         }
     }
 
     fn rows(items: &[PickerItem]) -> Vec<(&str, i64, u8)> {
-        items.iter().map(|i| (i.label.as_str(), i.count, i.depth)).collect()
+        items.iter().map(|i| (i.label.as_str(), i.count.unwrap_or(-1), i.depth)).collect()
     }
 
     #[test]
@@ -142,5 +154,26 @@ mod tests {
             rows(&items),
             [("All read", 10, 0), ("Blogs", 3, 0), ("Loud", 3, 1), ("Dev", 7, 0), ("Alpha", 7, 1)]
         );
+    }
+
+    #[test]
+    fn counts_the_server_doesnt_know_list_every_feed_without_a_number() {
+        // A Google Reader API server: unread counts, but no read ones.
+        let counts: Vec<FeedCount> = [fc(1, "Zed", (1, "Dev"), 2, 0), fc(2, "Alpha", (1, "Dev"), 0, 0)]
+            .into_iter()
+            .chain([fc(3, "Loud", (2, "Blogs"), 0, 0)])
+            .map(|c| FeedCount { read: None, ..c })
+            .collect();
+        let history = build(&counts, Mode::History);
+        assert_eq!(
+            history.iter().map(|i| (i.label.as_str(), i.count)).collect::<Vec<_>>(),
+            [("All read", None), ("Blogs", None), ("Loud", None), ("Dev", None), ("Alpha", None), ("Zed", None)]
+        );
+        // Unread counts are known, so feeds with nothing unread are hidden as before.
+        assert_eq!(rows(&build(&counts, Mode::Unread)), [("All unread", 2, 0), ("Dev", 2, 0), ("Zed", 2, 1)]);
+        // At the end of a list j goes on to the next feed, which may have something.
+        let next = next_after(&counts, Mode::History, Selection::Feed { id: 3 }).map(|i| i.label);
+        assert_eq!(next.as_deref(), Some("Alpha"));
+        assert_eq!(build(&[], Mode::History), vec![]);
     }
 }

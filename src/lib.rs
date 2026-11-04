@@ -15,12 +15,14 @@ pub mod demo;
 pub mod error;
 #[cfg(all(feature = "ffi", target_os = "macos"))]
 pub mod ffi;
+pub mod greader;
 pub mod keys;
 pub mod miniflux;
 pub mod paging;
 pub mod picker;
 pub mod prefs;
 pub mod readeck;
+pub mod server;
 pub mod theme;
 #[cfg(feature = "tui")]
 pub mod tui;

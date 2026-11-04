@@ -7,6 +7,7 @@ use super::article::{self, Header, Row, Slice, Target};
 use super::editor::Editor;
 use super::images::{self, Answer, Job};
 use crate::app::{App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, display_title, status_name};
+use crate::config::Server;
 use crate::content::{convert, native};
 use crate::keys::Action;
 use crate::miniflux::EntryStatus;
@@ -33,10 +34,16 @@ const LINE: isize = 2;
 /// A column's worth of cells per unit of `Prefs::width_factor`, which counts font sizes: the same `[` and `]`.
 const CELLS_PER_FONT_SIZE: u16 = 2;
 
-/// The settings form, in order.
-pub const FIELDS: usize = 4;
+/// The settings form's text fields: Miniflux URL and API key, Google Reader URL, username and password, Readeck URL
+/// and token. Only the chosen server's are on screen.
+pub const FIELDS: usize = 7;
 /// Which are secrets.
-pub const SECRET: [bool; FIELDS] = [false, true, false, true];
+pub const SECRET: [bool; FIELDS] = [false, true, false, false, true, false, true];
+/// `Form::focus` on the server choice rather than a field.
+pub const CHOICE: usize = FIELDS;
+const MINIFLUX_FIELDS: [usize; 2] = [0, 1];
+const GREADER_FIELDS: [usize; 3] = [2, 3, 4];
+const READECK_FIELDS: [usize; 2] = [5, 6];
 
 /// The article on screen.
 pub struct Shown {
@@ -67,8 +74,52 @@ pub enum Inline {
 
 /// The settings form's fields. The form starts from the saved values once, then keeps what is typed.
 pub struct Form {
+    pub server: Server,
     pub fields: [Editor; FIELDS],
+    /// A field's index, or `CHOICE`.
     pub focus: usize,
+}
+
+impl Form {
+    /// What's on screen, top to bottom: the server choice, its fields, then Readeck's.
+    pub fn shown(&self) -> Vec<usize> {
+        let server: &[usize] = match self.server {
+            Server::Miniflux => &MINIFLUX_FIELDS,
+            Server::GReader => &GREADER_FIELDS,
+        };
+        std::iter::once(CHOICE).chain(server.iter().copied()).chain(READECK_FIELDS).collect()
+    }
+
+    /// Tab and Shift+Tab, round the fields on screen.
+    fn step(&mut self, by: isize) {
+        let shown = self.shown();
+        let at = shown.iter().position(|&f| f == self.focus).unwrap_or(0);
+        let n = isize::try_from(shown.len()).unwrap_or(1);
+        let next = (isize::try_from(at).unwrap_or(0) + by).rem_euclid(n);
+        self.focus = shown[usize::try_from(next).unwrap_or(0)];
+    }
+
+    fn values(&self) -> SettingsValues {
+        let [
+            miniflux_url,
+            miniflux_api_key,
+            greader_url,
+            greader_username,
+            greader_password,
+            readeck_url,
+            readeck_token,
+        ] = self.fields.clone().map(|e| e.text().to_string());
+        SettingsValues {
+            server: self.server,
+            miniflux_url,
+            miniflux_api_key,
+            greader_url,
+            greader_username,
+            greader_password,
+            readeck_url,
+            readeck_token,
+        }
+    }
 }
 
 pub enum Picture {
@@ -329,15 +380,20 @@ impl Ui {
         };
         match event.code {
             KeyCode::Esc => self.forward(event),
-            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % FIELDS,
-            KeyCode::BackTab | KeyCode::Up => form.focus = (form.focus + FIELDS - 1) % FIELDS,
+            KeyCode::Tab | KeyCode::Down => form.step(1),
+            KeyCode::BackTab | KeyCode::Up => form.step(-1),
             KeyCode::Enter => {
-                let [miniflux_url, miniflux_api_key, readeck_url, readeck_token] =
-                    form.fields.clone().map(|e| e.text().to_string());
-                let values = SettingsValues { miniflux_url, miniflux_api_key, readeck_url, readeck_token };
-                let fx = self.app.submit_settings(values);
+                let fx = self.app.submit_settings(form.values());
                 self.run(fx);
             }
+            // The server choice: either arrow, or Space, switches.
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus == CHOICE => {
+                form.server = match form.server {
+                    Server::Miniflux => Server::GReader,
+                    Server::GReader => Server::Miniflux,
+                };
+            }
+            _ if form.focus == CHOICE => {}
             _ => form.fields[form.focus].key(event),
         }
     }
@@ -346,7 +402,9 @@ impl Ui {
     pub fn paste(&mut self, text: &str) {
         if let Some(editor) = &mut self.search {
             editor.paste(text);
-        } else if let Some(form) = &mut self.form {
+        } else if let Some(form) = &mut self.form
+            && form.focus != CHOICE
+        {
             form.fields[form.focus].paste(text);
         }
     }
@@ -504,9 +562,19 @@ impl Ui {
             Some(form) if self.app.in_settings() => {
                 if self.form.is_none() {
                     let v = &form.values;
-                    let fields = [&v.miniflux_url, &v.miniflux_api_key, &v.readeck_url, &v.readeck_token];
-                    let focus = usize::from(!v.miniflux_url.is_empty());
-                    self.form = Some(Form { fields: fields.map(|text| Editor::new(text)), focus });
+                    let fields = [
+                        &v.miniflux_url,
+                        &v.miniflux_api_key,
+                        &v.greader_url,
+                        &v.greader_username,
+                        &v.greader_password,
+                        &v.readeck_url,
+                        &v.readeck_token,
+                    ];
+                    // The first empty field of the chosen server, or its last.
+                    let own: &[usize] = if v.server == Server::GReader { &GREADER_FIELDS } else { &MINIFLUX_FIELDS };
+                    let focus = own.iter().copied().find(|&i| fields[i].is_empty()).unwrap_or(own[own.len() - 1]);
+                    self.form = Some(Form { server: v.server, fields: fields.map(|text| Editor::new(text)), focus });
                 }
             }
             _ => self.form = None,

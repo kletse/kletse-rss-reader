@@ -45,6 +45,8 @@ pub mod qobject {
         #[qproperty(bool, searching)]
         #[qproperty(QString, position)]
         #[qproperty(bool, readeck)]
+        // The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
+        #[qproperty(bool, fetches)]
         // The article. The serial changes with the article or its text, not with a re-render for the theme.
         #[qproperty(i32, article_serial)]
         #[qproperty(QString, title)]
@@ -86,8 +88,13 @@ pub mod qobject {
         #[qproperty(QString, settings_problem)]
         #[qproperty(QString, settings_error)]
         #[qproperty(bool, settings_checking)]
+        // "miniflux" or "greader".
+        #[qproperty(QString, server)]
         #[qproperty(QString, miniflux_url)]
         #[qproperty(QString, miniflux_api_key)]
+        #[qproperty(QString, greader_url)]
+        #[qproperty(QString, greader_username)]
+        #[qproperty(QString, greader_password)]
         #[qproperty(QString, readeck_url)]
         #[qproperty(QString, readeck_token)]
         // Prefs
@@ -143,8 +150,12 @@ pub mod qobject {
         #[qinvokable]
         fn submit_settings(
             self: Pin<&mut Model>,
+            server: &QString,
             miniflux_url: &QString,
             miniflux_api_key: &QString,
+            greader_url: &QString,
+            greader_username: &QString,
+            greader_password: &QString,
             readeck_url: &QString,
             readeck_token: &QString,
         );
@@ -217,6 +228,7 @@ pub struct ModelRust {
     searching: bool,
     position: QString,
     readeck: bool,
+    fetches: bool,
     article_serial: i32,
     title: QString,
     url: QString,
@@ -247,8 +259,12 @@ pub struct ModelRust {
     settings_problem: QString,
     settings_error: QString,
     settings_checking: bool,
+    server: QString,
     miniflux_url: QString,
     miniflux_api_key: QString,
+    greader_url: QString,
+    greader_username: QString,
+    greader_password: QString,
     readeck_url: QString,
     readeck_token: QString,
     article_size: i32,
@@ -305,6 +321,7 @@ impl Default for ModelRust {
             searching: false,
             position: QString::default(),
             readeck: false,
+            fetches: true,
             article_serial: 0,
             title: QString::default(),
             url: QString::default(),
@@ -335,8 +352,12 @@ impl Default for ModelRust {
             settings_problem: QString::default(),
             settings_error: QString::default(),
             settings_checking: false,
+            server: QString::default(),
             miniflux_url: QString::default(),
             miniflux_api_key: QString::default(),
+            greader_url: QString::default(),
+            greader_username: QString::default(),
+            greader_password: QString::default(),
             readeck_url: QString::default(),
             readeck_token: QString::default(),
             article_size: 18,
@@ -484,14 +505,22 @@ impl qobject::Model {
 
     pub fn submit_settings(
         mut self: Pin<&mut Self>,
+        server: &QString,
         miniflux_url: &QString,
         miniflux_api_key: &QString,
+        greader_url: &QString,
+        greader_username: &QString,
+        greader_password: &QString,
         readeck_url: &QString,
         readeck_token: &QString,
     ) {
         let values = SettingsValues {
+            server: crate::config::Server::from_name(&server.to_string()),
             miniflux_url: miniflux_url.to_string(),
             miniflux_api_key: miniflux_api_key.to_string(),
+            greader_url: greader_url.to_string(),
+            greader_username: greader_username.to_string(),
+            greader_password: greader_password.to_string(),
             readeck_url: readeck_url.to_string(),
             readeck_token: readeck_token.to_string(),
         };
@@ -580,6 +609,7 @@ impl qobject::Model {
         });
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
+        let fetches = app.fetches();
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
@@ -600,6 +630,7 @@ impl qobject::Model {
         self.as_mut().set_viewer_position(qs(&position_in_viewer));
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
+        self.as_mut().set_fetches(fetches);
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
             Some(t) => {
@@ -724,8 +755,12 @@ impl qobject::Model {
         let fill = (!s.settings_shown).then(|| form.values.clone());
         s.settings_shown = true;
         if let Some(values) = fill {
+            self.as_mut().set_server(qs(values.server.name()));
             self.as_mut().set_miniflux_url(qs(&values.miniflux_url));
             self.as_mut().set_miniflux_api_key(qs(&values.miniflux_api_key));
+            self.as_mut().set_greader_url(qs(&values.greader_url));
+            self.as_mut().set_greader_username(qs(&values.greader_username));
+            self.as_mut().set_greader_password(qs(&values.greader_password));
             self.as_mut().set_readeck_url(qs(&values.readeck_url));
             self.as_mut().set_readeck_token(qs(&values.readeck_token));
             let serial = self.as_ref().settings_serial().wrapping_add(1);

@@ -74,10 +74,12 @@ final class Model {
     func closeViewer() { send(["cmd": "close_viewer"]) }
     func dismissToast(_ serial: Int) { send(["cmd": "dismiss_toast", "serial": serial]) }
 
-    func submitSettings(minifluxUrl: String, minifluxApiKey: String, readeckUrl: String, readeckToken: String) {
+    func submitSettings(_ values: SettingsValues) {
         send([
-            "cmd": "submit_settings", "miniflux_url": minifluxUrl, "miniflux_api_key": minifluxApiKey,
-            "readeck_url": readeckUrl, "readeck_token": readeckToken,
+            "cmd": "submit_settings", "server": values.server, "miniflux_url": values.minifluxUrl,
+            "miniflux_api_key": values.minifluxApiKey, "greader_url": values.greaderUrl,
+            "greader_username": values.greaderUsername, "greader_password": values.greaderPassword,
+            "readeck_url": values.readeckUrl, "readeck_token": values.readeckToken,
         ])
     }
 

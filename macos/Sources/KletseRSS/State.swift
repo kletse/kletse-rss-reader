@@ -24,6 +24,8 @@ struct AppState: Decodable {
     let searching: Bool
     let position: String
     let readeck: Bool
+    /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
+    let fetches: Bool
     let article: ArticleInfo?
     let picker: PickerInfo
     /// The search box starts from the last search.
@@ -77,7 +79,8 @@ struct ViewerInfo: Decodable {
 
 struct PickerRow: Decodable {
     let label: String
-    let count: Int
+    /// nil when the server can't count these (read items on a Google Reader API server).
+    let count: Int?
     let depth: Int
 }
 
@@ -97,8 +100,13 @@ struct SettingsInfo: Decodable {
 }
 
 struct SettingsValues: Decodable {
+    /// "miniflux" or "greader".
+    let server: String
     let minifluxUrl: String
     let minifluxApiKey: String
+    let greaderUrl: String
+    let greaderUsername: String
+    let greaderPassword: String
     let readeckUrl: String
     let readeckToken: String
 }

@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>One unread article at a time. Oldest first. Keyboard all the way.</b><br>
-  A small desktop reader for <a href="https://miniflux.app">Miniflux</a>, for <a href="https://omarchy.org">Omarchy</a> and macOS, and for any terminal.
+  A small desktop reader for <a href="https://miniflux.app">Miniflux</a> or any Google Reader API server (<a href="https://freshrss.org">FreshRSS</a>, Inoreader, BazQux, The Old Reader), for <a href="https://omarchy.org">Omarchy</a> and macOS, and for any terminal.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 Most feed readers give you three panes and a wall of headlines. Kletse RSS shows **just the article**.
 
-You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks Miniflux once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_: **j** goes on to the next feed (or category) with unread items, and **Enter** takes you back to the feed picker.
+You pick a feed or category, and the app opens on the **oldest unread item**. Press **j** and it marks that item read and moves to the next one. When the list runs out, it asks the server once more for anything that arrived while you were reading. If nothing did, you get _“All caught up”_: **j** goes on to the next feed (or category) with unread items, and **Enter** takes you back to the feed picker.
 
 <p align="center">
   <img src="docs/screenshots/macos/article.png" alt="Reading an article" width="900">
@@ -32,7 +32,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 - **Unread first.** Read items don't appear, except ones you passed during this session, so **k** can take you back to undo.
 - **History when you need it.** Press **h** to switch to the items you've already read, newest first, with all the same keys. Press **h** again to go back to unread.
-- **Miniflux does the heavy lifting.** It fetches the feeds and stores what you've read. The app is a thin client with no local database.
+- **Your feed server does the heavy lifting.** [Miniflux](https://miniflux.app), or any server that speaks the Google Reader API: [FreshRSS](https://freshrss.org), Inoreader, BazQux, The Old Reader, or Miniflux's own Google Reader integration. It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes. On macOS: light or dark mode and your accent colour, the moment you change them.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
 - **In a terminal too.** `kletse-rss-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
@@ -146,7 +146,7 @@ Your settings live outside the app bundle (see [Set up](#set-up)), so replacing 
 
 ## In a terminal
 
-`kletse-rss-tui` is the same app without a window: it fills the terminal, and gives it back as it was when you quit. It needs neither Qt nor a desktop, so it also runs over SSH. It shares your [settings](#set-up) and everything you've read with the window, because Miniflux keeps track of that.
+`kletse-rss-tui` is the same app without a window: it fills the terminal, and gives it back as it was when you quit. It needs neither Qt nor a desktop, so it also runs over SSH. It shares your [settings](#set-up) and everything you've read with the window, because your feed server keeps track of that.
 
 **Install.** With a current stable [Rust](https://rustup.rs), on Linux or macOS:
 
@@ -180,10 +180,11 @@ Font size is your terminal's business, so the app has no keys for it. <kbd>[</kb
 
 The first time you start Kletse RSS, a welcome screen asks for:
 
-|                             |                                                                                                                                             |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Miniflux URL + API key**  | _Required._ In Miniflux: Settings → API Keys → Create a new API key.                                                                        |
-| **Readeck URL + API token** | _Optional._ In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden. |
+|                                                     |                                                                                                                                                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Miniflux URL + API key**                          | _Required, or the next row._ In Miniflux: Settings → API Keys → Create a new API key.                                                                                                                                                            |
+| **Google Reader API: URL + username + password**    | _Or this._ Choose **Google Reader API** at the top of the form. FreshRSS: `https://your-freshrss/api/greader.php`, your username and the **API password** from your profile (allow API access in its settings). Miniflux: the server URL, with the Google Reader integration enabled (Settings → Integrations). |
+| **Readeck URL + API token**                         | _Optional._ In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden.                                                                                                      |
 
 **Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
 
@@ -198,6 +199,25 @@ api_key = "…"
 url = "https://readeck.example.com"
 token = "…"
 ```
+
+Or, for a Google Reader API server, a `[greader]` section instead of `[miniflux]`:
+
+```toml
+server = "greader"   # only needed when both sections are filled in; otherwise the complete one is used
+
+[greader]
+url = "https://freshrss.example.com/api/greader.php"
+username = "…"
+password = "…"     # FreshRSS: the API password, not the one you log in with
+```
+
+**What a Google Reader API server can't do.** The protocol has no way to ask for a few things, so with one:
+
+- <kbd>f</kbd> (fetch the full article) and <kbd>r</kbd> (refresh the feeds) only say they aren't available; the server refreshes feeds on its own schedule.
+- <kbd>/</kbd> searches only where the server offers search through the API; FreshRSS and Miniflux don't, and the app says so.
+- History has no read counts, so the picker lists every feed there without a number.
+- “Oldest first” is the order the server keeps: when items arrived on FreshRSS, when they were published on Miniflux.
+- Miniflux's integration can't list a category's items (open its feeds one at a time) or give unread counts, and history per feed may show unread items left out.
 
 ## Develop
 
@@ -229,7 +249,7 @@ src/
   app_tests.rs       its tests: key presses against a fake Miniflux
   bridge.rs          the QObject the QML sees; runs effects on tokio, copies state into properties
   tui_main.rs, tui/  the terminal version: runs effects, keeps the scroll position, draws cells (ratatui)
-  backend.rs         the server side of effects: Miniflux, Readeck, the config file, opening links
+  backend.rs         the server side of effects: the feed server, Readeck, the config file, opening links
   keys.rs            the keymaps and the help overlay's text, checked against each other and the README
   paging.rs          where the next page starts (a publication time, not an offset)
   picker.rs          feed counts → picker rows
@@ -237,7 +257,9 @@ src/
   content/convert.rs feed HTML → blocks of native layout (paragraphs, images, code, quotes, lists, tables, embeds)
   content/highlight.rs  code blocks highlighted with syntect, in theme colours
   theme/             the Omarchy theme (watched live) or the macOS appearance, as a palette
+  server.rs          the feed server: Miniflux or a Google Reader API server, one set of calls
   miniflux.rs        Miniflux API client
+  greader.rs         Google Reader API client (FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's integration)
   readeck.rs         Readeck "save bookmark"
   config.rs          ~/.config/kletse-rss/config.toml (macOS: ~/Library/Application Support/kletse-rss/)
   demo.rs            sample data for KLETSE_RSS_DEMO=1
@@ -257,7 +279,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 
 ## Not (yet) in scope
 
-Managing feeds (use the Miniflux web UI), starring, offline reading, notifications and a bar widget.
+Managing feeds (use your server's web UI), starring, offline reading, notifications and a bar widget.
 
 ## License
 

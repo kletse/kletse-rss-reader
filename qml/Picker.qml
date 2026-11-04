@@ -69,7 +69,8 @@ Panel {
         text: picker.model.pickerState === "loading" ? "Loading…"
             : picker.model.pickerState === "error" ? picker.model.pickerError
             : picker.model.pickerHistory ? "Nothing read yet. Press h for unread items."
-            : "Nothing unread. Press r to refresh, or h for history."
+            : picker.model.fetches ? "Nothing unread. Press r to refresh, or h for history."
+            : "Nothing unread. Press h for history."
         color: picker.model.pickerState === "error" ? picker.model.red : picker.model.fgDim
         font.family: picker.ui.uiFont
         font.pixelSize: 14
@@ -120,7 +121,8 @@ Panel {
                 anchors.baseline: label.baseline
                 anchors.right: parent.right
                 anchors.rightMargin: 14
-                text: row.modelData.count
+                // null: the server can't count these (read items on a Google Reader API server).
+                text: row.modelData.count ?? ""
                 color: picker.model.fgDim
                 font.family: picker.ui.uiFont
                 font.pixelSize: 14

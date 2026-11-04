@@ -1,7 +1,6 @@
 //! Paging through a selection: where the next page starts, and what a page adds to the queue.
 //! Unread items come oldest first, history newest first.
 
-use crate::dates;
 use crate::miniflux::{Entry, EntryPage, EntryStatus};
 use std::collections::HashSet;
 
@@ -52,11 +51,12 @@ pub struct PageRequest {
 /// Not an offset: reading moves items out of the server's unread list (j here, or a phone meanwhile) and m moves
 /// them back, so a count of loaded items drifts and skips some, and bookkeeping to correct it can't see what happens
 /// elsewhere. Instead the page starts at the newest loaded item's publication time (the oldest's, newest first), which
-/// no status change moves. Miniflux filters on whole seconds and doesn't order items published in the same second,
+/// no status change moves. (Its time in the server's order, to be exact: see `Entry::order_millis`. A Google Reader
+/// API server such as FreshRSS orders and filters by when an item arrived, not when it was published.) Miniflux filters on whole seconds and doesn't order items published in the same second,
 /// so the page starts a second early and is longer by the loaded items in that overlap; `merge_page` drops them
 /// again. Nothing is skipped, whatever was read or marked unread in the meantime, here or elsewhere.
 pub fn next_page(queue: &[Entry], order: Order) -> PageRequest {
-    let times: Vec<i64> = queue.iter().filter_map(|e| dates::unix_millis(&e.published_at)).collect();
+    let times: Vec<i64> = queue.iter().filter_map(Entry::order_millis).collect();
     let back = order == Order::NewestFirst;
     let edge = if back { times.iter().min() } else { times.iter().max() };
     let Some(&edge) = edge else { return PageRequest { past: 0, limit: PAGE, order } };
@@ -95,6 +95,7 @@ pub fn merge_page(queue: &[Entry], page: EntryPage, skipped: usize) -> Merged {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::dates;
     use crate::miniflux::EntryFeed;
 
     /// An entry published `minute` minutes after the start of October 2026, like the TS tests had.
@@ -110,6 +111,7 @@ pub mod tests {
             status,
             reading_time: 1,
             feed: EntryFeed { id: 1, title: "Feed".into() },
+            order_ms: 0,
         }
     }
 
@@ -145,6 +147,17 @@ pub mod tests {
         let read = [entry_at(9, "A", EntryStatus::Read, 9), entry_at(8, "B", EntryStatus::Read, 8)];
         let request = PageRequest { past: second(&read[1]) + 1, limit: PAGE + 1, order: Order::NewestFirst };
         assert_eq!(next_page(&read, Order::NewestFirst), request);
+    }
+
+    #[test]
+    fn pages_by_the_servers_own_order_time_when_there_is_one() {
+        // A Google Reader API server: published long ago, arrived later, in the order it arrived.
+        let arrived = |id, at: i64| Entry { order_ms: at, ..entry_at(id, "", EntryStatus::Unread, 1) };
+        let queue = [arrived(1, 1_790_900_000_500), arrived(2, 1_790_900_007_250)];
+        let request = next_page(&queue, Order::OldestFirst);
+        assert_eq!(request, PageRequest { past: 1_790_900_007, limit: PAGE + 1, order: Order::OldestFirst });
+        let request = next_page(&queue, Order::NewestFirst);
+        assert_eq!(request, PageRequest { past: 1_790_900_001, limit: PAGE + 1, order: Order::NewestFirst });
     }
 
     #[test]

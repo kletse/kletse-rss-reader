@@ -174,9 +174,17 @@ Item {
                 ui: s.ui
                 width: parent.width
                 label: "Password"
-                placeholder: "FreshRSS: the API password in your profile"
                 secret: true
                 onAccepted: s.submit()
+            }
+            Text {
+                width: parent.width
+                text: "FreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations."
+                color: s.model.fgDim
+                lineHeight: 1.3
+                wrapMode: Text.Wrap
+                font.family: s.ui.uiFont
+                font.pixelSize: 12
             }
         }
         Fieldset {

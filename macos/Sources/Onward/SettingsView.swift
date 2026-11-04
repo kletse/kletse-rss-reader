@@ -193,7 +193,7 @@ private struct FeedServerSections: View {
         } footer: {
             Group {
                 if values.server == "greader" {
-                    Text(verbatim: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.")
+                    Text(verbatim: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.\nFreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations.")
                 } else {
                     Text("In Miniflux: Settings → API Keys → Create a new API key.")
                 }

@@ -207,6 +207,8 @@ struct State {
     history: bool,
     /// Reading search results.
     searching: bool,
+    /// Reading the starred items.
+    starred_list: bool,
     position: String,
     readeck: bool,
     /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
@@ -237,6 +239,8 @@ struct Article {
     published_at: String,
     reading_time: i64,
     status: &'static str,
+    /// Starred on the server (`*`).
+    starred: bool,
     /// Only when converted again; Swift keeps the last ones.
     #[serde(skip_serializing_if = "Option::is_none")]
     blocks: Option<Vec<native::NativeBlock>>,
@@ -513,6 +517,7 @@ impl Core {
             selection_label: app.selection_label().to_string(),
             history: app.history_badge(),
             searching: app.searching(),
+            starred_list: app.starred_list(),
             position: app.position(),
             readeck: app.readeck(),
             fetches: app.fetches(),
@@ -583,6 +588,7 @@ impl Core {
             published_at: entry.published_at,
             reading_time: entry.reading_time,
             status: crate::app::status_name(entry.status),
+            starred: entry.starred,
             blocks,
         })
     }

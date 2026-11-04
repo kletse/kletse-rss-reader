@@ -24,6 +24,8 @@ pub struct Backend {
     server: Mutex<Option<Arc<Server>>>,
     http: reqwest::Client,
     demo: bool,
+    /// The demo's starred articles, which `*` changes in memory.
+    stars: demo::Stars,
 }
 
 impl std::fmt::Debug for Backend {
@@ -46,7 +48,14 @@ impl Backend {
                 (config::Config::default(), Some(e.message()))
             }
         };
-        Self { config: RwLock::new(config), problem: RwLock::new(problem), server: Mutex::new(None), http, demo }
+        Self {
+            config: RwLock::new(config),
+            problem: RwLock::new(problem),
+            server: Mutex::new(None),
+            http,
+            demo,
+            stars: demo::Stars::default(),
+        }
     }
 
     fn config(&self) -> config::Config {
@@ -160,14 +169,14 @@ impl Backend {
     async fn entries(&self, sel: Selection, status: EntryStatus, request: PageRequest) -> Result<EntryPage, Error> {
         let PageRequest { past, limit, order } = request;
         if self.demo {
-            return Ok(demo::entries(sel, status, order, past, limit));
+            return Ok(demo::entries(sel, status, order, past, limit, &self.stars));
         }
         self.server()?.entries(sel, status, order, past, limit).await
     }
 
     async fn search(&self, query: &str, offset: usize, limit: usize) -> Result<EntryPage, Error> {
         if self.demo {
-            return Ok(demo::search(query, offset, limit));
+            return Ok(demo::search(query, offset, limit, &self.stars));
         }
         self.server()?.search(query, offset, limit).await
     }
@@ -175,14 +184,17 @@ impl Backend {
     /// The selection's newest unread id, and how many are unread up to it.
     async fn count_row(&self, sel: Selection) -> Result<(i64, i64), Error> {
         let newest = self.newest_unread_id(sel).await?;
-        let count =
-            if self.demo { demo::unread_count(sel, newest) } else { self.server()?.unread_count(sel, newest).await? };
+        let count = if self.demo {
+            demo::unread_count(sel, newest, &self.stars)
+        } else {
+            self.server()?.unread_count(sel, newest).await?
+        };
         Ok((newest, count))
     }
 
     async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
         if self.demo {
-            return Ok(demo::newest_unread_id(sel));
+            return Ok(demo::newest_unread_id(sel, &self.stars));
         }
         self.server()?.newest_unread_id(sel).await
     }
@@ -206,7 +218,8 @@ impl Backend {
             Effect::OpenSelection { load, selection, mode, request } => {
                 let status = mode.status();
                 let page = self.entries(selection, status, request);
-                let result = if status == EntryStatus::Unread {
+                // The starred list can't be marked read all at once, so it needs no newest unread id.
+                let result = if status == EntryStatus::Unread && selection != Selection::Starred {
                     tokio::try_join!(page, self.newest_unread_id(selection))
                 } else {
                     page.await.map(|page| (page, 0))
@@ -229,6 +242,18 @@ impl Backend {
                 let result = if self.demo { Ok(()) } else { self.set_status(&ids, status).await };
                 Outcome::StatusSet { status, revert, announce, result: result.map_err(msg) }
             }
+            Effect::SetStarred { index, id, starred } => {
+                let result = if self.demo {
+                    self.stars.set(id, starred);
+                    Ok(())
+                } else {
+                    match self.server() {
+                        Ok(client) => client.set_starred(id, starred).await,
+                        Err(e) => Err(e),
+                    }
+                };
+                Outcome::StarredSet { index, id, starred, result: result.map_err(msg) }
+            }
             Effect::FetchContent { index, id } => {
                 let result = if self.demo {
                     Ok(demo::content(id))
@@ -242,7 +267,7 @@ impl Backend {
             }
             Effect::FeedCounts => {
                 let result = if self.demo {
-                    Ok(demo::feed_counts())
+                    Ok(demo::feed_counts(&self.stars))
                 } else {
                     match self.server() {
                         Ok(client) => client.feed_counts().await,
@@ -282,7 +307,7 @@ impl Backend {
             }
             Effect::CountUnread { load, selection, up_to, later } => {
                 let result = if self.demo {
-                    Ok(demo::unread_count(selection, up_to))
+                    Ok(demo::unread_count(selection, up_to, &self.stars))
                 } else {
                     match self.server() {
                         Ok(client) => client.unread_count(selection, up_to).await,
@@ -293,7 +318,7 @@ impl Backend {
             }
             Effect::MarkAllRead { load, selection, up_to, later } => {
                 let result = if self.demo {
-                    demo::mark_read_up_to(selection, up_to);
+                    demo::mark_read_up_to(selection, up_to, &self.stars);
                     Ok(())
                 } else {
                     match self.server() {
@@ -312,7 +337,7 @@ impl Backend {
             }
             Effect::MarkRowRead { selection, label, up_to } => {
                 let result = if self.demo {
-                    demo::mark_read_up_to(selection, up_to);
+                    demo::mark_read_up_to(selection, up_to, &self.stars);
                     Ok(())
                 } else {
                     match self.server() {
@@ -495,7 +520,33 @@ mod tests {
         let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
             panic!("no feed counts");
         };
-        assert!(!counts.is_empty());
+        assert!(!counts.feeds.is_empty());
+        assert_eq!(counts.starred, Some(2));
         assert!(backend.run(Effect::Quit).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn demo_mode_stars_in_memory() {
+        let backend = Backend::new(true);
+        let star = Effect::SetStarred { index: 0, id: 1, starred: true };
+        let Some(Outcome::StarredSet { id: 1, starred: true, result: Ok(()), .. }) = backend.run(star).await else {
+            panic!("not starred");
+        };
+        let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
+            panic!("no feed counts");
+        };
+        assert_eq!(counts.starred, Some(3));
+        let request = PageRequest { past: 0, limit: 50, order: crate::paging::Order::NewestFirst };
+        let open = Effect::OpenSelection {
+            load: 1,
+            selection: Selection::Starred,
+            mode: crate::paging::Mode::Unread,
+            request,
+        };
+        let Some(Outcome::Opened { result: Ok((page, newest)), .. }) = backend.run(open).await else {
+            panic!("not opened");
+        };
+        assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), [5, 2, 1]);
+        assert_eq!(newest, 0, "the starred list asks for no newest unread id");
     }
 }

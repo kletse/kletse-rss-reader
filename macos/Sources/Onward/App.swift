@@ -34,6 +34,7 @@ struct OnwardApp: App {
                 Button("Previous (k)") { Model.shared.press("prev") }
                 Divider()
                 Button("Toggle Read (m)") { Model.shared.key("m") }
+                Button(Model.shared.state?.article?.starred == true ? "Unstar (*)" : "Star (*)") { Model.shared.key("*") }
                 Button("Open Original (o)") { Model.shared.key("o") }
                 Button("Fetch Full Article (f)") { Model.shared.key("f") }
                     .disabled(Model.shared.state?.fetches == false)

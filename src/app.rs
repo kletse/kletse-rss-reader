@@ -9,6 +9,7 @@
 //! Unread mode: unread items, oldest first (or newest first, `s`); going back shows items read this session.
 //! History mode: read items, newest first.
 //! Search: read and unread items matching some words, best match first.
+//! Starred: the items starred on the server (`*`), read and unread, newest first.
 //! All of them load a page at a time as you get near the end. At the end of the unread list, it looks once more
 //! for items that arrived meanwhile.
 
@@ -16,7 +17,7 @@ use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
 use crate::greader;
 use crate::keys::{self, Action};
-use crate::miniflux::{Entry, EntryPage, EntryStatus, FeedCount, Selection};
+use crate::miniflux::{Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
@@ -27,6 +28,9 @@ pub const APP_NAME: &str = "Onward";
 const PREFETCH: usize = 10;
 /// Miniflux refreshes feeds in the background; the counts are reloaded a few times while it works.
 const REFRESH_RELOAD_MS: [u64; 3] = [2000, 6000, 15_000];
+/// Shift+A on the starred list, or on its row in the picker. As with search results: what's starred is there to
+/// be kept, and some of it is read already, so "the whole list" means little.
+const STARRED_NOT_ALL_READ: &str = "Starred items can't be marked read all at once";
 
 /// Only one thing has the keyboard at a time; the settings form replaces the article.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +67,7 @@ impl Overlay {
 pub enum PickerList {
     Loading,
     Error(String),
-    Ready(Vec<FeedCount>),
+    Ready(Counts),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +141,8 @@ enum Opened {
     Feeds(Selection),
     /// Search results for these words.
     Search(String),
+    /// The starred items, newest first (`Selection::Starred`).
+    Starred,
 }
 
 /// The image viewer: the article's images, and the one on screen.
@@ -186,6 +192,12 @@ pub enum Effect {
         status: EntryStatus,
         revert: Option<Revert>,
         announce: bool,
+    },
+    /// `*`: stars or unstars the article at `index`, already shown that way; put back if the server says no.
+    SetStarred {
+        index: usize,
+        id: i64,
+        starred: bool,
     },
     FetchContent {
         index: usize,
@@ -267,12 +279,18 @@ pub enum Outcome {
         announce: bool,
         result: Result<(), String>,
     },
+    StarredSet {
+        index: usize,
+        id: i64,
+        starred: bool,
+        result: Result<(), String>,
+    },
     ContentFetched {
         index: usize,
         id: i64,
         result: Result<String, String>,
     },
-    FeedCounts(Result<Vec<FeedCount>, String>),
+    FeedCounts(Result<Counts, String>),
     Refreshed(Result<(), String>),
     PickerReloadDue,
     SavedToReadeck {
@@ -595,6 +613,8 @@ impl App {
     pub fn end_title(&self) -> &'static str {
         if self.searching() {
             "End of results"
+        } else if self.starred_list() {
+            "End of starred items"
         } else if self.mode == Mode::History {
             "End of history"
         } else {
@@ -620,12 +640,28 @@ impl App {
 
     /// The top bar's History badge: reading read items.
     pub fn history_badge(&self) -> bool {
-        self.mode == Mode::History && !self.searching() && !self.selection_label().is_empty()
+        self.mode == Mode::History && !self.searching() && !self.starred_list() && !self.selection_label().is_empty()
     }
 
     /// The top bar's Search badge: reading search results.
     pub fn searching(&self) -> bool {
         matches!(self.opened, Some(Opened::Search(_)))
+    }
+
+    /// The top bar's Starred badge: reading the starred items.
+    pub fn starred_list(&self) -> bool {
+        matches!(self.opened, Some(Opened::Starred))
+    }
+
+    /// The article on screen is starred: the windows show a star.
+    pub fn starred(&self) -> bool {
+        self.current().is_some_and(|e| e.starred)
+    }
+
+    /// A feed, a category or all of them is open, rather than search results or the starred items: a list that
+    /// new arrivals join, and that j goes on from to the next one.
+    fn reading_feeds(&self) -> bool {
+        matches!(self.opened, Some(Opened::Feeds(_)))
     }
 
     /// What fills the window under the top bar.
@@ -697,14 +733,17 @@ impl App {
         self.reset_queue(String::new());
     }
 
+    /// Opens a row of the picker. The starred items come newest first in either mode, whatever `s` says; the
+    /// mode stays the picker's, so h goes on to the other one as it does from search results.
     fn open_selection(&mut self, selection: Selection, label: String, mode: Mode, fx: &mut Vec<Effect>) {
         self.new_load();
         self.mode = mode;
+        let starred = selection == Selection::Starred;
         self.order = match mode {
-            Mode::Unread if !self.prefs.newest_first => Order::OldestFirst,
+            Mode::Unread if !self.prefs.newest_first && !starred => Order::OldestFirst,
             _ => Order::NewestFirst,
         };
-        self.opened = Some(Opened::Feeds(selection));
+        self.opened = Some(if starred { Opened::Starred } else { Opened::Feeds(selection) });
         self.newest_at_open = 0;
         self.reset_queue(label);
         self.loading = true;
@@ -755,6 +794,11 @@ impl App {
                 let (query, offset) = (query.clone(), self.queue.len());
                 Effect::Search { load, query, offset, limit: PAGE, first: false }
             }
+            // Pages by time, like a feed, but no new arrivals join it: starring isn't arriving.
+            Some(Opened::Starred) => {
+                let request = paging::next_page(&self.queue, self.order);
+                Effect::LoadPage { load, selection: Selection::Starred, mode: self.mode, request, arrivals: false }
+            }
         };
         self.loading_more = true;
         fx.push(effect);
@@ -802,10 +846,10 @@ impl App {
     /// At the end, fresh counts too, for the end screen to say which list j goes on to.
     fn load_ahead(&mut self, fx: &mut Vec<Effect>) {
         let at_end = self.current().is_none() && !self.has_more;
-        if at_end && !self.searching() {
+        if at_end && self.reading_feeds() {
             fx.push(Effect::FeedCounts);
         }
-        if at_end && self.mode == Mode::Unread && !self.searching() {
+        if at_end && self.mode == Mode::Unread && self.reading_feeds() {
             self.check_for_arrivals(fx);
         } else {
             self.prefetch(fx);
@@ -876,11 +920,12 @@ impl App {
         }
     }
 
-    /// The list j goes on to from the end of this one (see `picker::next_after`); none after a search.
+    /// The list j goes on to from the end of this one (see `picker::next_after`); none after a search or the
+    /// starred items.
     fn next_list(&self) -> Option<PickerItem> {
         match (&self.opened, &self.picker_list) {
             (Some(Opened::Feeds(selection)), PickerList::Ready(counts)) => {
-                picker::next_after(counts, self.mode, *selection)
+                picker::next_after(&counts.feeds, self.mode, *selection)
             }
             _ => None,
         }
@@ -894,6 +939,28 @@ impl App {
         let Some(entry) = self.current() else { return };
         let status = if entry.status == EntryStatus::Read { EntryStatus::Unread } else { EntryStatus::Read };
         self.set_status(self.index, status, true, fx);
+    }
+
+    /// `*`: stars or unstars the article on screen, at once; the server is told, and if it says no, it's put back.
+    /// It stays where it is, also in the starred list, as read items stay in a list for the rest of the visit.
+    fn toggle_star(&mut self, fx: &mut Vec<Effect>) {
+        let index = self.index;
+        let Some(entry) = self.queue.get_mut(index) else { return };
+        entry.starred = !entry.starred; // optimistic
+        fx.push(Effect::SetStarred { index, id: entry.id, starred: entry.starred });
+    }
+
+    fn starred_set(&mut self, index: usize, id: i64, starred: bool, result: Result<(), String>) {
+        match result {
+            Ok(()) => self.toast_info(if starred { "Starred" } else { "Unstarred" }),
+            Err(message) => {
+                self.toast_error(message);
+                // Put it back, unless another selection was opened meanwhile.
+                if let Some(entry) = self.queue.get_mut(index).filter(|e| e.id == id) {
+                    entry.starred = !starred;
+                }
+            }
+        }
     }
 
     fn open_original(&mut self, fx: &mut Vec<Effect>) {
@@ -1015,6 +1082,10 @@ impl App {
                 self.toast_info("Search results can't be marked read all at once");
                 return;
             }
+            Some(Opened::Starred) => {
+                self.toast_info(STARRED_NOT_ALL_READ);
+                return;
+            }
             None => return,
         };
         if self.loading {
@@ -1077,11 +1148,12 @@ impl App {
     /// Shift+A in the picker: the row under the cursor, without opening it. As in the reader, only what was
     /// unread when it was counted gets marked; the server counts, then the dialog asks.
     fn mark_row_read(&mut self, fx: &mut Vec<Effect>) {
-        if self.picker_mode == Mode::History {
+        let Some(item) = self.picker_items().into_iter().nth(self.picker_cursor) else { return };
+        if item.selection == Selection::Starred {
+            self.toast_info(STARRED_NOT_ALL_READ);
+        } else if self.picker_mode == Mode::History {
             self.toast_info("These are read already. Press h for unread items.");
-            return;
-        }
-        if let Some(item) = self.picker_items().into_iter().nth(self.picker_cursor) {
+        } else {
             fx.push(Effect::CountRow { selection: item.selection, label: item.label });
         }
     }
@@ -1115,7 +1187,7 @@ impl App {
         // The open queue may hold some of them: show them read too.
         let feeds = self.feeds_in(selection);
         for entry in self.queue.iter_mut() {
-            if entry.status == EntryStatus::Unread && entry.id <= up_to && feeds.contains(entry.feed.id) {
+            if entry.status == EntryStatus::Unread && entry.id <= up_to && feeds.contains(entry) {
                 entry.status = EntryStatus::Read;
             }
         }
@@ -1126,10 +1198,11 @@ impl App {
     fn feeds_in(&self, selection: Selection) -> FeedSet {
         match selection {
             Selection::All => FeedSet::All,
+            Selection::Starred => FeedSet::Starred,
             Selection::Feed { id } => FeedSet::Some(vec![id]),
             Selection::Category { id } => FeedSet::Some(match &self.picker_list {
                 PickerList::Ready(counts) => {
-                    counts.iter().filter(|fc| fc.feed.category.id == id).map(|fc| fc.feed.id).collect()
+                    counts.feeds.iter().filter(|fc| fc.feed.category.id == id).map(|fc| fc.feed.id).collect()
                 }
                 _ => Vec::new(),
             }),
@@ -1156,7 +1229,7 @@ impl App {
         fx.push(Effect::FeedCounts);
     }
 
-    fn feed_counts(&mut self, result: Result<Vec<FeedCount>, String>) {
+    fn feed_counts(&mut self, result: Result<Counts, String>) {
         match result {
             Ok(counts) => {
                 self.picker_list = PickerList::Ready(counts);
@@ -1553,6 +1626,7 @@ impl App {
             Action::Next { mark_read } => self.advance(mark_read, fx),
             Action::Prev => self.prev(),
             Action::ToggleRead => self.toggle_read(fx),
+            Action::ToggleStar => self.toggle_star(fx),
             Action::OpenOriginal => self.open_original(fx),
             Action::SaveToReadeck => self.save_to_readeck(fx),
             Action::FetchFull => self.fetch_full(fx),
@@ -1619,6 +1693,7 @@ impl App {
             Outcome::StatusSet { status, revert, announce, result } => {
                 self.status_set(status, revert, announce, result);
             }
+            Outcome::StarredSet { index, id, starred, result } => self.starred_set(index, id, starred, result),
             Outcome::ContentFetched { index, id, result } => self.content_fetched(index, id, result),
             Outcome::FeedCounts(result) => self.feed_counts(result),
             Outcome::Refreshed(result) => self.refreshed(result, &mut fx),
@@ -1659,14 +1734,17 @@ impl App {
 /// Feeds a selection takes in.
 enum FeedSet {
     All,
+    /// Whichever feed, if starred.
+    Starred,
     Some(Vec<i64>),
 }
 
 impl FeedSet {
-    fn contains(&self, feed: i64) -> bool {
+    fn contains(&self, entry: &Entry) -> bool {
         match self {
             FeedSet::All => true,
-            FeedSet::Some(ids) => ids.contains(&feed),
+            FeedSet::Starred => entry.starred,
+            FeedSet::Some(ids) => ids.contains(&entry.feed.id),
         }
     }
 }

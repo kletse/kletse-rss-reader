@@ -21,6 +21,8 @@
 //!   each hash stands for.
 //! - There are no read counts, and Miniflux has no unread counts or search either: those come back as unknown.
 //!   Miniflux can't list a category's items (labels) either, nor history per feed.
+//! - Starred items are a state stream like the read ones; nothing counts them, so the picker's number is how many
+//!   ids one listing found.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -29,11 +31,12 @@ use std::sync::Mutex;
 use crate::config;
 use crate::dates;
 use crate::error::{Error, Service, ok_status};
-use crate::miniflux::{Category, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::miniflux::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
 
 const READING_LIST: &str = "user/-/state/com.google/reading-list";
 const READ: &str = "user/-/state/com.google/read";
+const STARRED: &str = "user/-/state/com.google/starred";
 const ITEM_PREFIX: &str = "tag:google.com,2005:reader/item/";
 /// How many item ids one listing asks for: enough to count most lists whole, and what servers allow.
 const ID_LIST: usize = 1000;
@@ -204,6 +207,7 @@ impl Item {
         let id = parse_item_id(&self.id)?;
         // Miniflux names the user (`user/1/state/…`) where the others write `user/-/state/…`.
         let read = self.categories.iter().any(|c| c.ends_with("/state/com.google/read"));
+        let starred = self.categories.iter().any(|c| c.ends_with("/state/com.google/starred"));
         let order_ms = self
             .timestamp_usec
             .and_then(|t| t.parse::<i64>().ok().map(|usec| usec / 1000))
@@ -224,6 +228,7 @@ impl Item {
             content,
             feed: EntryFeed { id: stream_id(&origin.stream_id), title: origin.title },
             order_ms,
+            starred,
         })
     }
 }
@@ -418,10 +423,24 @@ impl Client {
         ))
     }
 
-    /// Every feed with its category (its first label) and unread count. Read counts are unknown in this API.
-    pub async fn feed_counts(&self) -> Result<Vec<FeedCount>, Error> {
-        let (subscriptions, unread) = tokio::try_join!(self.subscriptions(), self.unread_counts())?;
-        Ok(subscriptions
+    /// How many items are starred: the ids one listing finds, one more if there are more (as `entries` counts).
+    /// A server that turns the stream down leaves it unknown rather than the whole picker.
+    async fn starred_count(&self) -> Result<Option<i64>, Error> {
+        match self.item_ids(&[("s", STARRED.into()), ("n", ID_LIST.to_string())]).await {
+            Ok(refs) => {
+                Ok(Some(i64::try_from(refs.ids().len()).unwrap_or(i64::MAX) + i64::from(refs.next().is_some())))
+            }
+            Err(Error::Http { .. } | Error::Unexpected { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Every feed with its category (its first label) and unread count, and how many items are starred. Read
+    /// counts are unknown in this API.
+    pub async fn feed_counts(&self) -> Result<Counts, Error> {
+        let (subscriptions, unread, starred) =
+            tokio::try_join!(self.subscriptions(), self.unread_counts(), self.starred_count())?;
+        let feeds = subscriptions
             .into_iter()
             .map(|sub| {
                 let category = match sub.categories.into_iter().next() {
@@ -440,7 +459,8 @@ impl Client {
                 let feed = Feed { id: stream_id(&sub.id), title: sub.title, category };
                 FeedCount { feed, unread: count, read: None }
             })
-            .collect())
+            .collect();
+        Ok(Counts { feeds, starred })
     }
 
     /// The stream a selection reads from. A feed or category the client hasn't seen yet (the picker counted
@@ -448,6 +468,7 @@ impl Client {
     async fn stream(&self, sel: Selection) -> Result<String, Error> {
         let id = match sel {
             Selection::All => return Ok(READING_LIST.into()),
+            Selection::Starred => return Ok(STARRED.into()),
             // The "Uncategorized" row `feed_counts` makes for feeds in no folder: there is no stream for it.
             Selection::Category { id: 0 } => {
                 return Err(Error::Refused("These feeds are in no folder: open them one at a time".into()));
@@ -492,6 +513,8 @@ impl Client {
     ///
     /// The total is how many ids one listing found past `past`, up to `ID_LIST` (one more if there are more), as
     /// this API counts nothing itself.
+    ///
+    /// `Selection::Starred` is the starred stream as it is, read and unread items alike: `status` is ignored.
     pub async fn entries(
         &self,
         sel: Selection,
@@ -503,6 +526,7 @@ impl Client {
         let limit = limit.clamp(1, MAX_PAGE);
         let mut query = vec![("n", ID_LIST.max(limit).to_string())];
         match (status, sel) {
+            (_, Selection::Starred) => query.push(("s", STARRED.into())),
             // Miniflux has no `it` on the reading list, but every server has the read items as a stream.
             (EntryStatus::Read, Selection::All) => query.push(("s", READ.into())),
             (EntryStatus::Read, _) => query.extend([("s", self.stream(sel).await?), ("it", READ.into())]),
@@ -519,7 +543,9 @@ impl Client {
         let total = i64::try_from(ids.len()).unwrap_or(i64::MAX) + i64::from(refs.next().is_some());
         let mut entries = self.contents(&ids[..ids.len().min(limit)]).await?;
         // Miniflux ignores `it` on a feed and lists its unread items too.
-        entries.retain(|e| e.status == status);
+        if sel != Selection::Starred {
+            entries.retain(|e| e.status == status);
+        }
         Ok(EntryPage { total, entries })
     }
 
@@ -609,6 +635,14 @@ impl Client {
             form.push((change, READ.into()));
             self.send(reqwest::Method::POST, "edit-tag", &[], Body::Form(&form)).await?;
         }
+        Ok(())
+    }
+
+    /// Adds or removes the starred state.
+    pub async fn set_starred(&self, id: i64, starred: bool) -> Result<(), Error> {
+        let change = if starred { "a" } else { "r" };
+        let form = [("i", long_item_id(id)), (change, STARRED.into())];
+        self.send(reqwest::Method::POST, "edit-tag", &[], Body::Form(&form)).await?;
         Ok(())
     }
 
@@ -740,6 +774,14 @@ mod tests {
         miniflux["categories"] = json!(["user/1/state/com.google/reading-list", "user/1/state/com.google/read"]);
         let e = serde_json::from_value::<Item>(miniflux).unwrap().into_entry().unwrap();
         assert_eq!(e.status, EntryStatus::Read);
+        assert!(!e.starred);
+        // Starred: as the others write it, and as Miniflux does.
+        for state in [STARRED, "user/1/state/com.google/starred"] {
+            let mut starred = item(9, 1_000_000, false);
+            starred["categories"] = json!([READING_LIST, state]);
+            let e = serde_json::from_value::<Item>(starred).unwrap().into_entry().unwrap();
+            assert!(e.starred && e.status == EntryStatus::Unread, "{state}");
+        }
     }
 
     #[test]
@@ -834,7 +876,18 @@ mod tests {
             ]})))
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path("/reader/api/0/stream/items/ids"))
+            .and(query_param("s", STARRED))
+            .and(query_param("n", ID_LIST.to_string()))
+            .and(query_param_is_missing("xt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(refs(&[7, 3], None)))
+            .expect(1)
+            .mount(&server)
+            .await;
         let counts = client(&server).feed_counts().await.unwrap();
+        assert_eq!(counts.starred, Some(2));
+        let counts = counts.feeds;
         let shown: Vec<_> =
             counts.iter().map(|c| (c.feed.title.as_str(), c.feed.category.title.as_str(), c.unread, c.read)).collect();
         assert_eq!(
@@ -860,8 +913,89 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .mount(&server)
             .await;
+        // A listing of starred ids that goes on: one more than it found.
+        Mock::given(path("/reader/api/0/stream/items/ids"))
+            .and(query_param("s", STARRED))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "itemRefs": [{ "id": "4" }], "continuation": 4 })),
+            )
+            .mount(&server)
+            .await;
         let counts = client(&server).feed_counts().await.unwrap();
-        assert!(counts.iter().all(|c| c.unread.is_none() && c.read.is_none()));
+        assert!(counts.feeds.iter().all(|c| c.unread.is_none() && c.read.is_none()));
+        assert_eq!(counts.starred, Some(2));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_turns_down_the_starred_stream_leaves_its_count_unknown() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        subscriptions(&server).await;
+        Mock::given(path("/reader/api/0/unread-count"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "unreadcounts": [] })))
+            .mount(&server)
+            .await;
+        Mock::given(path("/reader/api/0/stream/items/ids"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("unknown stream"))
+            .mount(&server)
+            .await;
+        let counts = client(&server).feed_counts().await.unwrap();
+        assert_eq!((counts.feeds.len(), counts.starred), (4, None));
+    }
+
+    #[tokio::test]
+    async fn starred_items_are_the_starred_stream_read_and_unread_newest_first() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/reader/api/0/stream/items/ids"))
+            .and(query_param("s", STARRED))
+            .and(query_param("nt", "1793751435"))
+            .and(query_param_is_missing("r"))
+            .and(query_param_is_missing("it"))
+            .and(query_param_is_missing("xt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(refs(&[5, 4], None)))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let starred = |id, usec, read| {
+            let mut item = item(id, usec, read);
+            item["categories"].as_array_mut().unwrap().push(json!(STARRED));
+            item
+        };
+        Mock::given(method("POST"))
+            .and(path("/reader/api/0/stream/items/contents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [
+                starred(4, 4_000_000, true), starred(5, 5_000_000, false)
+            ]})))
+            .mount(&server)
+            .await;
+        let c = client(&server);
+        let page =
+            c.entries(Selection::Starred, EntryStatus::Unread, Order::NewestFirst, 1_793_751_435, 50).await.unwrap();
+        let shown: Vec<_> = page.entries.iter().map(|e| (e.id, e.status, e.starred)).collect();
+        assert_eq!(shown, [(5, EntryStatus::Unread, true), (4, EntryStatus::Read, true)], "both, whatever the status");
+        assert_eq!(page.total, 2);
+    }
+
+    #[tokio::test]
+    async fn set_starred_adds_or_removes_the_starred_state() {
+        let server = MockServer::start().await;
+        logged_in(&server).await;
+        for change in ["a", "r"] {
+            Mock::given(method("POST"))
+                .and(path("/reader/api/0/edit-tag"))
+                .and(body_string_contains("i=tag%3Agoogle.com%2C2005%3Areader%2Fitem%2F000000000000000b"))
+                .and(body_string_contains(format!("{change}=user%2F-%2Fstate%2Fcom.google%2Fstarred")))
+                .and(body_string_contains("T=tok123"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        let c = client(&server);
+        c.set_starred(11, true).await.unwrap();
+        c.set_starred(11, false).await.unwrap();
     }
 
     #[tokio::test]

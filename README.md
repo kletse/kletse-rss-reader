@@ -35,6 +35,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 - **Your feed server does the heavy lifting.** [Miniflux](https://miniflux.app), or any server that speaks the Google Reader API: [FreshRSS](https://freshrss.org), Inoreader, BazQux, The Old Reader, or Miniflux's own Google Reader integration. It fetches the feeds and stores what you've read. The app is a thin client with no local database.
 - **Follows your desktop live.** On Omarchy: colours, the UI font and window rounding update the moment you switch themes, or pick Onward Dark or Onward Light in **Settings** to keep the logo's colours instead. On macOS: light or dark mode, the moment you change it, along with the app icon.
 - **Readeck in one key.** Press **b** to send the article to [Readeck](https://readeck.org), mark it read, and move on.
+- **Star what you want to keep.** Press **\*** to star an article on your feed server; the **Starred** row in the picker reads them again, newest first.
 - **In a terminal too.** `onward-tui` is the same reader filling your terminal, on Linux and macOS, locally or over SSH. See [In a terminal](#in-a-terminal).
 - **Native, no web view.** The window is Qt Quick on Linux and SwiftUI on macOS, over the same Rust core: articles are laid out as native text and images, not in a browser engine.
 
@@ -64,6 +65,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>n</kbd>                                                                 | Skip: next article, **keep unread**                                                                              |
 | <kbd>k</kbd> / <kbd>↑</kbd>                                                  | Previous article                                                                                                 |
 | <kbd>m</kbd>                                                                 | Toggle read / unread                                                                                             |
+| <kbd>*</kbd>                                                                 | Star / unstar the article                                                                                        |
 | <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>                         | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one                                 |
 | <kbd>o</kbd>                                                                 | Open the original in your browser                                                                                |
 | <kbd>b</kbd>                                                                 | Save to Readeck, mark read, go to the next article                                                               |
@@ -84,11 +86,13 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
-The picker lists **All unread**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
+The picker lists **All unread**, then **Starred**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
 Press <kbd>Shift</kbd>+<kbd>A</kbd> in the picker to mark the selected feed or category read without opening it. It asks first, and, as in the reader, leaves alone what arrives after it counted.
 
 Press <kbd>h</kbd> (or **History** at the top of the picker) to switch the picker to history: **All read**, categories and feeds with read counts. What you open there shows read items newest first, loaded a page at a time as you go, and a **History** badge appears in the top bar. Every key works the same: <kbd>m</kbd> marks an item unread again, <kbd>b</kbd> saves it to Readeck, and so on. <kbd>Esc</kbd> closes the picker without switching, so you're back where you were.
+
+Press <kbd>*</kbd> to star the article on your feed server, or unstar it; a star in the top bar says it is. The **Starred** row, in the picker and in its history, lists the starred items newest first, read and unread, with a **Starred** badge in the top bar, and every key works there too: <kbd>j</kbd> marks one read and moves on, <kbd>*</kbd> unstars it (it stays in the list until you leave), and <kbd>Shift</kbd>+<kbd>A</kbd> only says it can't mark them all read.
 
 Press <kbd>/</kbd> to search, from the reader or the picker. Miniflux looks through every feed, read and unread items alike, and the results open as a list like any other, best match first, with a **Search** badge in the top bar: <kbd>j</kbd> marks a result read and moves on, <kbd>m</kbd> toggles it, <kbd>b</kbd> saves it. <kbd>/</kbd> again starts from your last search.
 
@@ -284,7 +288,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 
 ## Not (yet) in scope
 
-Managing feeds (use your server's web UI), starring, offline reading, notifications and a bar widget.
+Managing feeds (use your server's web UI), offline reading, notifications and a bar widget.
 
 ## License
 

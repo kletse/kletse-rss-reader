@@ -1,6 +1,6 @@
 //! Turns feed counts into the rows of the feeds picker.
 
-use crate::miniflux::{FeedCount, Selection};
+use crate::miniflux::{Counts, FeedCount, Selection};
 use crate::paging::Mode;
 use std::collections::BTreeMap;
 
@@ -10,7 +10,7 @@ pub struct PickerItem {
     pub label: String,
     /// `None` when the server can't count (read items on a Google Reader API server): shown without a number.
     pub count: Option<i64>,
-    /// 0 for "All …" and categories, 1 for feeds.
+    /// 0 for "All …", "Starred" and categories, 1 for feeds.
     pub depth: u8,
 }
 
@@ -18,11 +18,18 @@ fn by_title(a: &str, b: &str) -> std::cmp::Ordering {
     a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
 }
 
-/// Turns feed counts into the picker rows: "All unread" (or "All read" in history mode),
-/// then each category (sorted) with its feeds. Anything with nothing to show is left out; what the server can't
-/// count stays in, as it may have something.
-pub fn build(counts: &[FeedCount], mode: Mode) -> Vec<PickerItem> {
-    rows(counts, mode, false)
+/// Turns feed counts into the picker rows: "All unread" (or "All read" in history mode), "Starred", then each
+/// category (sorted) with its feeds. Anything with nothing to show is left out; what the server can't count stays
+/// in, as it may have something. The starred items are the same list in both modes, read and unread.
+pub fn build(counts: &Counts, mode: Mode) -> Vec<PickerItem> {
+    let mut rows = rows(&counts.feeds, mode, false);
+    if has_some(counts.starred) {
+        let at = usize::from(rows.first().is_some_and(|r| r.selection == Selection::All));
+        let starred =
+            PickerItem { selection: Selection::Starred, label: "Starred".into(), count: counts.starred, depth: 0 };
+        rows.insert(at, starred);
+    }
+    rows
 }
 
 /// The list to go on to from the end of `current`: the next row of the same kind (a feed after a feed, a category
@@ -95,10 +102,39 @@ mod tests {
         items.iter().map(|i| (i.label.as_str(), i.count.unwrap_or(-1), i.depth)).collect()
     }
 
+    /// The picker of these feeds, with nothing starred.
+    fn build(feeds: &[FeedCount], mode: Mode) -> Vec<PickerItem> {
+        super::build(&Counts { feeds: feeds.to_vec(), starred: Some(0) }, mode)
+    }
+
     #[test]
     fn is_empty_when_nothing_is_unread() {
         assert_eq!(build(&[], Mode::Unread), vec![]);
         assert_eq!(build(&[fc(1, "A", (1, "Dev"), 0, 0)], Mode::Unread), vec![]);
+    }
+
+    #[test]
+    fn starred_comes_after_all_in_both_modes_unless_nothing_is() {
+        let feeds = vec![fc(1, "Zed", (1, "Dev"), 2, 0), fc(2, "Alpha", (2, "Blogs"), 0, 3)];
+        let counts = |starred| Counts { feeds: feeds.clone(), starred };
+        assert_eq!(
+            rows(&super::build(&counts(Some(4)), Mode::Unread)),
+            [("All unread", 2, 0), ("Starred", 4, 0), ("Dev", 2, 0), ("Zed", 2, 1)]
+        );
+        assert_eq!(
+            rows(&super::build(&counts(Some(4)), Mode::History)),
+            [("All read", 3, 0), ("Starred", 4, 0), ("Blogs", 3, 0), ("Alpha", 3, 1)]
+        );
+        assert_eq!(super::build(&counts(Some(4)), Mode::Unread)[1].selection, Selection::Starred);
+        assert!(!super::build(&counts(Some(0)), Mode::Unread).iter().any(|r| r.selection == Selection::Starred));
+        // A count the server doesn't know: shown, without a number.
+        let unknown = super::build(&counts(None), Mode::Unread);
+        assert_eq!((unknown[1].label.as_str(), unknown[1].count), ("Starred", None));
+        // Nothing unread, but something starred: just that.
+        let none_unread = Counts { feeds: vec![fc(1, "Zed", (1, "Dev"), 0, 0)], starred: Some(1) };
+        assert_eq!(rows(&super::build(&none_unread, Mode::Unread)), [("Starred", 1, 0)]);
+        // j at the end of a list never goes on to the starred items.
+        assert_eq!(next_after(&feeds, Mode::Unread, Selection::Starred), None);
     }
 
     #[test]

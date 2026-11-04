@@ -70,8 +70,8 @@ struct ContentView: View {
         ToolbarItem(placement: .navigation) {
             let label = state?.selectionLabel ?? ""
             Button { model.press("picker") } label: {
-                // The logo, except reading read items or search results: the button says so with its icon, the
-                // middle of the bar with a word.
+                // The logo, except reading read items, search results or the starred list: the button says so with
+                // its icon, the middle of the bar with a word.
                 Label {
                     Text(label.isEmpty ? "Feeds" : label)
                 } icon: {
@@ -79,6 +79,8 @@ struct ContentView: View {
                         Image(systemName: "clock.arrow.circlepath")
                     } else if state?.searching == true {
                         Image(systemName: "magnifyingglass")
+                    } else if state?.starredList == true {
+                        Image(systemName: "star")
                     } else {
                         LogoMark(width: 22)
                     }
@@ -91,10 +93,19 @@ struct ContentView: View {
         // Always there, also with nothing in it: without a middle item the buttons on the right slide over to the left.
         ToolbarItem(placement: .principal) {
             let position = state?.position ?? ""
-            Text(position.isEmpty ? " " : state?.history == true ? "History · \(position)"
-                : state?.searching == true ? "Search · \(position)" : position)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                // The article on screen is starred (*).
+                if state?.screen == "article", state?.article?.starred == true {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.tint)
+                        .help("Starred (*)")
+                }
+                Text(position.isEmpty ? " " : state?.history == true ? "History · \(position)"
+                    : state?.searching == true ? "Search · \(position)"
+                    : state?.starredList == true ? "Starred · \(position)" : position)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
         }
         ToolbarItemGroup(placement: .primaryAction) {
             if state?.readeck == true {

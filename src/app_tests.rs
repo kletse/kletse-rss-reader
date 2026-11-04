@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::dates;
-use crate::miniflux::{Category, Feed};
+use crate::miniflux::{Category, Feed, FeedCount};
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
@@ -23,8 +23,8 @@ fn seconds(e: &Entry) -> i64 {
 
 impl Fake {
     /// Pages like Miniflux: `past` is a strict bound in whole seconds, and items published in the same second come
-    /// in a different order on every request, as Postgres may return them.
-    fn page(&mut self, status: EntryStatus, request: PageRequest) -> EntryPage {
+    /// in a different order on every request, as Postgres may return them. The starred list has no status.
+    fn page(&mut self, selection: Selection, status: EntryStatus, request: PageRequest) -> EntryPage {
         let PageRequest { past, limit, order } = request;
         self.requests += 1;
         let salt = self.requests;
@@ -32,7 +32,8 @@ impl Fake {
         let mut list: Vec<Entry> = self
             .entries
             .iter()
-            .filter(|e| e.status == status && (past == 0 || dir * (seconds(e) - past) > 0))
+            .filter(|e| if selection == Selection::Starred { e.starred } else { e.status == status })
+            .filter(|e| past == 0 || dir * (seconds(e) - past) > 0)
             .cloned()
             .collect();
         list.sort_by_key(|e| (dir * seconds(e), (e.id * salt) % 17, e.id));
@@ -58,6 +59,12 @@ impl Fake {
         self.entries.iter().filter(|e| e.status == EntryStatus::Unread && e.id <= up_to).map(|e| e.id).collect()
     }
 
+    fn star(&mut self, id: i64, starred: bool) {
+        for e in self.entries.iter_mut().filter(|e| e.id == id) {
+            e.starred = starred;
+        }
+    }
+
     fn unread_ids(&self) -> Vec<i64> {
         self.entries.iter().filter(|e| e.status == EntryStatus::Unread).map(|e| e.id).collect()
     }
@@ -68,6 +75,8 @@ struct Harness {
     fake: Fake,
     status: Status,
     counts: Vec<FeedCount>,
+    /// The picker's count of starred items.
+    starred: Option<i64>,
     /// Every server effect, in the order they ran.
     calls: Vec<Effect>,
     hold_next_page: bool,
@@ -76,6 +85,7 @@ struct Harness {
     held: Option<Effect>,
     fail_next_page: Option<String>,
     fail_next_status: Option<String>,
+    fail_next_star: Option<String>,
     /// What the server says to `f` and `r`, instead of doing it.
     fail_fetch: Option<String>,
     full_content: String,
@@ -98,6 +108,7 @@ impl Harness {
             fake: Fake { entries, requests: 0 },
             status: Status { configured: true, readeck: false, fetches: true },
             counts: counts(2, 3),
+            starred: Some(0),
             calls: Vec::new(),
             hold_next_page: false,
             hold_fetch: false,
@@ -105,6 +116,7 @@ impl Harness {
             held: None,
             fail_next_page: None,
             fail_next_status: None,
+            fail_next_star: None,
             fail_fetch: None,
             full_content: "<p>Full text</p>".into(),
             problem: None,
@@ -145,20 +157,20 @@ impl Harness {
             self.calls.push(effect.clone());
         }
         match effect {
-            Effect::OpenSelection { load, mode, request, .. } => {
-                let page = self.fake.page(mode.status(), request);
-                let newest =
-                    if mode == Mode::Unread { self.fake.unread_ids().into_iter().max().unwrap_or(0) } else { 0 };
+            Effect::OpenSelection { load, selection, mode, request } => {
+                let page = self.fake.page(selection, mode.status(), request);
+                let unread = mode == Mode::Unread && selection != Selection::Starred;
+                let newest = if unread { self.fake.unread_ids().into_iter().max().unwrap_or(0) } else { 0 };
                 Some(Outcome::Opened { load, result: Ok((page, newest)) })
             }
-            Effect::LoadPage { load, mode, request, arrivals, .. } => {
+            Effect::LoadPage { load, selection, mode, request, arrivals } => {
                 if std::mem::take(&mut self.hold_next_page) {
                     self.held = Some(effect);
                     return None;
                 }
                 let result = match self.fail_next_page.take() {
                     Some(message) => Err(message),
-                    None => Ok(self.fake.page(mode.status(), request)),
+                    None => Ok(self.fake.page(selection, mode.status(), request)),
                 };
                 Some(Outcome::Page { load, arrivals, result })
             }
@@ -194,6 +206,16 @@ impl Harness {
                 };
                 Some(Outcome::StatusSet { status, revert, announce, result })
             }
+            Effect::SetStarred { index, id, starred } => {
+                let result = match self.fail_next_star.take() {
+                    Some(message) => Err(message),
+                    None => {
+                        self.fake.star(id, starred);
+                        Ok(())
+                    }
+                };
+                Some(Outcome::StarredSet { index, id, starred, result })
+            }
             Effect::FetchContent { index, id } => {
                 if self.hold_fetch {
                     self.held = Some(effect);
@@ -202,7 +224,9 @@ impl Harness {
                 let result = self.fail_fetch.clone().map_or_else(|| Ok(self.full_content.clone()), Err);
                 Some(Outcome::ContentFetched { index, id, result })
             }
-            Effect::FeedCounts => Some(Outcome::FeedCounts(Ok(self.counts.clone()))),
+            Effect::FeedCounts => {
+                Some(Outcome::FeedCounts(Ok(Counts { feeds: self.counts.clone(), starred: self.starred })))
+            }
             Effect::RefreshFeeds => Some(Outcome::Refreshed(self.fail_fetch.clone().map_or(Ok(()), Err))),
             Effect::ReloadPickerAfter { .. }
             | Effect::SavePrefs(_)
@@ -1602,4 +1626,268 @@ fn choosing_colours_saves_them_once() {
     let chosen = app.set_colours(Colours::OnwardLight);
     assert!(matches!(chosen.as_slice(), [Effect::SavePrefs(p)] if p.colours == Colours::OnwardLight));
     assert!(app.set_colours(Colours::OnwardLight).is_empty(), "nothing changed, nothing to save");
+}
+
+// ---- Starring ------------------------------------------------------------------------------------------------------
+
+/// Items 1 … 6, oldest first; 2, 4 and 5 are starred, and 4 is read.
+fn some_starred() -> Vec<Entry> {
+    range(1, 6)
+        .into_iter()
+        .map(|id| {
+            let status = if id == 4 { EntryStatus::Read } else { EntryStatus::Unread };
+            Entry { starred: [2, 4, 5].contains(&id), ..entry_at(id, &format!("Item {id}"), status, id) }
+        })
+        .collect()
+}
+
+fn star_calls(h: &Harness) -> Vec<(i64, bool)> {
+    h.calls
+        .iter()
+        .filter_map(|c| match c {
+            Effect::SetStarred { id, starred, .. } => Some((*id, *starred)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Opens the Starred row from the picker, in history first if asked.
+fn open_starred(h: &mut Harness, history: bool) {
+    h.start();
+    if history {
+        h.key("h");
+    }
+    let row = h.app.picker_items().iter().position(|i| i.selection == Selection::Starred).unwrap();
+    for _ in 0..row {
+        h.key("j");
+    }
+    h.key("Enter");
+    assert_eq!(h.app.selection_label(), "Starred");
+}
+
+#[test]
+fn star_shows_at_once_says_so_and_stays_on_the_article() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    assert!(!h.app.starred());
+    h.key("*");
+    assert!(h.app.starred());
+    assert_eq!(h.toast(), Some("Starred"));
+    assert_eq!(h.title(), Some("Item 1"), "doesn't move on");
+    assert_eq!(h.app.current().map(|e| e.status), Some(EntryStatus::Unread), "nor mark it read");
+    assert!(h.fake.entries[0].starred);
+    h.key("*");
+    assert!(!h.app.starred());
+    assert_eq!(h.toast(), Some("Unstarred"));
+    assert_eq!(star_calls(&h), [(1, true), (1, false)]);
+    assert!(!h.fake.entries[0].starred);
+}
+
+#[test]
+fn a_star_the_server_turns_down_is_put_back_with_the_reason() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    h.fail_next_star = Some("Miniflux 500 Internal Server Error".into());
+    h.key("*");
+    assert!(!h.app.starred(), "put back");
+    assert_eq!(h.toast(), Some("Miniflux 500 Internal Server Error"));
+    assert_eq!(h.app.toast().map(|t| t.kind), Some(ToastKind::Error));
+    // Unstarring that fails stars it again.
+    h.key("*");
+    assert!(h.app.starred());
+    h.fail_next_star = Some("Nope".into());
+    h.key("*");
+    assert!(h.app.starred());
+}
+
+#[test]
+fn a_star_turned_down_after_moving_on_is_put_back_where_it_was() {
+    let mut h = Harness::new(items(3));
+    h.open(false);
+    let (_, fx) = h.app.key(&KeyPress { key: "*".into(), ..KeyPress::default() });
+    assert!(h.app.starred());
+    h.key("n");
+    let Some(Effect::SetStarred { index, id, starred }) = fx.into_iter().next() else { panic!("no star") };
+    let fx = h.app.apply(Outcome::StarredSet { index, id, starred, result: Err("Nope".into()) });
+    h.run(fx);
+    assert!(!h.app.queue()[0].starred);
+    assert_eq!(h.title(), Some("Item 2"), "you stay where you are");
+}
+
+#[test]
+fn star_does_nothing_in_the_picker_or_at_the_end() {
+    let mut h = Harness::new(items(1));
+    h.start();
+    h.key("*");
+    assert!(star_calls(&h).is_empty());
+    h.key("Enter");
+    h.key("j");
+    assert!(h.caught_up());
+    h.key("*");
+    assert!(star_calls(&h).is_empty());
+}
+
+#[test]
+fn the_picker_has_a_starred_row_with_its_count_after_all_unless_nothing_is_starred() {
+    let mut h = Harness::new(items(2));
+    h.starred = Some(3);
+    h.start();
+    let rows: Vec<_> = h.app.picker_items().into_iter().map(|i| (i.label, i.count, i.depth)).collect();
+    assert_eq!(rows[..2], [("All unread".into(), Some(2), 0), ("Starred".into(), Some(3), 0)]);
+    h.key("h");
+    let rows: Vec<_> = h.app.picker_items().into_iter().map(|i| (i.label, i.count)).collect();
+    assert_eq!(rows[..2], [("All read".into(), Some(3)), ("Starred".into(), Some(3))]);
+
+    let mut h = Harness::new(items(2));
+    h.starred = Some(0);
+    h.start();
+    assert!(h.app.picker_items().iter().all(|i| i.selection != Selection::Starred));
+
+    let mut h = Harness::new(items(2));
+    h.starred = None; // a server that can't count them
+    h.start();
+    assert_eq!(h.app.picker_items()[1].count, None);
+    assert_eq!(h.app.picker_items()[1].label, "Starred");
+}
+
+#[test]
+fn the_starred_list_is_newest_first_read_and_unread_whatever_the_order() {
+    let mut h = Harness::new(some_starred());
+    h.starred = Some(3);
+    assert!(!h.app.newest_first(), "unread items oldest first");
+    open_starred(&mut h, false);
+    assert!(matches!(
+        h.calls.iter().rfind(|c| matches!(c, Effect::OpenSelection { .. })),
+        Some(Effect::OpenSelection {
+            selection: Selection::Starred,
+            request: PageRequest { order: Order::NewestFirst, .. },
+            ..
+        })
+    ));
+    assert_eq!(h.app.queue().iter().map(|e| e.id).collect::<Vec<_>>(), [5, 4, 2]);
+    assert!(h.app.starred());
+    assert!(h.app.starred_list() && !h.app.searching() && !h.app.history_badge());
+    assert_eq!(h.app.position(), "1 / 3");
+    // j marks read and moves on, as anywhere.
+    h.key("j");
+    assert_eq!(h.title(), Some("Item 4"));
+    assert_eq!(h.status_calls(), [(vec![5], EntryStatus::Read)]);
+    // m toggles: item 4 is read, so it's unread again.
+    h.key("m");
+    assert_eq!(h.app.current().map(|e| e.status), Some(EntryStatus::Unread));
+    // s doesn't change the starred list's order, nor open it again.
+    let opened = h.entries_calls().len();
+    h.key("s");
+    assert_eq!(h.entries_calls().len(), opened);
+    assert_eq!(h.title(), Some("Item 4"));
+}
+
+#[test]
+fn the_starred_list_from_history_has_no_history_badge_either() {
+    let mut h = Harness::new(some_starred());
+    h.starred = Some(3);
+    open_starred(&mut h, true);
+    assert_eq!(h.app.queue().iter().map(|e| e.id).collect::<Vec<_>>(), [5, 4, 2]);
+    assert!(h.app.starred_list() && !h.app.history_badge());
+    // h goes to the other picker, as from search results.
+    h.key("h");
+    assert!(h.picker_loaded());
+    assert_eq!(h.app.picker_mode(), Mode::Unread);
+}
+
+#[test]
+fn unstarring_in_the_starred_list_keeps_the_item_there() {
+    let mut h = Harness::new(some_starred());
+    h.starred = Some(3);
+    open_starred(&mut h, false);
+    h.key("*");
+    assert_eq!(h.toast(), Some("Unstarred"));
+    assert!(!h.app.starred());
+    assert_eq!(h.title(), Some("Item 5"));
+    h.key("n");
+    h.key("k");
+    assert_eq!(h.title(), Some("Item 5"), "still in the list");
+    assert!(!h.app.starred());
+    h.key("*");
+    assert!(h.app.starred());
+    assert_eq!(star_calls(&h), [(5, false), (5, true)]);
+}
+
+#[test]
+fn the_end_of_the_starred_list_goes_back_to_the_feeds_and_h_to_history() {
+    let mut h = Harness::new(some_starred());
+    h.counts = three_feeds(3);
+    h.starred = Some(3);
+    open_starred(&mut h, false);
+    let counts_before = h.calls.iter().filter(|c| matches!(c, Effect::FeedCounts)).count();
+    h.press_through(&["j"]);
+    assert!(h.caught_up());
+    assert_eq!(h.app.end_title(), "End of starred items");
+    assert_eq!(h.app.end_hint(), "Press j or Enter for the feeds, k to go back.");
+    assert_eq!(h.app.position(), "3 / 3");
+    // No looking for new arrivals, as at the end of search results.
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::LoadPage { arrivals: true, .. })));
+    assert_eq!(h.calls.iter().filter(|c| matches!(c, Effect::FeedCounts)).count(), counts_before);
+    h.key("j");
+    assert!(h.picker_loaded());
+    assert_eq!(h.app.picker_mode(), Mode::Unread);
+    h.key("Escape");
+    h.key("h");
+    assert!(h.picker_loaded());
+    assert_eq!(h.app.picker_mode(), Mode::History);
+}
+
+#[test]
+fn the_starred_list_loads_a_page_at_a_time_by_time() {
+    let entries: Vec<Entry> = items(PAGE as i64 + 5).into_iter().map(|e| Entry { starred: true, ..e }).collect();
+    let mut h = Harness::new(entries);
+    h.starred = Some(PAGE as i64 + 5);
+    open_starred(&mut h, false);
+    assert!(h.app.has_more());
+    assert_eq!(h.app.position(), format!("1 / {}", PAGE + 5));
+    let ids = h.press_through(&["n"]);
+    assert_eq!(ids, (1..=PAGE as i64 + 5).rev().collect::<Vec<_>>(), "every one, newest first, once");
+    assert!(matches!(
+        h.calls.iter().rfind(|c| matches!(c, Effect::LoadPage { .. })),
+        Some(Effect::LoadPage { selection: Selection::Starred, arrivals: false, .. })
+    ));
+}
+
+#[test]
+fn shift_a_on_the_starred_list_or_its_row_says_it_cant() {
+    let mut h = Harness::new(some_starred());
+    h.starred = Some(3);
+    open_starred(&mut h, false);
+    h.shift("A");
+    assert_eq!(h.toast(), Some("Starred items can't be marked read all at once"));
+    assert_eq!(h.app.overlay(), Overlay::None);
+    h.key("p");
+    assert_eq!(h.app.picker_items()[h.app.picker_cursor()].selection, Selection::Starred);
+    h.shift("A");
+    assert_eq!(h.toast(), Some("Starred items can't be marked read all at once"));
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    // Also in the history picker, where other rows say they're read already.
+    h.key("h");
+    h.key("j");
+    h.shift("A");
+    assert_eq!(h.toast(), Some("Starred items can't be marked read all at once"));
+    assert!(!h.calls.iter().any(|c| matches!(
+        c,
+        Effect::CountUnread { .. } | Effect::CountRow { .. } | Effect::MarkAllRead { .. } | Effect::MarkRowRead { .. }
+    )));
+}
+
+#[test]
+fn all_unread_marked_read_from_the_picker_shows_read_in_the_starred_list_behind_it() {
+    let mut h = Harness::new(some_starred());
+    h.starred = Some(3);
+    open_starred(&mut h, false);
+    h.key("p");
+    let row = h.app.picker_items().iter().position(|i| i.selection == Selection::All).unwrap();
+    while h.app.picker_cursor() != row {
+        h.key("j");
+    }
+    h.shift("A");
+    h.key("y");
+    assert!(h.app.queue().iter().all(|e| e.status == EntryStatus::Read));
 }

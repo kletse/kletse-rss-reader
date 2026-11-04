@@ -99,7 +99,7 @@ Once the feeds load, it presses the keys one per 400 ms (default `Enter`, which 
 space as `Space`). It then waits 3 s for images, saves the window to the PNG and quits. Useful key sequences:
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
-`"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j Enter j"` (the end of a feed, with where j goes next).
+`"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j j Enter j"` (the end of a feed, with where j goes next), `"Enter *"` (a starred article), `"j Enter"` (the Starred list; the demo starts with two starred, in memory).
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
@@ -273,4 +273,6 @@ Traps here:
   down, and for Settings `onDisappear` then closes the form. `BrandStyle` keeps one modifier chain for this reason.
 - **Snapshots work as for Qt:** `ONWARD_DEMO=1 ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="Enter ?"
   "packaging/Onward.app/Contents/MacOS/onward"`. The window really opens on screen. An open sheet is drawn
-  over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap.
+  over the window, at 1200×860 as the README's shots are; alerts don't draw into a bitmap. If running the binary
+  directly hangs with no window (seen from an agent's shell, with the installed app also running), launch the bundle
+  with `open -n -W --env ONWARD_DEMO=1 --env ONWARD_SNAPSHOT=… --env "ONWARD_SNAPSHOT_KEYS=…" "packaging/Onward.app"`.

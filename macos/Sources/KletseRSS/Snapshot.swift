@@ -1,6 +1,6 @@
 // KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in, press KLETSE_RSS_SNAPSHOT_KEYS (default "Enter", which
-// opens the first row; a space is written "Space"), one per 400 ms, give images 3 s, save the window to the
-// PNG and quit. As the Qt version does. The window is 1200×860 for it, the size of the README's screenshots, and
+// opens the first row; a space is written "Space", and "Ctrl+" or "Shift+" before a key holds them, as in
+// "Ctrl+Tab": the Control key), one per 400 ms, give images 3 s, save the window to the PNG and quit. As the Qt version does. The window is 1200×860 for it, the size of the README's screenshots, and
 // a sheet that is open is drawn over it where it sits (the image grows to take in anything that hangs out of
 // the window). Alerts don't draw into a bitmap.
 import AppKit
@@ -20,9 +20,16 @@ enum Snapshot {
                 window.setFrame(window.frameRect(forContentRect: content), display: true)
                 window.center()
             }
-            for key in keys {
+            for token in keys {
                 try? await Task.sleep(for: .milliseconds(400))
-                model.key(key == "Space" ? " " : key)
+                var key = Substring(token)
+                var control = false
+                var shift = false
+                while key.count > 1, key.hasPrefix("Ctrl+") || key.hasPrefix("Shift+") {
+                    if key.hasPrefix("Ctrl+") { control = true } else { shift = true }
+                    key = key.drop { $0 != "+" }.dropFirst()
+                }
+                model.key(key == "Space" ? " " : String(key), shift: shift, control: control)
             }
             try? await Task.sleep(for: .seconds(3))
             save(to: path)

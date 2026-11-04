@@ -80,7 +80,7 @@ struct Harness {
     fail_fetch: Option<String>,
     full_content: String,
     problem: Option<String>,
-    save_result: Result<Status, String>,
+    save_result: Result<Status, SettingsError>,
 }
 
 fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
@@ -975,13 +975,126 @@ fn onboarding_cant_be_cancelled_and_connects_on_submit() {
 fn a_failed_save_shows_why_and_lets_you_try_again() {
     let mut h = first_second();
     h.key(",");
-    h.save_result = Err("Miniflux rejected the API key".into());
+    h.save_result = Err(failed(Some(SettingsSection::Server), "Miniflux rejected the API key"));
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     let form = h.app.settings().unwrap();
     assert_eq!(form.error, "Miniflux rejected the API key");
     assert!(!form.checking);
     assert_eq!(h.app.overlay(), Overlay::Settings);
+}
+
+fn failed(section: Option<SettingsSection>, message: &str) -> SettingsError {
+    SettingsError { section, message: message.into() }
+}
+
+fn section(h: &Harness) -> SettingsSection {
+    h.app.settings().unwrap().section
+}
+
+/// Ctrl+Tab, or Ctrl+Shift+Tab; `meta` is the Mac's Control key.
+fn ctrl_tab(h: &mut Harness, shift: bool, meta: bool) -> bool {
+    let press = KeyPress { key: "Tab".into(), shift, ctrl: !meta, meta, typing: true, ..KeyPress::default() };
+    let (used, fx) = h.app.key(&press);
+    h.run(fx);
+    used
+}
+
+#[test]
+fn the_settings_form_opens_on_the_server_tab_and_ctrl_tab_goes_round() {
+    let mut h = first_second();
+    h.key(",");
+    assert_eq!(section(&h), SettingsSection::Server);
+    assert!(ctrl_tab(&mut h, false, false));
+    assert_eq!(section(&h), SettingsSection::Readeck);
+    assert!(ctrl_tab(&mut h, false, false));
+    assert_eq!(section(&h), SettingsSection::Server, "round the end");
+    assert!(ctrl_tab(&mut h, true, false));
+    assert_eq!(section(&h), SettingsSection::Readeck, "Shift goes back, round the start");
+    assert!(ctrl_tab(&mut h, false, true));
+    assert_eq!(section(&h), SettingsSection::Server, "Control+Tab on a Mac, where ⌘Tab switches apps");
+    // Tab alone is the next field's, and the window's to move to.
+    let (used, _) = h.app.key(&KeyPress { key: "Tab".into(), typing: true, ..KeyPress::default() });
+    assert!(!used);
+    assert_eq!(section(&h), SettingsSection::Server);
+    assert_eq!(h.app.overlay(), Overlay::Settings);
+}
+
+#[test]
+fn a_click_on_a_tab_shows_it_and_the_form_opens_on_server_again() {
+    let mut h = first_second();
+    h.app.show_settings_section(SettingsSection::Readeck);
+    assert!(h.app.settings().is_none(), "no form, nothing to switch");
+    h.key(",");
+    h.app.show_settings_section(SettingsSection::Readeck);
+    assert_eq!(section(&h), SettingsSection::Readeck);
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::None, "Esc still cancels, on any tab");
+    h.key(",");
+    assert_eq!(section(&h), SettingsSection::Server);
+}
+
+#[test]
+fn onboarding_starts_on_the_server_tab_and_switches_but_cant_be_cancelled() {
+    let mut h = Harness::new(items(2));
+    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.start();
+    assert_eq!(section(&h), SettingsSection::Server);
+    assert!(ctrl_tab(&mut h, false, false));
+    assert_eq!(section(&h), SettingsSection::Readeck);
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn the_tabs_are_listed_with_titles_and_notes() {
+    let tabs: Vec<_> = SettingsSection::ALL.iter().map(|s| (s.name(), s.title())).collect();
+    assert_eq!(tabs, [("server", "Server"), ("readeck", "Readeck")]);
+    assert!(SettingsSection::ALL.iter().all(|s| !s.note().is_empty()));
+    assert_eq!(SettingsSection::from_name("readeck"), Some(SettingsSection::Readeck));
+    assert_eq!(SettingsSection::from_name("nope"), None);
+    assert_eq!(App::new(Prefs::default(), true).settings_tabs_hint(), "⌃Tab for the next tab");
+}
+
+#[test]
+fn a_failed_save_switches_to_the_tab_it_is_about() {
+    let mut h = first_second();
+    h.key(",");
+    h.save_result = Err(failed(Some(SettingsSection::Readeck), "Readeck rejected the token."));
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(section(&h), SettingsSection::Readeck);
+    assert_eq!(h.app.settings().unwrap().error, "Readeck rejected the token.");
+    h.save_result = Err(failed(Some(SettingsSection::Server), "Miniflux rejected the API key"));
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(section(&h), SettingsSection::Server);
+    // About no field: the tab stays.
+    h.app.show_settings_section(SettingsSection::Readeck);
+    h.save_result = Err(failed(None, "Could not save the settings"));
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(section(&h), SettingsSection::Readeck);
+    assert!(!h.app.settings().unwrap().checking);
+}
+
+#[test]
+fn what_is_submitted_doesnt_depend_on_the_tab() {
+    let mut h = first_second();
+    h.key(",");
+    h.app.show_settings_section(SettingsSection::Readeck);
+    let values = SettingsValues {
+        server: Server::GReader,
+        miniflux_url: "https://m.example.com".into(),
+        miniflux_api_key: "key".into(),
+        greader_url: "https://rss.example.com/api/greader.php".into(),
+        greader_username: "ward".into(),
+        greader_password: "pw".into(),
+        readeck_url: "https://r.example.com".into(),
+        readeck_token: "tok".into(),
+    };
+    let fx = h.app.submit_settings(values.clone());
+    assert_eq!(fx, [Effect::SaveSettings(SettingsValuesBox(values))]);
 }
 
 #[test]

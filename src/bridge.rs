@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // the generated FFI; nothing hand-written here is unsafe
 #![allow(clippy::too_many_arguments)] // `key` takes one flag per modifier, as QML has them
 
-use crate::app::{App, Effect, KeyPress, PickerList, SettingsValues, ToastKind};
+use crate::app::{App, Effect, KeyPress, PickerList, SettingsSection, SettingsValues, ToastKind};
 use crate::backend::Backend;
 use crate::content::convert;
 use crate::keys;
@@ -88,6 +88,12 @@ pub mod qobject {
         #[qproperty(QString, settings_problem)]
         #[qproperty(QString, settings_error)]
         #[qproperty(bool, settings_checking)]
+        // The tab on screen: "server" or "readeck".
+        #[qproperty(QString, settings_section)]
+        // Every tab, in order, as JSON: [{ "name", "title", "note" }].
+        #[qproperty(QString, settings_sections)]
+        // What switches tabs, next to them.
+        #[qproperty(QString, settings_tabs_hint)]
         // "miniflux" or "greader".
         #[qproperty(QString, server)]
         #[qproperty(QString, miniflux_url)]
@@ -161,6 +167,9 @@ pub mod qobject {
         );
         #[qinvokable]
         fn cancel_settings(self: Pin<&mut Model>);
+        // A click on a tab of the settings form, by its name.
+        #[qinvokable]
+        fn show_settings_section(self: Pin<&mut Model>, name: &QString);
         /// The search box's Enter.
         #[qinvokable]
         fn search(self: Pin<&mut Model>, query: &QString);
@@ -259,6 +268,9 @@ pub struct ModelRust {
     settings_problem: QString,
     settings_error: QString,
     settings_checking: bool,
+    settings_section: QString,
+    settings_sections: QString,
+    settings_tabs_hint: QString,
     server: QString,
     miniflux_url: QString,
     miniflux_api_key: QString,
@@ -352,6 +364,9 @@ impl Default for ModelRust {
             settings_problem: QString::default(),
             settings_error: QString::default(),
             settings_checking: false,
+            settings_section: QString::from(SettingsSection::default().name()),
+            settings_sections: QString::from("[]"),
+            settings_tabs_hint: QString::default(),
             server: QString::default(),
             miniflux_url: QString::default(),
             miniflux_api_key: QString::default(),
@@ -417,6 +432,13 @@ impl qobject::Model {
     pub fn start(mut self: Pin<&mut Self>) {
         let help = serde_json::to_string(&self.as_mut().state().app.help_lines()).unwrap_or_else(|_| "[]".into());
         self.as_mut().set_help_lines(qs(&help));
+        let sections: Vec<serde_json::Value> = SettingsSection::ALL
+            .iter()
+            .map(|s| serde_json::json!({ "name": s.name(), "title": s.title(), "note": s.note() }))
+            .collect();
+        self.as_mut().set_settings_sections(qs(&serde_json::Value::from(sections).to_string()));
+        let hint = self.as_mut().state().app.settings_tabs_hint();
+        self.as_mut().set_settings_tabs_hint(qs(hint));
         self.as_mut().apply_theme(theme::load());
 
         let qt = self.qt_thread();
@@ -531,6 +553,13 @@ impl qobject::Model {
     pub fn cancel_settings(mut self: Pin<&mut Self>) {
         let fx = self.as_mut().state().app.cancel_settings();
         self.run(fx);
+    }
+
+    pub fn show_settings_section(mut self: Pin<&mut Self>, name: &QString) {
+        if let Some(section) = SettingsSection::from_name(&name.to_string()) {
+            self.as_mut().state().app.show_settings_section(section);
+            self.sync();
+        }
     }
 
     pub fn search(mut self: Pin<&mut Self>, query: &QString) {
@@ -751,9 +780,12 @@ impl qobject::Model {
             return;
         };
         let (problem, error, checking) = (form.problem.clone().unwrap_or_default(), form.error.clone(), form.checking);
+        // Before the values: the form focuses a field when either changes, and the values' focus is the one to keep.
+        let section = form.section.name();
         // The form starts from the loaded values once; after that the window keeps what is typed.
         let fill = (!s.settings_shown).then(|| form.values.clone());
         s.settings_shown = true;
+        self.as_mut().set_settings_section(qs(section));
         if let Some(values) = fill {
             self.as_mut().set_server(qs(values.server.name()));
             self.as_mut().set_miniflux_url(qs(&values.miniflux_url));

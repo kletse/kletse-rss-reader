@@ -2,7 +2,7 @@
 //! file and the browser. The answer to each comes
 //! back as an `Outcome`. With `KLETSE_RSS_DEMO=1` it serves the built-in sample data and never touches a server.
 
-use crate::app::{Effect, Outcome, SettingsValues, Status};
+use crate::app::{Effect, Outcome, SettingsError, SettingsSection, SettingsValues, Status};
 use crate::config;
 use crate::demo;
 use crate::error::Error;
@@ -113,11 +113,14 @@ impl Backend {
 
     /// Validates the settings against the real servers, then saves and applies them. The other kind of server's
     /// fields are kept when they're complete, so switching back needs no typing; otherwise they're dropped.
-    async fn save_settings(&self, values: SettingsValues) -> Result<Status, Error> {
+    /// An error says which of the form's tabs it is about, as only one is on screen.
+    async fn save_settings(&self, values: SettingsValues) -> Result<Status, SettingsError> {
+        let about = |section: Option<SettingsSection>| move |e: Error| SettingsError { section, message: e.message() };
+        let (on_feeds, on_readeck) = (about(Some(SettingsSection::Server)), about(Some(SettingsSection::Readeck)));
         let has_readeck_url = !values.readeck_url.trim().is_empty();
         let has_readeck_token = !values.readeck_token.trim().is_empty();
         if has_readeck_url != has_readeck_token {
-            return Err(Error::Setup("Fill in both Readeck fields, or leave both empty.".into()));
+            return Err(on_readeck(Error::Setup("Fill in both Readeck fields, or leave both empty.".into())));
         }
         let mut cfg = config::Config {
             server: Some(values.server),
@@ -140,18 +143,26 @@ impl Backend {
                 }
             }
         }
-        cfg.validate()?;
+        // The feed server's part first, then Readeck's, as `Config::validate` would check them.
+        config::Config { readeck: None, ..cfg.clone() }.validate().map_err(on_feeds)?;
+        if let Some(r) = &cfg.readeck {
+            config::validate_url(&r.url).map_err(on_readeck)?;
+        }
         if !self.demo {
-            self.client_for(&cfg).check().await?;
-            if let Some(readeck) = &cfg.readeck {
-                readeck::check(&self.http, readeck).await?;
+            self.client_for(&cfg).check().await.map_err(on_feeds)?;
+            if let Some(r) = &cfg.readeck {
+                readeck::check(&self.http, r).await.map_err(on_readeck)?;
             }
             // Writing and flushing the file blocks; keep it off the runtime's few workers.
             let saved = cfg.clone();
-            tokio::task::spawn_blocking(move || config::save(&saved)).await.map_err(|e| Error::Io {
-                context: "Could not save the settings".into(),
-                source: std::io::Error::other(e),
-            })??;
+            tokio::task::spawn_blocking(move || config::save(&saved))
+                .await
+                .map_err(|e| Error::Io {
+                    context: "Could not save the settings".into(),
+                    source: std::io::Error::other(e),
+                })
+                .and_then(|saved| saved)
+                .map_err(about(None))?;
         }
         self.set_config(cfg);
         Ok(self.status())
@@ -326,7 +337,7 @@ impl Backend {
                 values: self.settings(),
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
-            Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
+            Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await),
             Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit => return None,
         })
     }
@@ -430,11 +441,29 @@ mod tests {
     }
 
     async fn save(values: SettingsValues) -> Result<Status, String> {
+        save_for(values).await.map_err(|e| e.message)
+    }
+
+    /// Which of the form's tabs a failed save is about.
+    async fn save_for(values: SettingsValues) -> Result<Status, SettingsError> {
         let backend = Backend::new(true);
         match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
             Some(Outcome::SettingsSaved(result)) => result,
-            _ => Err("no answer".into()),
+            _ => Err(SettingsError { section: None, message: "no answer".into() }),
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_save_says_which_tab_it_is_about() {
+        let tab = |result: Result<Status, SettingsError>| result.err().and_then(|e| e.section);
+        let server = Some(SettingsSection::Server);
+        let readeck = Some(SettingsSection::Readeck);
+        assert_eq!(tab(save_for(values("https://m.example.com", "https://r.example.com", "")).await), readeck);
+        assert_eq!(tab(save_for(values("https://m.example.com", "r.example.com", "tok")).await), readeck);
+        assert_eq!(tab(save_for(values("m.example.com", "", "")).await), server);
+        assert_eq!(tab(save_for(greader_values("https://rss.example.com", "")).await), server);
+        // Both wrong: the feed server's comes first, as before.
+        assert_eq!(tab(save_for(values("m.example.com", "r.example.com", "tok")).await), server);
     }
 
     #[tokio::test]
@@ -474,7 +503,8 @@ mod tests {
             .await;
         let backend = Backend { demo: false, ..Backend::new(true) };
         let err = backend.save_settings(greader_values(&server.uri(), "wrong")).await.unwrap_err();
-        assert_eq!(err.message(), "The Google Reader API server turned down the username or password");
+        assert_eq!(err.message, "The Google Reader API server turned down the username or password");
+        assert_eq!(err.section, Some(SettingsSection::Server));
         let cfg = config::Config {
             server: Some(config::Server::GReader),
             greader: Some(config::GReader { url: server.uri(), username: "u".into(), password: "p".into() }),

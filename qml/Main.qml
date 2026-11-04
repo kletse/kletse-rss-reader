@@ -205,22 +205,34 @@ ApplicationWindow {
         return ""
     }
 
-    // KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in, press KLETSE_RSS_SNAPSHOT_KEYS (Enter: open the first
-    // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
-    // loads and draws.
+    // KLETSE_RSS_SNAPSHOT=/path.png: once the feeds are in (or the first-run form is), press KLETSE_RSS_SNAPSHOT_KEYS (Enter: open the first
+    // row; "Space" for a space, "Ctrl+" and "Shift+" before a key to hold them, as in "Ctrl+Tab"), give images a
+    // moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML loads and draws.
     Timer {
         id: snapshotKeys
         property var pending: null
         interval: 400
         repeat: true
-        running: model.snapshotPath !== "" && model.pickerState === "ready" && pending === null
+        // The first run has no feeds to wait for, as the Mac's snapshot knows too.
+        running: model.snapshotPath !== "" && pending === null
+                 && (model.pickerState === "ready" || (model.overlay === "onboarding" && model.settingsReady))
         onTriggered: {
             // One key per tick, so what a key starts (opening a selection) is done before the next one.
             if (pending === null)
                 pending = model.snapshotKeys.split(" ").filter(k => k !== "")
-            const name = pending.shift()
-            if (name !== undefined)
-                model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
+            let name = pending.shift()
+            if (name !== undefined) {
+                let ctrl = false
+                let shift = false
+                while (name.length > 1 && /^(Ctrl|Shift)\+/.test(name)) {
+                    if (name.startsWith("Ctrl+"))
+                        ctrl = true
+                    else
+                        shift = true
+                    name = name.slice(name.indexOf("+") + 1)
+                }
+                model.key(name === "Space" ? " " : name, shift, ctrl, false, false, false, false)
+            }
             if (pending.length === 0) {
                 stop()
                 snapshotShot.start()

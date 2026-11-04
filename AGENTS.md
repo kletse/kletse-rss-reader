@@ -90,10 +90,13 @@ KLETSE_RSS_SNAPSHOT=/tmp/shot.png KLETSE_RSS_SNAPSHOT_KEYS="Enter n n" \
 ```
 
 Once the feeds load, it presses the keys one per 400 ms (default `Enter`, which opens the first row; write a
-space as `Space`). It then waits 3 s for images, saves the window to the PNG and quits. Useful key sequences:
+space as `Space`, and `Ctrl+` or `Shift+` before a key holds them, as in `Ctrl+Tab`). It then waits 3 s for images, saves the window to the PNG and quits. Useful key sequences:
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
+`"Enter , Ctrl+Tab"` (the settings' Readeck tab),
 `"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j Enter j"` (the end of a feed, with where j goes next).
+For the first-run form, leave out `KLETSE_RSS_DEMO` (the demo counts as set up) and point `HOME` at an empty
+directory (`dirs` ignores `XDG_CONFIG_HOME` on macOS): with no feeds to wait for, it starts once the form is in.
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),

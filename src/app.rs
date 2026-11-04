@@ -113,14 +113,75 @@ impl std::fmt::Debug for SettingsValues {
     }
 }
 
+/// The settings form's tabs, one on screen at a time. The windows list them from `ALL`, with their titles and
+/// notes, so another section is a change here plus its fields in each window, not three layouts to redo.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsSection {
+    /// The feed server: Miniflux or Google Reader API, and the chosen kind's fields.
+    #[default]
+    Server,
+    /// Readeck's URL and token.
+    Readeck,
+}
+
+impl SettingsSection {
+    pub const ALL: [SettingsSection; 2] = [SettingsSection::Server, SettingsSection::Readeck];
+
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            SettingsSection::Server => "server",
+            SettingsSection::Readeck => "readeck",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// On its tab.
+    pub fn title(self) -> &'static str {
+        match self {
+            SettingsSection::Server => "Server",
+            SettingsSection::Readeck => "Readeck",
+        }
+    }
+
+    /// What it's for, next to its title.
+    pub fn note(self) -> &'static str {
+        match self {
+            SettingsSection::Server => "where your feeds are",
+            SettingsSection::Readeck => "optional: save articles with b",
+        }
+    }
+
+    /// `by` tabs along, round the ends.
+    fn step(self, by: isize) -> Self {
+        let n = isize::try_from(Self::ALL.len()).unwrap_or(1);
+        let at = Self::ALL.iter().position(|&s| s == self).and_then(|i| isize::try_from(i).ok()).unwrap_or(0);
+        Self::ALL[usize::try_from((at + by).rem_euclid(n)).unwrap_or(0)]
+    }
+}
+
 #[derive(Debug)]
 pub struct SettingsForm {
     /// What the form starts from; the window keeps what is typed until it submits.
     pub values: SettingsValues,
     /// What was wrong with the config file at startup (it didn't parse, say).
     pub problem: Option<String>,
+    /// Shown whichever tab is open; a failed save also switches to the tab it is about.
     pub error: String,
     pub checking: bool,
+    /// The tab on screen. Only what is shown changes with it: every tab's fields are kept and sent.
+    pub section: SettingsSection,
+}
+
+/// Why the settings weren't saved, and which tab that's about, so the form can show the field in question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsError {
+    /// `None` when it's about no field in particular: the file couldn't be written.
+    pub section: Option<SettingsSection>,
+    pub message: String,
 }
 
 /// Puts an optimistic status change back if the server turns it down.
@@ -309,7 +370,7 @@ pub enum Outcome {
         values: SettingsValues,
         problem: Option<String>,
     },
-    SettingsSaved(Result<Status, String>),
+    SettingsSaved(Result<Status, SettingsError>),
 }
 
 impl std::fmt::Debug for Outcome {
@@ -1385,6 +1446,25 @@ impl App {
         vec![Effect::SaveSettings(SettingsValuesBox(values))]
     }
 
+    /// A click on one of the form's tabs.
+    pub fn show_settings_section(&mut self, section: SettingsSection) {
+        if let Some(form) = self.settings.as_mut() {
+            form.section = section;
+        }
+    }
+
+    /// Ctrl+Tab and Ctrl+Shift+Tab (`by` 1 and -1), and the terminal's ← → on its row of tabs.
+    pub fn step_settings_section(&mut self, by: isize) {
+        if let Some(form) = self.settings.as_mut() {
+            form.section = form.section.step(by);
+        }
+    }
+
+    /// What the form says next to its tabs. ⌘Tab is the Mac's app switcher, so Control+Tab there.
+    pub fn settings_tabs_hint(&self) -> &'static str {
+        if self.mac { "⌃Tab for the next tab" } else { "Ctrl+Tab for the next tab" }
+    }
+
     /// The form's Cancel button: Esc.
     pub fn cancel_settings(&mut self) -> Vec<Effect> {
         let mut fx = Vec::new();
@@ -1425,9 +1505,14 @@ impl App {
                 }
                 return yes || no;
             }
-            Overlay::Onboarding => return false, // can't be cancelled; all keys go to the form
-            Overlay::Settings => {
-                if key == "Escape" {
+            // The form's fields take the rest. Ctrl+Tab goes round its tabs; on a Mac Control+Tab, as ⌘Tab is
+            // the app switcher. Onboarding can't be cancelled.
+            Overlay::Settings | Overlay::Onboarding => {
+                if key == "Tab" && (press.ctrl || press.meta) {
+                    self.step_settings_section(if press.shift { -1 } else { 1 });
+                    return true;
+                }
+                if key == "Escape" && self.overlay == Overlay::Settings {
                     self.close_settings(None, fx);
                     return true;
                 }
@@ -1605,15 +1690,22 @@ impl App {
             }
             Outcome::SettingsLoaded { values, problem } => {
                 if self.in_settings() {
-                    self.settings = Some(SettingsForm { values, problem, error: String::new(), checking: false });
+                    self.settings = Some(SettingsForm {
+                        values,
+                        problem,
+                        error: String::new(),
+                        checking: false,
+                        section: SettingsSection::default(),
+                    });
                 }
             }
             Outcome::SettingsSaved(result) => match result {
                 Ok(status) => self.close_settings(Some(status), &mut fx),
-                Err(message) => {
+                Err(SettingsError { section, message }) => {
                     if let Some(form) = self.settings.as_mut() {
                         form.error = message;
                         form.checking = false;
+                        form.section = section.unwrap_or(form.section);
                     }
                 }
             },

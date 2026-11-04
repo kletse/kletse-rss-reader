@@ -9,7 +9,7 @@
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
-use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsValues, ToastKind};
+use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsSection, SettingsValues, ToastKind};
 use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::keys;
@@ -165,6 +165,10 @@ enum Command {
         readeck_token: String,
     },
     CancelSettings,
+    /// A click on a tab of the settings form, by its name.
+    SettingsSection {
+        section: String,
+    },
     /// The search box's Enter.
     Search {
         query: String,
@@ -282,10 +286,23 @@ struct Settings {
     problem: String,
     error: String,
     checking: bool,
+    /// The tab on screen, by name.
+    section: &'static str,
+    /// Every tab, in order.
+    sections: Vec<Tab>,
+    /// What switches tabs, next to them.
+    tabs_hint: &'static str,
     /// Bumped when `values` is sent: the form fills in from them once, then keeps what is typed.
     serial: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     values: Option<Values>,
+}
+
+#[derive(Serialize)]
+struct Tab {
+    name: &'static str,
+    title: &'static str,
+    note: &'static str,
 }
 
 #[derive(Serialize)]
@@ -383,6 +400,12 @@ impl Core {
                 readeck_token,
             }),
             Command::CancelSettings => self.app.cancel_settings(),
+            Command::SettingsSection { section } => {
+                if let Some(section) = SettingsSection::from_name(&section) {
+                    self.app.show_settings_section(section);
+                }
+                Vec::new()
+            }
             Command::Search { query } => self.app.search(&query),
             Command::CancelSearch => {
                 self.app.cancel_search();
@@ -603,6 +626,12 @@ impl Core {
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
             checking: form.checking,
+            section: form.section.name(),
+            sections: SettingsSection::ALL
+                .iter()
+                .map(|s| Tab { name: s.name(), title: s.title(), note: s.note() })
+                .collect(),
+            tabs_hint: self.app.settings_tabs_hint(),
             serial: self.settings_serial + u64::from(values.is_some()),
             values,
         };
@@ -745,6 +774,27 @@ mod tests {
         }
         assert_eq!((state["searching"].as_bool(), state["search_query"].as_str()), (Some(true), Some("watch")));
         assert_eq!(state["picker"]["newest_first"], false);
+
+        // Settings open on the Server tab, with every tab listed; a click on one switches, and so does Control+Tab.
+        send(core, r#"{"cmd":"key","key":","}"#);
+        for _ in 0..200 {
+            state = send(core, r#"{"cmd":"pump"}"#)["state"].clone();
+            if state["settings"].is_object() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(state["settings"]["section"], "server");
+        let tabs: Vec<_> =
+            state["settings"]["sections"].as_array().unwrap().iter().map(|t| t["title"].clone()).collect();
+        assert_eq!(tabs, ["Server", "Readeck"]);
+        let clicked = send(core, r#"{"cmd":"settings_section","section":"readeck"}"#);
+        assert_eq!(clicked["state"]["settings"]["section"], "readeck");
+        let back = send(core, r#"{"cmd":"key","key":"Tab","meta":true,"typing":true}"#);
+        assert_eq!(
+            (back["used"].as_bool(), back["state"]["settings"]["section"].as_str()),
+            (Some(true), Some("server"))
+        );
         // SAFETY: the core is not used after this.
         drop(unsafe { Box::from_raw(core) });
     }

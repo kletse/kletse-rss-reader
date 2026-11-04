@@ -1,8 +1,8 @@
 //! Draws the state in `Ui`, the way the QML does: a top bar, the reader under it, and the overlays over that.
 
 use super::article::{self, ACCENT, DIM, Row};
-use super::ui::{CHOICE, FIELDS, Inline, Picture, SECRET, Ui};
-use crate::app::{Overlay, PickerList, Screen, ToastKind};
+use super::ui::{CHOICE, FIELDS, Inline, Picture, SECRET, TABS, Ui};
+use crate::app::{Overlay, PickerList, Screen, SettingsSection, ToastKind};
 use crate::paging::Mode;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Position, Rect};
@@ -138,6 +138,7 @@ fn reader(ui: &Ui, frame: &mut Frame, area: Rect) {
 }
 
 fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
+    ui.settings_tabs.clear();
     let Some(form) = ui.app.settings() else { return };
     let (problem, error, checking) = (form.problem.clone(), form.error.clone(), form.checking);
     let first_run = ui.app.overlay() == Overlay::Onboarding;
@@ -151,8 +152,8 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     rows.extend(article::plain(title, BOLD, w));
     rows.push(Row::default());
     let intro = if first_run {
-        "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save \
-         articles for later."
+        "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it on its tab \
+         to save articles for later."
     } else {
         "Changes are checked against your servers before they are saved."
     };
@@ -163,11 +164,38 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         rows.push(Row::default());
     }
 
-    const SECTIONS: [(usize, &str, &str); 4] = [
-        (CHOICE, "Server", "← → to switch"),
+    // The tabs, a row of their own: ← → switch there, and Ctrl+Tab anywhere, where the terminal tells it from Tab.
+    let tabs_row = rows.len();
+    let mut spots = Vec::new();
+    let mut line =
+        vec![Span::raw("  "), if fields.focus == TABS { Span::styled("› ", ACCENTED) } else { Span::raw("  ") }];
+    let mut x = 4;
+    for section in SettingsSection::ALL {
+        let on = section == fields.section;
+        // The same width either way, so the tabs stay put.
+        let label = if on { format!("[ {} ]", section.title()) } else { format!("  {}  ", section.title()) };
+        let width = label.width();
+        spots.push((x, width, section));
+        line.push(Span::styled(label, if on { BOLD } else { DIM }));
+        line.push(Span::raw(" "));
+        x += width + 1;
+    }
+    line.push(Span::styled("  ← → or Ctrl+Tab", DIM));
+    rows.push(Row { line: Line::from(line), ..Row::default() });
+    rows.push(Row::default());
+    // Under the tabs, whichever is open: a failed save opens the one it's about.
+    if !error.is_empty() {
+        rows.extend(article::plain(&error, ERROR, w));
+        rows.push(Row::default());
+    }
+
+    let server = SettingsSection::Server;
+    let readeck = SettingsSection::Readeck;
+    let sections: [(usize, &str, &str); 4] = [
+        (CHOICE, server.title(), server.note()),
         (0, "Miniflux", "required"),
         (2, "Google Reader API", "required"),
-        (5, "Readeck", "optional: leave empty to hide the bookmark button"),
+        (5, readeck.title(), readeck.note()),
     ];
     const LABELS: [&str; FIELDS] =
         ["Miniflux URL", "API key", "Server URL", "Username", "Password", "Readeck URL", "API token"];
@@ -181,10 +209,11 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         "Profile → API Tokens (needs “Bookmarks: write”)",
     ];
     const GREADER_HINT: &str = "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.";
+    const READECK_HINT: &str = "Leave both empty to hide the bookmark button.";
     let mut cursor = None;
-    let shown = fields.shown();
+    let shown: Vec<usize> = fields.shown().into_iter().filter(|&i| i != TABS).collect();
     for (n, &i) in shown.iter().enumerate() {
-        if let Some((_, title, note)) = SECTIONS.iter().find(|(first, ..)| *first == i) {
+        if let Some((_, title, note)) = sections.iter().find(|(first, ..)| *first == i) {
             let line = Line::from(vec![Span::styled(*title, ACCENTED), Span::styled(format!(" · {note}"), DIM)]);
             rows.push(Row { line, ..Row::default() });
         }
@@ -224,23 +253,35 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             cursor = Some((rows.len(), 4 + at));
         }
         rows.push(Row { line: Line::from(vec![Span::raw("  "), mark, value]), ..Row::default() });
-        if i == 2 {
+        let hint = match i {
+            2 => Some(GREADER_HINT),
+            6 => Some(READECK_HINT),
+            _ => None,
+        };
+        if let Some(hint) = hint {
             let indent = Span::raw("    ");
-            rows.extend(article::prefixed(article::plain(GREADER_HINT, DIM, w.saturating_sub(4)), &indent, &indent));
+            rows.extend(article::prefixed(article::plain(hint, DIM, w.saturating_sub(4)), &indent, &indent));
         }
         if n + 1 < shown.len() {
             rows.push(Row::default());
         }
     }
     rows.push(Row::default());
-    if !error.is_empty() {
-        rows.extend(article::plain(&error, ERROR, w));
-        rows.push(Row::default());
-    }
     let action = if first_run { "Enter to connect" } else { "Enter to save · Esc to cancel" };
     let hint = if checking { "Checking…".to_string() } else { format!("{action} · Tab for the next field") };
     rows.extend(article::plain(&hint, DIM, w));
     draw_rows(frame, &rows, column);
+    if let Ok(y) = u16::try_from(tabs_row)
+        && y < column.height
+    {
+        ui.settings_tabs = spots
+            .into_iter()
+            .filter_map(|(x, width, section)| {
+                let (x, width) = (u16::try_from(x).ok()?, u16::try_from(width).ok()?);
+                Some((Rect::new(column.x + x, column.y + y, width, 1).intersection(column), section))
+            })
+            .collect();
+    }
     if let Some((row, x)) = cursor
         && !checking
         && let (Ok(row), Ok(x)) = (u16::try_from(row), u16::try_from(x))

@@ -68,6 +68,8 @@ final class Model {
     func closeHelp() { send(["cmd": "close_help"]) }
     func openLink(_ url: String) { send(["cmd": "open_link", "url": url]) }
     func cancelSettings() { send(["cmd": "cancel_settings"]) }
+    /// A click on a tab of the settings form; the core switches, and the next state shows it.
+    func settingsSection(_ name: String) { send(["cmd": "settings_section", "section": name]) }
     func search(_ query: String) { send(["cmd": "search", "query": query]) }
     func cancelSearch() { send(["cmd": "cancel_search"]) }
     func viewImage(_ src: String) { send(["cmd": "view_image", "src": src]) }

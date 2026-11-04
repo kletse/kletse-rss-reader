@@ -6,7 +6,10 @@
 use super::article::{self, Header, Row, Slice, Target};
 use super::editor::Editor;
 use super::images::{self, Answer, Job};
-use crate::app::{App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, display_title, status_name};
+use crate::app::{
+    App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsSection, SettingsValues, Status, display_title,
+    status_name,
+};
 use crate::config::Server;
 use crate::content::{convert, native};
 use crate::keys::Action;
@@ -35,12 +38,14 @@ const LINE: isize = 2;
 const CELLS_PER_FONT_SIZE: u16 = 2;
 
 /// The settings form's text fields: Miniflux URL and API key, Google Reader URL, username and password, Readeck URL
-/// and token. Only the chosen server's are on screen.
+/// and token. Only the open tab's are on screen, and of the server's only the chosen kind's.
 pub const FIELDS: usize = 7;
 /// Which are secrets.
 pub const SECRET: [bool; FIELDS] = [false, true, false, false, true, false, true];
 /// `Form::focus` on the server choice rather than a field.
 pub const CHOICE: usize = FIELDS;
+/// `Form::focus` on the row of tabs, where ← → switch: terminals often can't tell Ctrl+Tab from Tab.
+pub const TABS: usize = FIELDS + 1;
 const MINIFLUX_FIELDS: [usize; 2] = [0, 1];
 const GREADER_FIELDS: [usize; 3] = [2, 3, 4];
 const READECK_FIELDS: [usize; 2] = [5, 6];
@@ -75,19 +80,38 @@ pub enum Inline {
 /// The settings form's fields. The form starts from the saved values once, then keeps what is typed.
 pub struct Form {
     pub server: Server,
+    /// The app's tab, as of the last `sync_fields`.
+    pub section: SettingsSection,
     pub fields: [Editor; FIELDS],
-    /// A field's index, or `CHOICE`.
+    /// A field's index, `CHOICE` or `TABS`.
     pub focus: usize,
 }
 
 impl Form {
-    /// What's on screen, top to bottom: the server choice, its fields, then Readeck's.
+    /// What's on screen, top to bottom: the tabs, then on Server the server choice and the chosen kind's fields,
+    /// on Readeck its fields.
     pub fn shown(&self) -> Vec<usize> {
-        let server: &[usize] = match self.server {
+        let section: Vec<usize> = match self.section {
+            SettingsSection::Server => std::iter::once(CHOICE).chain(self.server_fields().iter().copied()).collect(),
+            SettingsSection::Readeck => READECK_FIELDS.to_vec(),
+        };
+        std::iter::once(TABS).chain(section).collect()
+    }
+
+    fn server_fields(&self) -> &'static [usize] {
+        match self.server {
             Server::Miniflux => &MINIFLUX_FIELDS,
             Server::GReader => &GREADER_FIELDS,
+        }
+    }
+
+    /// The open tab's first empty field, or its last.
+    fn focus_first(&mut self) {
+        let own = match self.section {
+            SettingsSection::Server => self.server_fields(),
+            SettingsSection::Readeck => &READECK_FIELDS,
         };
-        std::iter::once(CHOICE).chain(server.iter().copied()).chain(READECK_FIELDS).collect()
+        self.focus = own.iter().copied().find(|&i| self.fields[i].text().is_empty()).unwrap_or(own[own.len() - 1]);
     }
 
     /// Tab and Shift+Tab, round the fields on screen.
@@ -157,6 +181,8 @@ pub struct Ui {
     pub picker_top: usize,
     pub picker_rows: Rect,
     pub picker_panel: Rect,
+    /// Where the settings form's tabs are, for clicks.
+    pub settings_tabs: Vec<(Rect, SettingsSection)>,
     pub search: Option<Editor>,
     pub form: Option<Form>,
     pub shot: Option<Shot>,
@@ -216,6 +242,7 @@ impl Ui {
             picker_top: 0,
             picker_rows: Rect::default(),
             picker_panel: Rect::default(),
+            settings_tabs: Vec::new(),
             search: None,
             form: None,
             shot: None,
@@ -378,13 +405,32 @@ impl Ui {
         let Some(form) = &mut self.form else {
             return self.forward(event); // Esc, while the values are on their way
         };
+        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         match event.code {
             KeyCode::Esc => self.forward(event),
+            // Ctrl+Tab, where the terminal tells it from Tab: the app's, as in the window.
+            KeyCode::Tab | KeyCode::BackTab if ctrl => {
+                let press = KeyPress {
+                    key: "Tab".into(),
+                    ctrl: true,
+                    shift: event.code == KeyCode::BackTab || event.modifiers.contains(KeyModifiers::SHIFT),
+                    typing: form.focus < FIELDS,
+                    ..KeyPress::default()
+                };
+                let (_, fx) = self.app.key(&press);
+                self.run(fx);
+                self.sync_fields();
+            }
             KeyCode::Tab | KeyCode::Down => form.step(1),
             KeyCode::BackTab | KeyCode::Up => form.step(-1),
             KeyCode::Enter => {
                 let fx = self.app.submit_settings(form.values());
                 self.run(fx);
+            }
+            // On the tabs, either arrow switches, and the tabs keep the cursor.
+            KeyCode::Left | KeyCode::Right if form.focus == TABS => {
+                self.app.step_settings_section(if event.code == KeyCode::Left { -1 } else { 1 });
+                self.sync_fields();
             }
             // The server choice: either arrow, or Space, switches.
             KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus == CHOICE => {
@@ -393,7 +439,7 @@ impl Ui {
                     Server::GReader => Server::Miniflux,
                 };
             }
-            _ if form.focus == CHOICE => {}
+            _ if form.focus >= FIELDS => {}
             _ => form.fields[form.focus].key(event),
         }
     }
@@ -403,7 +449,7 @@ impl Ui {
         if let Some(editor) = &mut self.search {
             editor.paste(text);
         } else if let Some(form) = &mut self.form
-            && form.focus != CHOICE
+            && form.focus < FIELDS
         {
             form.fields[form.focus].paste(text);
         }
@@ -454,6 +500,16 @@ impl Ui {
             }
             Overlay::Help => self.app.close_help_overlay(),
             Overlay::Image => self.app.close_viewer(),
+            Overlay::Settings | Overlay::Onboarding => {
+                let spot = ratatui::layout::Position::new(column, row);
+                if let Some(&(_, section)) = self.settings_tabs.iter().find(|(area, _)| area.contains(spot)) {
+                    self.app.show_settings_section(section);
+                    self.sync_fields();
+                    if let Some(form) = &mut self.form {
+                        form.focus_first();
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -560,6 +616,16 @@ impl Ui {
         }
         match self.app.settings() {
             Some(form) if self.app.in_settings() => {
+                // Another tab: Ctrl+Tab, a click, or a failed save about it. The cursor goes to its first empty
+                // field, unless it's on the tabs, being switched with ← →.
+                if let Some(shown) = &mut self.form
+                    && shown.section != form.section
+                {
+                    shown.section = form.section;
+                    if shown.focus != TABS {
+                        shown.focus_first();
+                    }
+                }
                 if self.form.is_none() {
                     let v = &form.values;
                     let fields = [
@@ -571,10 +637,14 @@ impl Ui {
                         &v.readeck_url,
                         &v.readeck_token,
                     ];
-                    // The first empty field of the chosen server, or its last.
-                    let own: &[usize] = if v.server == Server::GReader { &GREADER_FIELDS } else { &MINIFLUX_FIELDS };
-                    let focus = own.iter().copied().find(|&i| fields[i].is_empty()).unwrap_or(own[own.len() - 1]);
-                    self.form = Some(Form { server: v.server, fields: fields.map(|text| Editor::new(text)), focus });
+                    let mut shown = Form {
+                        server: v.server,
+                        section: form.section,
+                        fields: fields.map(|text| Editor::new(text)),
+                        focus: TABS,
+                    };
+                    shown.focus_first();
+                    self.form = Some(shown);
                 }
             }
             _ => self.form = None,

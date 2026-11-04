@@ -94,9 +94,22 @@ struct SettingsInfo: Decodable {
     let problem: String
     let error: String
     let checking: Bool
+    /// The tab on screen, by name: "server" or "readeck".
+    let section: String
+    /// Every tab, in order.
+    let sections: [SettingsTab]
+    /// What switches tabs, next to them.
+    let tabsHint: String
     /// Bumped when `values` comes along: the form fills in from them once.
     let serial: Int
     let values: SettingsValues?
+}
+
+struct SettingsTab: Decodable, Identifiable {
+    let name: String
+    let title: String
+    let note: String
+    var id: String { name }
 }
 
 struct SettingsValues: Decodable {

@@ -4,9 +4,10 @@
 #![allow(clippy::unwrap_used)]
 
 use super::draw;
+use super::editor::Editor;
 use super::images::{self, Job};
 use super::ui::{Inline, Ui};
-use crate::app::{Effect, Outcome, Overlay, Screen, Status};
+use crate::app::{Effect, Outcome, Overlay, Screen, SettingsSection, Status};
 use crate::backend::Backend;
 use crate::prefs::Prefs;
 use base64::Engine as _;
@@ -299,7 +300,7 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
     s.keys("x");
     let form = s.ui.form.as_ref().unwrap();
     assert!(form.fields[2].text().ends_with('x'));
-    assert_eq!(form.shown(), [super::ui::CHOICE, 2, 3, 4, 5, 6]);
+    assert_eq!(form.shown(), [super::ui::TABS, super::ui::CHOICE, 2, 3, 4], "the Server tab");
     s.key(KeyCode::BackTab).key(KeyCode::Left);
     s.settle();
     assert!(s.shows("● Miniflux"), "{}", s.text());
@@ -310,6 +311,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     let mut s = Screenful::reading(100, 30);
     s.keys(",");
     assert_eq!(s.ui.app.screen(), Screen::Settings);
+    s.event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
     let form = s.ui.form.as_mut().unwrap();
     form.focus = 6; // Readeck's token
     s.keys("j");
@@ -318,12 +320,87 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     assert!(s.ui.form.as_ref().unwrap().fields[6].text().ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::CHOICE, "round to the top: the server choice");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::TABS, "round to the top: the tabs");
+    let texts =
+        |s: &Screenful| s.ui.form.as_ref().unwrap().fields.iter().map(|f| f.text().to_string()).collect::<Vec<_>>();
+    let before = texts(&s);
+    s.keys("x");
+    s.ui.paste("y");
+    assert_eq!(texts(&s), before, "nothing is typed into the tabs");
     s.key(KeyCode::BackTab);
     assert_eq!(s.ui.form.as_ref().unwrap().focus, 6);
     s.key(KeyCode::Esc);
     assert!(s.ui.form.is_none());
     assert!(s.shows("1 / 8"), "back on the article: {}", s.text());
+}
+
+fn tab(s: &Screenful) -> SettingsSection {
+    s.ui.app.settings().unwrap().section
+}
+
+#[test]
+fn the_settings_form_has_tabs_switched_with_ctrl_tab_or_on_their_row() {
+    let mut s = Screenful::reading(100, 40);
+    s.keys(",");
+    assert_eq!(tab(&s), SettingsSection::Server);
+    assert!(s.shows("    [ Server ]   Readeck  "), "the cursor is in a field: {}", s.text());
+    assert!(s.shows("← → or Ctrl+Tab") && s.shows("Miniflux URL") && !s.shows("Readeck URL"), "{}", s.text());
+    let form = s.ui.form.as_mut().unwrap();
+    form.fields[5] = Editor::new("");
+    form.fields[6] = Editor::new("");
+    let server_url = form.fields[0].text().to_string();
+
+    // From a field, Ctrl+Tab: the Readeck tab, the cursor in its first empty field.
+    s.event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
+    assert_eq!(tab(&s), SettingsSection::Readeck);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, 5);
+    assert!(s.shows("[ Readeck ]") && s.shows("Readeck URL") && !s.shows("Miniflux URL"), "{}", s.text());
+    s.keys("https://r.example.com").key(KeyCode::Tab).keys("tok");
+    let form = s.ui.form.as_ref().unwrap();
+    assert_eq!((form.fields[5].text(), form.fields[6].text()), ("https://r.example.com", "tok"));
+    assert_eq!(form.fields[0].text(), server_url, "the other tab's fields are kept");
+    assert_eq!(form.shown(), [super::ui::TABS, 5, 6]);
+
+    // On the row of tabs, ← → switch, and the cursor stays there for the next press.
+    s.key(KeyCode::Tab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::TABS);
+    s.key(KeyCode::Right);
+    assert_eq!(tab(&s), SettingsSection::Server);
+    assert!(s.shows("› [ Server ]") && s.shows("Miniflux URL"), "{}", s.text());
+    s.key(KeyCode::Left);
+    assert_eq!(tab(&s), SettingsSection::Readeck);
+    s.event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+    assert_eq!(tab(&s), SettingsSection::Server, "Ctrl+Shift+Tab goes back");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::TABS);
+    s.key(KeyCode::Tab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::CHOICE, "Tab goes on into the open tab");
+    s.key(KeyCode::Esc);
+    assert_eq!(s.ui.app.overlay(), Overlay::None, "Esc still cancels");
+}
+
+#[test]
+fn a_click_on_a_tab_switches_to_it() {
+    let mut s = Screenful::reading(100, 40);
+    s.keys(",");
+    let (area, section) = s.ui.settings_tabs[1];
+    assert_eq!(section, SettingsSection::Readeck);
+    s.mouse(MouseEventKind::Down(MouseButton::Left), area.x + 1, area.y);
+    assert_eq!(tab(&s), SettingsSection::Readeck);
+    assert!([5, 6].contains(&s.ui.form.as_ref().unwrap().focus), "in one of its fields");
+    assert!(s.shows("Readeck URL"), "{}", s.text());
+}
+
+#[test]
+fn a_failed_save_opens_the_tab_its_about() {
+    let mut s = Screenful::reading(100, 40);
+    s.keys(",");
+    let form = s.ui.form.as_mut().unwrap();
+    form.fields[5] = Editor::new("https://r.example.com");
+    form.fields[6] = Editor::new("");
+    s.key(KeyCode::Enter);
+    assert_eq!(tab(&s), SettingsSection::Readeck);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, 6, "the empty one");
+    assert!(s.shows("Fill in both Readeck fields, or leave both empty."), "{}", s.text());
 }
 
 #[test]

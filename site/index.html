@@ -30,7 +30,7 @@
 :root {
   --bg: #f7f4ec; --raised: #ece8dd; --sunk: #e4dfd2;
   --fg: #2f2e2b; --dim: #6f6c66; --bright: #141311; --line: #d9d5cc;
-  --accent: #bf3f0c; --logo: #ff6a2b; --on-logo: #1e130d; --icon: #f2efe6;
+  --accent: #bf3f0c; --logo: #ff6a2b; --on-logo: #1e130d;
   --scrim: rgb(47 46 43 / .45);
   --text: "Literata", Georgia, serif;
   --head: "Inter", system-ui, sans-serif;
@@ -45,7 +45,7 @@
   :root {
     --bg: #1e130d; --raised: #2d1f17; --sunk: #160d09;
     --fg: #e2dcd3; --dim: #a09488; --bright: #ffffff; --line: #4a3325;
-    --accent: #ff8a3d; --logo: #ff8a3d; --on-logo: #1e130d; --icon: #160d09;
+    --accent: #ff8a3d; --logo: #ff8a3d; --on-logo: #1e130d;
     --scrim: rgb(10 5 3 / .6);
     color-scheme: dark;
   }
@@ -105,7 +105,6 @@ h1 { font-size: clamp(2.75rem, 8.2vw, 4.75rem); line-height: 1.04; font-weight: 
 h2 { font-size: clamp(1.875rem, 5vw, 2.625rem); line-height: 1.12; font-weight: 800; letter-spacing: -.028em; }
 h3 { font-size: 1.1875rem; line-height: 1.3; font-weight: 700; letter-spacing: -.012em; }
 .lede { font-size: clamp(1.1875rem, 2.6vw, 1.375rem); line-height: 1.6; }
-.icon { width: 4.5rem; height: 4.5rem; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; margin-top: .5rem; font: 400 .875rem/1.4 var(--mono); }
 .button {
@@ -225,12 +224,6 @@ dialog::backdrop { background: var(--scrim); }
 <main>
   <article class="item" id="idea" data-title="One unread article at a time">
     <div class="col">
-      <svg class="icon" viewBox="0 0 512 512" role="img" aria-label="The Onward logo">
-        <rect width="512" height="512" rx="112" fill="var(--icon)"/>
-        <circle cx="92" cy="256" r="20" fill="var(--logo)" fill-opacity=".5"/>
-        <circle cx="164" cy="256" r="32" fill="var(--logo)" fill-opacity=".75"/>
-        <circle cx="330" cy="256" r="76" fill="none" stroke="var(--logo)" stroke-width="52"/>
-      </svg>
       <div class="meta"><span>Onward · for Omarchy, macOS and any terminal</span><span class="tag">UNREAD</span></div>
       <h1>One unread article at a time.</h1>
       <p class="lede">Oldest first. Keyboard all the way. Onward is a small reader for your Miniflux or FreshRSS server that shows the article and nothing else.</p>

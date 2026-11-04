@@ -866,6 +866,36 @@ fn h_in_the_reader_opens_the_picker_in_the_other_mode_and_esc_goes_back_to_the_o
     assert_eq!(h.app.mode(), Mode::Unread);
 }
 
+#[test]
+fn the_pickers_switch_goes_to_the_mode_it_names_and_stays_there_when_pressed_again() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    h.key("j");
+    let cursor = h.app.picker_cursor();
+
+    let fx = h.app.action(keys::button_action("unread").unwrap());
+    assert!(fx.is_empty());
+    assert_eq!(h.app.picker_mode(), Mode::Unread);
+    assert_eq!(h.app.picker_cursor(), cursor);
+
+    let fx = h.app.action(keys::button_action("history").unwrap());
+    h.run(fx);
+    assert_eq!(h.app.picker_mode(), Mode::History);
+    assert_eq!(h.app.picker_cursor(), 0);
+    let fx = h.app.action(keys::button_action("history").unwrap());
+    assert!(fx.is_empty());
+    assert_eq!(h.app.picker_mode(), Mode::History);
+}
+
+#[test]
+fn the_pickers_refresh_button_refreshes_as_r_does() {
+    let mut h = Harness::new(items(2));
+    h.start();
+    let fx = h.app.action(keys::button_action("refresh").unwrap());
+    assert_eq!(fx, [Effect::RefreshFeeds]);
+    assert_eq!(h.toast(), Some("Refreshing feeds…"));
+}
+
 // ---- Overlays -----------------------------------------------------------------------
 
 #[test]

@@ -2,6 +2,8 @@
 //! names them ("j", "A", "ArrowDown", " ", "Escape"); the QML side translates Qt's key events into these names.
 //! A test keeps the help and the keymaps from drifting apart.
 
+use crate::paging::Mode;
+
 /// What a key does. Some depend on where you are (`Space`, `Enter`); the app decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -29,6 +31,8 @@ pub enum Action {
     /// `v`: the article's images, one at a time.
     ViewImages,
     ToggleMode,
+    /// The picker's switch: unread or history, staying put when it's on that one already.
+    PickerMode(Mode),
     OpenPicker,
     Narrower,
     Wider,
@@ -96,7 +100,9 @@ pub fn button_action(button: &str) -> Option<Action> {
         "prev" => Action::Prev,
         "picker" => Action::OpenPicker,
         "readeck" => Action::SaveToReadeck,
-        "mode" => Action::ToggleMode,
+        "unread" => Action::PickerMode(Mode::Unread),
+        "history" => Action::PickerMode(Mode::History),
+        "refresh" => Action::PickerRefresh,
         "settings" => Action::Settings,
         "help" => Action::Help,
         "search" => Action::Search,

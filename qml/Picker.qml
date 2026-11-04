@@ -15,8 +15,6 @@ Panel {
     }
 
     readonly property real rowHeight: Math.ceil(metrics.height) + 10
-    /// A narrow window: the text buttons on the title row become icons.
-    readonly property bool compact: panelWidth < 460
 
     FontMetrics {
         id: metrics
@@ -24,37 +22,76 @@ Panel {
         font.pixelSize: 14
     }
 
-    title: model.pickerHistory ? "History" : "Feeds"
     onBackdrop: model.pickerBackdrop()
 
+    titleControls: [
+        Button {
+            ui: picker.ui
+            text: "Unread"
+            primary: !picker.model.pickerHistory
+            tip: "Unread items (h)"
+            onClicked: picker.model.press("unread")
+        },
+        Button {
+            ui: picker.ui
+            text: "History"
+            primary: picker.model.pickerHistory
+            tip: "Read items, newest first (h)"
+            onClicked: picker.model.press("history")
+        }
+    ]
+
     actions: [
+        Button {
+            ui: picker.ui
+            visible: picker.model.fetches
+            iconPath: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5"
+            tip: "Refresh feeds (r)"
+            onClicked: picker.model.press("refresh")
+        },
         Button {
             ui: picker.ui
             iconPath: "M21 21l-4.3-4.3 M19 11a8 8 0 1 1-16 0a8 8 0 1 1 16 0z"
             tip: "Search all feeds (/)"
             onClicked: picker.model.press("search")
-        },
+        }
+    ]
+
+    footer: [
         Button {
             ui: picker.ui
             visible: !picker.model.pickerHistory
-            iconPath: picker.compact ? "M3 16l4 4 4-4 M7 20V4 M21 8l-4-4-4 4 M17 4v16" : ""
-            text: picker.compact ? "" : picker.model.newestFirst ? "Newest first" : "Oldest first"
+            anchors.verticalCenter: parent.verticalCenter
+            iconPath: "M3 16l4 4 4-4 M7 20V4 M21 8l-4-4-4 4 M17 4v16"
+            text: picker.model.newestFirst ? "Newest first" : "Oldest first"
             tip: picker.model.newestFirst ? "Unread items newest first (s)" : "Unread items oldest first (s)"
             onClicked: picker.model.press("order")
         },
-        Button { ui: picker.ui; text: "?"; tip: "Keys (?)"; onClicked: picker.model.press("help") },
-        Button {
-            ui: picker.ui
-            text: picker.model.pickerHistory ? "Unread" : "History"
-            tip: picker.model.pickerHistory ? "Unread items (h)" : "Read items, newest first (h)"
-            onClicked: picker.model.press("mode")
+        // History has only the one order, so this says it rather than offering a choice.
+        Text {
+            visible: picker.model.pickerHistory
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Newest first"
+            color: picker.model.fgDim
+            font.family: picker.ui.uiFont
+            font.pixelSize: 14
         },
-        Button {
-            ui: picker.ui
-            iconPath: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0z"
-            text: picker.compact ? "" : "Settings"
-            tip: "Settings (,)"
-            onClicked: picker.model.press("settings")
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right
+            spacing: 8
+            Button {
+                ui: picker.ui
+                iconPath: "M10 8h.01 M12 12h.01 M14 8h.01 M16 12h.01 M18 8h.01 M6 8h.01 M7 16h10 M8 12h.01 M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z"
+                tip: "Keys (?)"
+                onClicked: picker.model.press("help")
+            }
+            Button {
+                ui: picker.ui
+                iconPath: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0z"
+                tip: "Settings (,)"
+                onClicked: picker.model.press("settings")
+            }
         }
     ]
 
@@ -82,7 +119,7 @@ Panel {
         width: parent.width
         // From the rows rather than contentHeight, which depends on the height through the delegates made.
         height: visible ? Math.min(picker.rows.reduce((h, r, i) => h + picker.rowHeight + (r.depth === 0 && i > 0 ? 4 : 0), 12),
-                                   picker.height * 0.8 - 42) : 0
+                                   picker.height * 0.8 - 82) : 0
         topMargin: 6
         bottomMargin: 6
         clip: true

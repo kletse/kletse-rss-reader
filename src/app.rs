@@ -1555,6 +1555,8 @@ impl App {
             Action::FlipOrder => self.flip_order(fx),
             Action::ViewImages => self.open_viewer(None),
             Action::ToggleMode => self.toggle_mode(fx),
+            Action::PickerMode(mode) if mode == self.picker_mode => {}
+            Action::PickerMode(mode) => self.open_picker(Some(mode), fx),
             Action::OpenPicker => self.open_picker(None, fx),
             Action::Narrower => self.change_prefs(Prefs::narrower, fx),
             Action::Wider => self.change_prefs(Prefs::wider, fx),

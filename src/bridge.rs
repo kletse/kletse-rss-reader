@@ -136,7 +136,8 @@ pub mod qobject {
             typing: bool,
             at_bottom: bool,
         ) -> bool;
-        /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help", "search", "order".
+        /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
+        /// "search", "order".
         #[qinvokable]
         fn press(self: Pin<&mut Model>, button: &QString);
         #[qinvokable]

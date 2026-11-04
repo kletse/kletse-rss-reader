@@ -65,7 +65,8 @@ final class Model {
         ])?.used ?? false
     }
 
-    /// A button: "next", "prev", "picker", "readeck", "mode", "settings", "help", "search", "order".
+    /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
+    /// "search", "order".
     func press(_ button: String) { send(["cmd": "press", "button": button]) }
     func chooseRow(_ row: Int) { send(["cmd": "choose_row", "row": row]) }
     func pickerBackdrop() { send(["cmd": "picker_backdrop"]) }

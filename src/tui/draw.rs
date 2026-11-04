@@ -299,7 +299,7 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let swap = if history { "h unread" } else { "h history" };
     let refresh = if ui.app.fetches() { " · r refresh" } else { "" };
     let mut block = Block::bordered()
-        .title(Line::styled(if history { " History " } else { " Feeds " }, BOLD))
+        .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
         .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));

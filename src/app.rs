@@ -16,9 +16,13 @@
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
 use crate::detect::{Address, Api, Detected};
-use crate::feeds::{self, Articles, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
+use crate::feeds::{
+    self, Articles, Capabilities, Category, Changed, Counts, DeleteCategory, Destination, Entry, EntryPage,
+    EntryStatus, FeedChange, FeedList, Selection,
+};
 use crate::greader;
 use crate::keys::{self, Action};
+use crate::manage::{self, Manage, ManageView, Notice, Row as ManageRow, Stage as ManageStage, Target};
 use crate::miniflux::MintFailed;
 use crate::opml::ExportFailed;
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
@@ -52,6 +56,8 @@ pub enum Overlay {
     Image,
     /// Importing or exporting a feed list.
     Transfer,
+    /// Changing the feeds.
+    Manage,
 }
 
 impl Overlay {
@@ -67,6 +73,7 @@ impl Overlay {
             Overlay::Search => "search",
             Overlay::Image => "image",
             Overlay::Transfer => "transfer",
+            Overlay::Manage => "manage",
         }
     }
 }
@@ -514,9 +521,10 @@ pub struct Viewer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterOpen {
     Nothing,
-    /// `o`: say so, and mark the article read.
+    /// `o`: say so, and mark the article read, if it's still at `index`: the list can change meanwhile.
     MarkRead {
         index: usize,
+        id: i64,
     },
 }
 
@@ -626,6 +634,20 @@ pub enum Effect {
         job: u64,
         path: String,
         replace: bool,
+    },
+    /// Every feed and category. `serial` is compared when the answer comes: a later change has a newer list.
+    LoadFeedList {
+        serial: u64,
+    },
+    /// Asks the server what's in a category now, for the question before deleting it.
+    CountCategory {
+        job: u64,
+        category: Category,
+    },
+    /// Makes a change and looks at the list afterwards. `job` as for `ImportFeeds`.
+    ChangeFeeds {
+        job: u64,
+        change: FeedChange,
     },
     SavePrefs(Prefs),
     ScrollPage {
@@ -743,6 +765,20 @@ pub enum Outcome {
         job: u64,
         result: Result<Exported, ExportFailed>,
     },
+    FeedList {
+        serial: u64,
+        result: Result<FeedList, String>,
+    },
+    CategoryCounted {
+        job: u64,
+        category: Category,
+        result: Result<FeedList, String>,
+    },
+    FeedsChanged {
+        job: u64,
+        change: FeedChange,
+        result: Result<Changed, String>,
+    },
     /// The backend switched, and this is what it has now.
     SamplesSwitched {
         on: bool,
@@ -789,6 +825,12 @@ enum Pending {
     /// An export onto a file that's there.
     ReplaceFile {
         path: String,
+    },
+    /// A change to the feeds, once it's been said what it costs. `lasting`: what goes can't be brought back, so only
+    /// `y` says yes, and Enter pressed once too often doesn't.
+    Change {
+        change: FeedChange,
+        lasting: bool,
     },
 }
 
@@ -855,6 +897,12 @@ pub struct App {
     before_transfer: Overlay,
     /// A change of server makes an import or export in flight a no-op: each remembers this and compares.
     latest_transfer: u64,
+    /// The feeds panel, from opening until it's closed. A change under way outlives that, and its answer is a toast.
+    manage: Option<Manage>,
+    /// As `latest_transfer`, for changes to the feeds.
+    latest_manage: u64,
+    /// A change, or asking again, makes a list in flight a no-op.
+    latest_list: u64,
     /// See `Step`; means nothing outside `Overlay::Onboarding`.
     step: Step,
     /// How far `Step::Connect` has got.
@@ -921,6 +969,9 @@ impl App {
             transfer: None,
             before_transfer: Overlay::None,
             latest_transfer: 0,
+            manage: None,
+            latest_manage: 0,
+            latest_list: 0,
             step: Step::Welcome,
             connect: Connect::default(),
             latest_probe: 0,
@@ -1045,12 +1096,23 @@ impl App {
         self.no_feeds() && self.capabilities.import_feeds
     }
 
+    /// The picker's empty account leads to adding a feed, where the server can.
+    pub fn offers_add(&self) -> bool {
+        self.no_feeds() && self.capabilities.feeds.add
+    }
+
     /// What the picker says when it has no rows to show.
     pub fn picker_empty_text(&self) -> String {
-        if self.offers_import() {
+        if self.offers_add() && self.offers_import() {
+            "No feeds here yet. Press a to add one by its address. Leaving another reader? Export an OPML file from it, \
+             and press i to import that."
+                .into()
+        } else if self.offers_add() {
+            "No feeds here yet. Press a to add one by its address.".into()
+        } else if self.offers_import() {
             "No feeds here yet. Leaving another reader? Export an OPML file from it, and press i to import that.".into()
         } else if self.no_feeds() {
-            format!("No feeds here yet. {} Until then, add feeds on the server's own page.", feeds::IMPORT_REFUSED)
+            format!("No feeds here yet. {} {}", feeds::IMPORT_REFUSED, feeds::MANAGE_REFUSED)
         } else if self.picker_mode == Mode::History {
             "Nothing read yet. Press h for unread items.".into()
         } else if self.capabilities.refresh {
@@ -1165,6 +1227,24 @@ impl App {
             }
             Some(next) => format!("Press j for {}, Enter for the feeds, k to go back.", next.label),
             None => "Press j or Enter for the feeds, k to go back.".into(),
+        }
+    }
+
+    /// The feeds panel as it stands, while it's open or a change from it is under way.
+    pub fn manage_view(&self) -> Option<ManageView> {
+        self.manage.as_ref().map(|manage| manage.view(self.capabilities))
+    }
+
+    /// The feeds panel is on screen: open, or behind the question before a loss.
+    pub fn manage_shown(&self) -> bool {
+        self.overlay == Overlay::Manage || (self.overlay == Overlay::Confirm && self.before_confirm == Overlay::Manage)
+    }
+
+    /// How to answer the question on screen. Where the answer can't be taken back, Enter isn't one.
+    pub fn confirm_hint(&self) -> &'static str {
+        match self.pending {
+            Some(Pending::Change { lasting: true, .. }) => "y to go ahead · Esc / n to cancel",
+            _ => "Enter / y to confirm · Esc / n to cancel",
         }
     }
 
@@ -1515,8 +1595,8 @@ impl App {
 
     fn open_original(&mut self, fx: &mut Vec<Effect>) {
         if let Some(entry) = self.current() {
-            let url = entry.url.clone();
-            fx.push(Effect::OpenInBrowser { url, then: AfterOpen::MarkRead { index: self.index } });
+            let (url, id) = (entry.url.clone(), entry.id);
+            fx.push(Effect::OpenInBrowser { url, then: AfterOpen::MarkRead { index: self.index, id } });
         }
     }
 
@@ -1532,9 +1612,11 @@ impl App {
         match (result, then) {
             (Err(message), _) => self.toast_error(message),
             (Ok(()), AfterOpen::Nothing) => {}
-            (Ok(()), AfterOpen::MarkRead { index }) => {
+            (Ok(()), AfterOpen::MarkRead { index, id }) => {
                 self.toast_info("Opened in browser");
-                self.set_status(index, EntryStatus::Read, false, fx);
+                if self.queue.get(index).is_some_and(|e| e.id == id) {
+                    self.set_status(index, EntryStatus::Read, false, fx);
+                }
             }
         }
     }
@@ -1993,8 +2075,526 @@ impl App {
                 fx.push(Effect::MarkRowRead { selection, label, up_to });
             }
             Some(Pending::ReplaceFile { path }) if yes => fx.extend(self.start_transfer(path, true)),
+            Some(Pending::Change { change, .. }) if yes => self.start_change(change, fx),
             _ => {}
         }
+    }
+
+    // ---- Changing the feeds ------------------------------------------------
+
+    /// `m` or `a` in the picker, or a button there. With nothing to change, or nothing to change it on, it says so.
+    fn open_manage(&mut self, adding: bool, fx: &mut Vec<Effect>) {
+        if self.overlay != Overlay::Picker {
+            return;
+        }
+        if self.capabilities.samples {
+            return self.toast_info(feeds::SAMPLES_HAVE_NO_FEEDS);
+        }
+        let ops = self.capabilities.feeds;
+        if !(if adding { ops.add } else { ops.any() }) {
+            return self.toast_info(feeds::MANAGE_REFUSED);
+        }
+        self.overlay = Overlay::Manage;
+        let manage = self.manage.get_or_insert_with(Manage::default);
+        if adding && manage.stage == ManageStage::List {
+            manage.stage = ManageStage::Add { into: None, typed: String::new(), error: String::new() };
+        }
+        self.load_feed_list(fx);
+    }
+
+    fn load_feed_list(&mut self, fx: &mut Vec<Effect>) {
+        self.latest_list += 1;
+        fx.push(Effect::LoadFeedList { serial: self.latest_list });
+    }
+
+    /// Esc, or a click beside it: a step back, and off the list, back to the picker. A change on its way carries on.
+    fn manage_back(&mut self, fx: &mut Vec<Effect>) {
+        let Some(manage) = self.manage.as_mut() else { return };
+        match &manage.stage {
+            ManageStage::Working { .. } => self.overlay = Overlay::Picker,
+            ManageStage::List => {
+                self.overlay = Overlay::Picker;
+                self.manage = None;
+                self.load_picker(fx);
+            }
+            _ => manage.stage = ManageStage::List,
+        }
+    }
+
+    /// The panel's Esc, or a click beside it.
+    pub fn cancel_manage(&mut self) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.overlay == Overlay::Manage {
+            self.manage_back(&mut fx);
+        }
+        fx
+    }
+
+    /// What's left of the keys while the panel is up: typing is the field's, and Enter there is `submit_manage`.
+    fn manage_key(&mut self, press: &KeyPress, fx: &mut Vec<Effect>) -> bool {
+        if press.ctrl || press.alt || press.meta {
+            return false;
+        }
+        let key = press.key.as_str();
+        if key == "Escape" {
+            self.manage_back(fx);
+            return true;
+        }
+        match self.manage.as_ref().map(|manage| &manage.stage) {
+            Some(ManageStage::List) if !press.typing => match keys::lookup(keys::MANAGE_KEYS, key) {
+                Some(action) => {
+                    self.act(action, fx);
+                    true
+                }
+                None => false,
+            },
+            Some(ManageStage::Move { .. }) if !press.typing => match key {
+                "Enter" | "ArrowRight" => {
+                    self.choose_destination(fx);
+                    true
+                }
+                "j" | "ArrowDown" => {
+                    self.manage_cursor(1);
+                    true
+                }
+                "k" | "ArrowUp" => {
+                    self.manage_cursor(-1);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn manage_cursor(&mut self, delta: i32) {
+        if let Some(manage) = self.manage.as_mut() {
+            manage.move_cursor(delta);
+        }
+    }
+
+    /// The panel's list, for what goes by a row. Everything else stays on the panel's own stage.
+    fn listing(&mut self) -> Option<&mut Manage> {
+        self.manage.as_mut().filter(|manage| manage.stage == ManageStage::List && manage.list.is_some())
+    }
+
+    fn manage_notice(&mut self, text: &str, worrying: bool) {
+        if let Some(manage) = self.manage.as_mut() {
+            manage.notice = Some(Notice { text: text.to_string(), worrying });
+        }
+    }
+
+    fn manage_add(&mut self) {
+        if !self.capabilities.feeds.add {
+            return;
+        }
+        let Some(manage) = self.listing() else { return };
+        manage.notice = None;
+        let into = manage.category_here();
+        manage.stage = ManageStage::Add { into, typed: String::new(), error: String::new() };
+    }
+
+    fn manage_rename(&mut self) {
+        let ops = self.capabilities.feeds;
+        let Some(manage) = self.listing() else { return };
+        let target = match manage.row() {
+            Some(ManageRow::Feed(feed)) if ops.rename => Target::Feed { id: feed.feed.id, title: feed.feed.title },
+            Some(ManageRow::Category(category)) if ops.rename_category => match manage.category_refusal(&category) {
+                Some(why) => return self.manage_notice(why, false),
+                None => Target::Category(category),
+            },
+            _ => return,
+        };
+        manage.notice = None;
+        let typed = match &target {
+            Target::Feed { title, .. } => title.clone(),
+            Target::Category(category) => category.title.clone(),
+        };
+        manage.stage = ManageStage::Rename { target, typed, error: String::new() };
+    }
+
+    fn manage_move(&mut self) {
+        let ops = self.capabilities.feeds;
+        let Some(manage) = self.listing() else { return };
+        if let Some(ManageRow::Feed(feed)) = manage.row().filter(|_| ops.move_feed) {
+            manage.notice = None;
+            let (id, title, from) = (feed.feed.id, feed.feed.title, feed.feed.category.id);
+            manage.stage = ManageStage::Move { id, title, from, cursor: 0 };
+        }
+    }
+
+    /// `d`: a question first, always. On a category the server is asked what's in it now, as the question has to say,
+    /// and that's only a look.
+    fn manage_delete(&mut self, fx: &mut Vec<Effect>) {
+        let ops = self.capabilities.feeds;
+        let job = self.latest_manage;
+        let Some(manage) = self.listing() else { return };
+        match manage.row() {
+            Some(ManageRow::Feed(feed)) if ops.remove => {
+                let id = feed.feed.id;
+                let question = manage.removing(id);
+                self.confirm(question, Pending::Change { change: FeedChange::RemoveFeed { id }, lasting: true });
+            }
+            Some(ManageRow::Category(category)) if ops.delete_category != DeleteCategory::No => {
+                if let Some(why) = manage.category_refusal(&category) {
+                    return self.manage_notice(why, false);
+                }
+                manage.notice = None;
+                let back = Box::new(ManageStage::List);
+                manage.stage = ManageStage::Working { words: "Looking at what's in it…".into(), back };
+                fx.push(Effect::CountCategory { job, category });
+            }
+            _ => {}
+        }
+    }
+
+    fn category_counted(&mut self, category: Category, result: Result<FeedList, String>) {
+        let ops = self.capabilities.feeds;
+        let shown = self.overlay == Overlay::Manage;
+        let Some(manage) = self.manage.as_mut() else { return };
+        manage.stage = ManageStage::List;
+        let list = match result {
+            Ok(list) => list,
+            Err(message) => return manage.failed_list(message),
+        };
+        let count = list.in_category(category.id).count();
+        let there = list.categories.iter().any(|c| c.id == category.id);
+        manage.take_list(list);
+        if !there {
+            return self.manage_notice(feeds::GONE, true);
+        }
+        // It may have been closed meanwhile, and a question about nothing on screen isn't one.
+        if shown {
+            let lasting = ops.delete_category == DeleteCategory::TakesFeeds && count > 0;
+            let question = manage::deleting(&category, count, ops);
+            self.confirm(question, Pending::Change { change: FeedChange::DeleteCategory { category }, lasting });
+        } else if self.overlay == Overlay::Picker {
+            self.manage = None;
+        }
+    }
+
+    /// A row of the list or of the categories to move to: a click picks it, and on the second it's what Enter is there.
+    pub fn manage_row(&mut self, row: usize) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.overlay != Overlay::Manage {
+            return fx;
+        }
+        let Some(manage) = self.manage.as_mut() else { return fx };
+        manage.place_cursor(row);
+        if matches!(manage.stage, ManageStage::Move { .. }) {
+            self.choose_destination(&mut fx);
+        }
+        fx
+    }
+
+    /// Enter on a category to move to, or on the row for a new one.
+    fn choose_destination(&mut self, fx: &mut Vec<Effect>) {
+        let Some(manage) = self.manage.as_mut() else { return };
+        let ManageStage::Move { id, title, from, .. } = &manage.stage else { return };
+        let (id, title, from) = (*id, title.clone(), *from);
+        match manage.destination() {
+            Some(category) => {
+                let change = FeedChange::MoveFeed { id, to: Destination::Existing(category) };
+                self.start_change(change, fx);
+            }
+            None => {
+                let typed = String::new();
+                manage.stage = ManageStage::NewCategory { id, title, from, typed, error: String::new() };
+            }
+        }
+    }
+
+    /// The field's Enter, or its button.
+    pub fn submit_manage(&mut self, text: &str) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        let Some(manage) = self.manage.as_mut().filter(|_| self.overlay == Overlay::Manage) else { return fx };
+        let name = text.trim().to_string();
+        let change = match &mut manage.stage {
+            ManageStage::Add { typed, error, .. } if name.is_empty() => {
+                typed.clear();
+                *error = "Paste or type the feed's address first.".into();
+                return fx;
+            }
+            ManageStage::Add { into, .. } => FeedChange::Add { url: name, category: into.clone() },
+            ManageStage::Rename { error, .. } | ManageStage::NewCategory { error, .. } if name.is_empty() => {
+                *error = "It needs a name.".into();
+                return fx;
+            }
+            ManageStage::Rename { target: Target::Feed { title, .. }, .. } if *title == name => {
+                manage.stage = ManageStage::List;
+                return fx;
+            }
+            ManageStage::Rename { target: Target::Feed { id, .. }, .. } => {
+                FeedChange::RenameFeed { id: *id, title: name }
+            }
+            ManageStage::Rename { target: Target::Category(category), .. } if category.title == name => {
+                manage.stage = ManageStage::List;
+                return fx;
+            }
+            ManageStage::Rename { target: Target::Category(category), .. } => {
+                let category = category.clone();
+                // FreshRSS answers `OK` to this and does nothing, Miniflux refuses: neither merges them.
+                if manage.named(&name).is_some_and(|other| other.id != category.id) {
+                    if let ManageStage::Rename { error, typed, .. } = &mut manage.stage {
+                        *typed = name.clone();
+                        *error = format!("There's already a category called “{name}”.");
+                    }
+                    return fx;
+                }
+                FeedChange::RenameCategory { category, title: name }
+            }
+            ManageStage::NewCategory { id, .. } => {
+                let id = *id;
+                let to = manage.named(&name).cloned().map_or(Destination::New(name), Destination::Existing);
+                FeedChange::MoveFeed { id, to }
+            }
+            _ => return fx,
+        };
+        // A failure brings the field back with this in it.
+        match &mut manage.stage {
+            ManageStage::Add { typed, .. }
+            | ManageStage::Rename { typed, .. }
+            | ManageStage::NewCategory { typed, .. } => text.clone_into(typed),
+            _ => {}
+        }
+        self.start_change(change, &mut fx);
+        fx
+    }
+
+    fn start_change(&mut self, change: FeedChange, fx: &mut Vec<Effect>) {
+        let Some(manage) = self.manage.as_mut() else { return };
+        manage.notice = None;
+        let words = manage.saying(&change);
+        let back = Box::new(std::mem::take(&mut manage.stage));
+        manage.stage = ManageStage::Working { words, back };
+        self.latest_list += 1;
+        fx.push(Effect::ChangeFeeds { job: self.latest_manage, change });
+    }
+
+    /// `f` on the panel, where a server can be told.
+    fn manage_fetch(&mut self, fx: &mut Vec<Effect>) {
+        if self.capabilities.refresh && self.listing().is_some() {
+            self.manage_notice("Your server is fetching its feeds. The numbers here follow as articles arrive.", false);
+            fx.push(Effect::RefreshFeeds);
+        }
+    }
+
+    fn feed_list_in(&mut self, result: Result<FeedList, String>) {
+        if let Some(manage) = self.manage.as_mut() {
+            match result {
+                Ok(list) => manage.take_list(list),
+                Err(message) => manage.failed_list(message),
+            }
+        }
+    }
+
+    /// A change came back. With the panel up it says so there; closed, in a toast.
+    fn feeds_changed(&mut self, change: &FeedChange, result: Result<Changed, String>, fx: &mut Vec<Effect>) {
+        let shown = self.manage_shown();
+        let can = self.capabilities;
+        let Some(manage) = self.manage.as_mut() else { return };
+        let changed = match result {
+            Ok(changed) => changed,
+            Err(message) => {
+                if shown {
+                    manage.failed(message);
+                    self.load_feed_list(fx);
+                } else {
+                    self.manage = None;
+                    self.toast_error(message);
+                }
+                return;
+            }
+        };
+        let notice = manage.report(change, &changed, can.feeds, can.refresh);
+        let before = manage.list.take();
+        manage.list.clone_from(&changed.list);
+        manage.stage = ManageStage::List;
+        if changed.list.is_none() {
+            // Nothing to draw it from until this comes.
+            manage.list.clone_from(&before);
+        }
+        let (feed, category) = (changed.applied.feed, changed.applied.category.clone());
+        manage.follow(|row| match (row, change) {
+            (ManageRow::Feed(f), FeedChange::RenameFeed { id, .. } | FeedChange::MoveFeed { id, .. }) => {
+                f.feed.id == *id
+            }
+            (ManageRow::Feed(f), FeedChange::Add { .. }) => Some(f.feed.id) == feed,
+            (ManageRow::Category(c), FeedChange::RenameCategory { .. }) => {
+                Some(c.id) == category.as_ref().map(|c| c.id)
+            }
+            _ => false,
+        });
+        manage.notice = Some(notice.clone());
+        let to_come = matches!(change, FeedChange::Add { .. }) && manage::articles_to_come(&changed);
+        if let Some(list) = &changed.list {
+            self.picker_list = PickerList::Ready(list.counts.clone());
+        }
+        self.reconcile(change, &changed, before.as_ref(), fx);
+        if changed.list.is_none() {
+            self.load_feed_list(fx);
+        }
+        if to_come {
+            fx.extend(REFRESH_RELOAD_MS.map(|millis| Effect::ReloadPickerAfter { millis }));
+        }
+        if !shown {
+            self.manage = None;
+            self.show_toast(notice.text, if notice.worrying { ToastKind::Error } else { ToastKind::Info });
+            if self.overlay == Overlay::Picker {
+                self.load_picker(fx);
+            }
+        }
+    }
+
+    /// What's open after a change: what the reader shows has to go with what's on the server.
+    fn reconcile(&mut self, change: &FeedChange, changed: &Changed, before: Option<&FeedList>, fx: &mut Vec<Effect>) {
+        match change {
+            FeedChange::Add { .. } => {}
+            FeedChange::RenameFeed { id, title } => {
+                for entry in self.queue.iter_mut().filter(|e| e.feed.id == *id) {
+                    entry.feed.title.clone_from(title);
+                }
+                if self.opened == Some(Opened::Feeds(Selection::Feed { id: *id })) {
+                    self.selection_label.clone_from(title);
+                }
+            }
+            // Its articles are still there, just not in a category it's left. In `All` or by itself, nothing's changed.
+            FeedChange::MoveFeed { id, .. } => {
+                let left = matches!(
+                    (&self.opened, &changed.applied.category),
+                    (Some(Opened::Feeds(Selection::Category { id: open })), Some(to)) if *open != to.id
+                );
+                let in_open = self.opened_category().is_some_and(|open| {
+                    before.and_then(|list| list.feed(*id)).is_some_and(|f| f.feed.category.id == open)
+                });
+                if left && in_open {
+                    self.drop_feeds(&[*id], fx);
+                }
+            }
+            FeedChange::RemoveFeed { id } => self.feeds_gone(&[*id], fx),
+            FeedChange::RenameCategory { category, title } => {
+                let renamed = changed.applied.category.clone();
+                self.category_renamed(category, renamed.as_ref(), title, fx);
+            }
+            FeedChange::DeleteCategory { category } => {
+                let gone = Selection::Category { id: category.id };
+                if self.capabilities.feeds.delete_category == DeleteCategory::TakesFeeds {
+                    let in_it: Vec<i64> =
+                        before.iter().flat_map(|list| list.in_category(category.id)).map(|f| f.feed.id).collect();
+                    self.feeds_gone(&in_it, fx);
+                }
+                self.forget_pending_about(gone);
+                if self.opened == Some(Opened::Feeds(gone)) {
+                    self.close_what_was_open(fx);
+                }
+            }
+        }
+    }
+
+    fn opened_category(&self) -> Option<i64> {
+        match self.opened {
+            Some(Opened::Feeds(Selection::Category { id })) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// A category got another name, and maybe with it another id (`Applied::category`). The queue is the same articles.
+    fn category_renamed(&mut self, old: &Category, new: Option<&Category>, title: &str, fx: &mut Vec<Effect>) {
+        let selection = Selection::Category { id: old.id };
+        let id = new.map_or(old.id, |category| category.id);
+        if id != old.id {
+            self.forget_pending_about(selection);
+        }
+        if self.opened != Some(Opened::Feeds(selection)) {
+            return;
+        }
+        title.clone_into(&mut self.selection_label);
+        self.opened = Some(Opened::Feeds(Selection::Category { id }));
+        if id != old.id {
+            self.reload_open_list(fx);
+        }
+    }
+
+    /// Feeds that are gone from the server, with their articles.
+    fn feeds_gone(&mut self, ids: &[i64], fx: &mut Vec<Effect>) {
+        for id in ids {
+            let selection = Selection::Feed { id: *id };
+            self.forget_pending_about(selection);
+            if self.opened == Some(Opened::Feeds(selection)) {
+                return self.close_what_was_open(fx);
+            }
+        }
+        self.drop_feeds(ids, fx);
+    }
+
+    /// Takes these feeds' articles out of the queue. The one on screen stays on screen unless it's one of them, and
+    /// then the next one is there in its place.
+    fn drop_feeds(&mut self, ids: &[i64], fx: &mut Vec<Effect>) {
+        let goes = |entry: &Entry| ids.contains(&entry.feed.id);
+        let before_here = self.queue.iter().take(self.index).filter(|e| goes(e)).count();
+        let gone: Vec<i64> = self.queue.iter().filter(|e| goes(e)).map(|e| e.id).collect();
+        self.index -= before_here;
+        self.queue.retain(|e| !ids.contains(&e.feed.id));
+        self.total = self.total.saturating_sub(i64::try_from(gone.len()).unwrap_or(0));
+        for id in gone {
+            self.versions.remove(&id);
+        }
+        self.reload_open_list(fx);
+    }
+
+    /// Whatever was on its way for the list as it was is out of date. What's loaded stays, and the next page comes from
+    /// there; with nothing to go on, it starts again.
+    fn reload_open_list(&mut self, fx: &mut Vec<Effect>) {
+        // Results are about to replace it all, and `new_load` would forget them.
+        if self.awaited_search.is_some() {
+            return;
+        }
+        let first_page_due = self.loading || (self.queue.is_empty() && self.has_more);
+        self.new_load();
+        if !first_page_due {
+            return;
+        }
+        let selection = match &self.opened {
+            Some(Opened::Feeds(selection)) => Some(*selection),
+            Some(Opened::Starred) => Some(Selection::Starred),
+            Some(Opened::Search(_)) | None => None,
+        };
+        match selection {
+            Some(selection) => {
+                let label = self.selection_label.clone();
+                self.open_selection(selection, label, self.mode, fx);
+            }
+            None => self.loading = false,
+        }
+    }
+
+    /// What was open is gone from the server: there's nothing to stay on, or to page through, so it's back to the picker.
+    fn close_what_was_open(&mut self, fx: &mut Vec<Effect>) {
+        self.clear_queue();
+        self.viewer = None;
+        if matches!(self.overlay, Overlay::None | Overlay::Image) {
+            self.overlay = Overlay::Picker;
+            self.load_picker(fx);
+        }
+    }
+
+    /// A question about a list that isn't there, or goes by another id now, can't be answered.
+    fn forget_pending_about(&mut self, selection: Selection) {
+        let about = match &self.pending {
+            Some(Pending::MarkAll { selection: s, .. } | Pending::MarkRow { selection: s, .. }) => *s == selection,
+            _ => false,
+        };
+        if about && self.overlay == Overlay::Confirm {
+            self.pending = None;
+            self.overlay = self.before_confirm;
+        }
+    }
+
+    /// The server changed: nothing of the panel carries over, and what's on its way is about the old one.
+    fn forget_manage(&mut self) {
+        self.latest_manage += 1;
+        self.latest_list += 1;
+        self.manage = None;
     }
 
     // ---- Feed lists --------------------------------------------------------
@@ -2170,6 +2770,7 @@ impl App {
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
             self.forget_transfer();
+            self.forget_manage();
             self.clear_queue();
             self.picker_list = PickerList::Loading;
             self.open_picker(None, fx);
@@ -2671,6 +3272,8 @@ impl App {
         fresh.latest_load = self.latest_load + 1;
         fresh.latest_probe = self.latest_probe + 1;
         fresh.latest_transfer = self.latest_transfer + 1;
+        fresh.latest_manage = self.latest_manage + 1;
+        fresh.latest_list = self.latest_list + 1;
         fresh.toast_serial = self.toast_serial;
         *self = fresh;
         self.overlay = Overlay::Onboarding;
@@ -2709,7 +3312,8 @@ impl App {
         // Overlays that take every key.
         match self.overlay {
             Overlay::Confirm => {
-                let yes = key == "Enter" || key == "y";
+                let lasting = matches!(self.pending, Some(Pending::Change { lasting: true, .. }));
+                let yes = key == "y" || (key == "Enter" && !lasting);
                 let no = key == "Escape" || key == "n";
                 if yes || no {
                     self.answer_confirm(yes, fx);
@@ -2750,6 +3354,7 @@ impl App {
                 }
                 return true;
             }
+            Overlay::Manage => return self.manage_key(press, fx),
             Overlay::Picker | Overlay::None => {}
         }
         if press.typing {
@@ -2851,6 +3456,14 @@ impl App {
             Action::PickerChoose => self.choose(None, fx),
             Action::ImportFeeds => self.open_transfer(FeedFile::Import),
             Action::ExportFeeds => self.open_transfer(FeedFile::Export),
+            Action::ManageFeeds => self.open_manage(false, fx),
+            Action::AddFeed => self.open_manage(true, fx),
+            Action::ManageCursor(delta) => self.manage_cursor(delta),
+            Action::ManageAdd => self.manage_add(),
+            Action::ManageRename => self.manage_rename(),
+            Action::ManageMove => self.manage_move(),
+            Action::ManageDelete => self.manage_delete(fx),
+            Action::ManageFetch => self.manage_fetch(fx),
             Action::PickerRefresh if !self.capabilities.refresh => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
@@ -2899,11 +3512,11 @@ impl App {
             Outcome::ContentFetched { index, id, result } => self.content_fetched(index, id, result),
             Outcome::FeedCounts(result) => self.feed_counts(result),
             Outcome::Refreshed(result) => self.refreshed(result, &mut fx),
-            Outcome::PickerReloadDue => {
-                if self.overlay == Overlay::Picker {
-                    self.load_picker(&mut fx);
-                }
-            }
+            Outcome::PickerReloadDue => match self.overlay {
+                Overlay::Picker => self.load_picker(&mut fx),
+                Overlay::Manage => self.load_feed_list(&mut fx),
+                _ => {}
+            },
             Outcome::SavedToReadeck { index, id, result } => self.saved_to_readeck(index, id, result, &mut fx),
             Outcome::OpenedInBrowser { then, result } => self.opened_in_browser(then, result, &mut fx),
             Outcome::UnreadCounted { load, selection, up_to, later, result } => {
@@ -2943,6 +3556,21 @@ impl App {
             Outcome::FeedsExported { job, result } => {
                 if job == self.latest_transfer {
                     self.feeds_exported(result, &mut fx);
+                }
+            }
+            Outcome::FeedList { serial, result } => {
+                if serial == self.latest_list {
+                    self.feed_list_in(result);
+                }
+            }
+            Outcome::CategoryCounted { job, category, result } => {
+                if job == self.latest_manage {
+                    self.category_counted(category, result);
+                }
+            }
+            Outcome::FeedsChanged { job, change, result } => {
+                if job == self.latest_manage {
+                    self.feeds_changed(&change, result, &mut fx);
                 }
             }
             Outcome::SamplesSwitched { on, status } => {

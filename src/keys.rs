@@ -2,7 +2,7 @@
 //! names them ("j", "A", "ArrowDown", " ", "Escape"); the QML side translates Qt's key events into these names.
 //! A test keeps the help and the keymaps from drifting apart.
 
-use crate::feeds::Capabilities;
+use crate::feeds::{Capabilities, DeleteCategory};
 use crate::paging::Mode;
 
 /// What a key does. Some depend on where you are (`Space`, `Enter`); the app decides.
@@ -49,6 +49,18 @@ pub enum Action {
     /// `i` and `e`: a feed list, into the server or out of it.
     ImportFeeds,
     ExportFeeds,
+    /// `m` in the picker: the feed list, for changing it.
+    ManageFeeds,
+    /// `a` in the picker: straight to adding one.
+    AddFeed,
+    ManageCursor(i32),
+    ManageAdd,
+    ManageRename,
+    ManageMove,
+    /// Removing a feed or deleting a category: the core asks first.
+    ManageDelete,
+    /// `f`: has the server fetch its feeds now, where it can be told to.
+    ManageFetch,
     BiggerFont,
     SmallerFont,
     ResetSize,
@@ -86,12 +98,27 @@ pub const PICKER_KEYS: Keymap = &[
     (&["r"], Action::PickerRefresh),
     (&["i"], Action::ImportFeeds),
     (&["e"], Action::ExportFeeds),
+    (&["m"], Action::ManageFeeds),
+    (&["a"], Action::AddFeed),
     (&["A"], Action::MarkAllRead),
     (&["/"], Action::Search),
     (&["s"], Action::FlipOrder),
     (&["h"], Action::ToggleMode),
     (&["?"], Action::Help),
     (&["Escape", "g", "p", "Tab"], Action::PickerClose),
+    (&["q"], Action::Quit),
+];
+
+/// The list on the feeds panel. Esc is the core's, as it depends on the stage; typing never gets here.
+pub const MANAGE_KEYS: Keymap = &[
+    (&["j", "ArrowDown"], Action::ManageCursor(1)),
+    (&["k", "ArrowUp"], Action::ManageCursor(-1)),
+    (&["a"], Action::ManageAdd),
+    (&["r"], Action::ManageRename),
+    (&["m"], Action::ManageMove),
+    (&["d"], Action::ManageDelete),
+    (&["f"], Action::ManageFetch),
+    (&["?"], Action::Help),
     (&["q"], Action::Quit),
 ];
 
@@ -118,6 +145,13 @@ pub fn button_action(button: &str) -> Option<Action> {
         "order" => Action::FlipOrder,
         "import" => Action::ImportFeeds,
         "export" => Action::ExportFeeds,
+        "manage" => Action::ManageFeeds,
+        "add_feed" => Action::AddFeed,
+        "manage_add" => Action::ManageAdd,
+        "manage_rename" => Action::ManageRename,
+        "manage_move" => Action::ManageMove,
+        "manage_delete" => Action::ManageDelete,
+        "manage_fetch" => Action::ManageFetch,
         _ => return None,
     })
 }
@@ -149,6 +183,8 @@ pub enum Where {
     Reader,
     Picker,
     Both,
+    /// Only on the feeds panel.
+    Manage,
 }
 
 #[derive(Debug)]
@@ -171,6 +207,12 @@ pub enum Needs {
     Search,
     ImportFeeds,
     ExportFeeds,
+    AddFeed,
+    /// Anything at all about the feeds can be changed.
+    ChangeFeeds,
+    RenameSomething,
+    MoveFeed,
+    DeleteSomething,
 }
 
 impl Needs {
@@ -183,12 +225,22 @@ impl Needs {
             Needs::Search => can.search != Some(false),
             Needs::ImportFeeds => can.import_feeds,
             Needs::ExportFeeds => can.export_feeds,
+            Needs::AddFeed => can.feeds.add,
+            Needs::ChangeFeeds => can.feeds.any(),
+            Needs::RenameSomething => can.feeds.rename || can.feeds.rename_category,
+            Needs::MoveFeed => can.feeds.move_feed,
+            Needs::DeleteSomething => can.feeds.remove || can.feeds.delete_category != DeleteCategory::No,
         }
     }
 }
 
 const fn row(keys: &'static [Chord], action: &'static str) -> HelpRow {
     HelpRow { keys, action, place: Where::Reader, picker_note: None, needs: Needs::Nothing }
+}
+
+/// A key of the feeds panel.
+const fn manage_row(keys: &'static [Chord], action: &'static str, needs: Needs) -> HelpRow {
+    HelpRow { keys, action, place: Where::Manage, picker_note: None, needs }
 }
 
 use Chord::{Mod, Plain, Shift};
@@ -254,6 +306,24 @@ pub const HELP: &[HelpRow] = &[
         needs: Needs::ExportFeeds,
     },
     HelpRow {
+        keys: &[Plain("m")],
+        action: "manage feeds and categories",
+        place: Where::Picker,
+        picker_note: None,
+        needs: Needs::ChangeFeeds,
+    },
+    HelpRow {
+        keys: &[Plain("a")],
+        action: "add a feed by its address",
+        place: Where::Picker,
+        picker_note: None,
+        needs: Needs::AddFeed,
+    },
+    manage_row(&[Plain("r")], "rename the feed or category", Needs::RenameSomething),
+    manage_row(&[Plain("m")], "move the feed to another or a new category", Needs::MoveFeed),
+    manage_row(&[Plain("d")], "remove feed or delete category (asks first)", Needs::DeleteSomething),
+    manage_row(&[Plain("f")], "have the server fetch its feeds now", Needs::Refresh),
+    HelpRow {
         keys: &[Plain("h")],
         action: "history: read items, newest first (again for unread)",
         place: Where::Both,
@@ -302,7 +372,11 @@ pub fn help_lines(mac: bool, can: Capabilities) -> Vec<(String, String)> {
     HELP.iter()
         .filter(|row| row.needs.met(can))
         .map(|row| {
-            let place = if row.place == Where::Picker { " (in picker)" } else { "" };
+            let place = match row.place {
+                Where::Picker => " (in picker)",
+                Where::Manage => " (managing feeds)",
+                Where::Reader | Where::Both => "",
+            };
             let note =
                 row.picker_note.map(|(keys, text)| format!(" ({} {text})", label(keys, mac))).unwrap_or_default();
             (label(row.keys, mac), format!("{}{place}{note}", row.action))
@@ -313,12 +387,14 @@ pub fn help_lines(mac: bool, can: Capabilities) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::feeds::FeedOps;
     use std::collections::BTreeSet;
 
     #[derive(Clone, Copy)]
     enum KeyMode {
         Reader,
         Picker,
+        Manage,
         Modifier,
     }
 
@@ -326,6 +402,7 @@ mod tests {
         let maps: &[Keymap] = match mode {
             KeyMode::Reader => &[GLOBAL_KEYS, READER_KEYS],
             KeyMode::Picker => &[GLOBAL_KEYS, PICKER_KEYS],
+            KeyMode::Manage => &[MANAGE_KEYS],
             KeyMode::Modifier => &[MODIFIER_KEYS],
         };
         maps.iter().flat_map(|m| m.iter().flat_map(|(keys, _)| keys.iter().copied())).collect()
@@ -338,6 +415,8 @@ mod tests {
             KeyMode::Reader => &["Enter"],
             // Moving works as in the reader, Enter picks as everywhere, and the keys that open the picker close it.
             KeyMode::Picker => &["j", "ArrowDown", "k", "ArrowUp", "Enter", "Escape", "g", "p", "Tab"],
+            // As in the picker, and a is there too.
+            KeyMode::Manage => &["j", "ArrowDown", "k", "ArrowUp", "a", "?", "q"],
             // = is + without Shift.
             KeyMode::Modifier => &["="],
         }
@@ -349,9 +428,18 @@ mod tests {
             KeyMode::Modifier => {
                 HELP.iter().flat_map(|r| r.keys.iter().filter(|c| is_mod(c))).map(|c| c.key()).collect()
             }
+            KeyMode::Manage => {
+                HELP.iter().filter(|r| r.place == Where::Manage).flat_map(|r| r.keys).map(|c| c.key()).collect()
+            }
             KeyMode::Reader | KeyMode::Picker => {
                 let picker = matches!(mode, KeyMode::Picker);
-                let works = |r: &&HelpRow| if picker { r.place != Where::Reader } else { r.place != Where::Picker };
+                let works = |r: &&HelpRow| {
+                    if picker {
+                        matches!(r.place, Where::Picker | Where::Both)
+                    } else {
+                        matches!(r.place, Where::Reader | Where::Both)
+                    }
+                };
                 let plain = HELP.iter().filter(works).flat_map(|r| r.keys.iter().filter(|c| !is_mod(c)));
                 let notes = HELP.iter().filter(|_| picker).flat_map(|r| r.picker_note.map_or(&[][..], |n| n.0));
                 plain.chain(notes).map(|c| c.key()).collect()
@@ -361,7 +449,7 @@ mod tests {
 
     #[test]
     fn the_help_names_every_bound_key_and_no_other() {
-        for mode in [KeyMode::Reader, KeyMode::Picker, KeyMode::Modifier] {
+        for mode in [KeyMode::Reader, KeyMode::Picker, KeyMode::Manage, KeyMode::Modifier] {
             let mut named = documented(mode);
             named.extend(unlisted(mode));
             let missing: Vec<_> = bound(mode).difference(&named).copied().collect();
@@ -396,10 +484,12 @@ mod tests {
         assert!(["f", "r", "/"].iter().all(|key| has(everything, key)));
         assert_eq!(keys(everything).len(), HELP.len());
 
+        // Both of these keys mean something else on the feeds panel too, and that line has its own needs.
+        let times = |can, key: &str| keys(can).iter().filter(|k| *k == key).count();
         let no_full = Capabilities { fetch_full: false, ..everything };
-        assert!(!has(no_full, "f") && has(no_full, "r"));
+        assert_eq!((times(no_full, "f"), times(no_full, "r")), (1, 2));
         let no_refresh = Capabilities { refresh: false, ..everything };
-        assert!(has(no_refresh, "f") && !has(no_refresh, "r"));
+        assert_eq!((times(no_refresh, "f"), times(no_refresh, "r")), (1, 1));
         assert!(has(Capabilities { search: None, ..everything }, "/"), "only trying will tell");
         assert!(!has(Capabilities { search: Some(false), ..everything }, "/"));
 
@@ -407,6 +497,16 @@ mod tests {
         let export_only = Capabilities { import_feeds: false, ..everything };
         assert!(!has(export_only, "i") && has(export_only, "e"), "each by itself");
         assert!(!has(Capabilities::SAMPLES, "i") && !has(Capabilities::SAMPLES, "e"), "there's no server to do it on");
+
+        assert!(["a", "d"].iter().all(|key| has(everything, key)));
+        for can in [Capabilities::SAMPLES, Capabilities { feeds: FeedOps::NONE, ..everything }] {
+            assert!(!["a", "d"].iter().any(|key| has(can, key)), "nothing about the feeds can change");
+            assert_eq!(times(can, "m"), 1, "the reader's");
+        }
+        let only_adding = FeedOps { add: true, ..FeedOps::NONE };
+        let only_adding = Capabilities { feeds: only_adding, ..everything };
+        assert!(has(only_adding, "a") && !has(only_adding, "d"), "each by itself");
+        assert_eq!(times(only_adding, "m"), 2, "the panel opens, and there's still nothing to move");
     }
 
     #[test]

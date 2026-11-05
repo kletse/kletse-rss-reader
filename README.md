@@ -78,6 +78,12 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                                                |
 | <kbd>i</kbd>                                                                 | Import feeds from an OPML file (in the picker)                                                                   |
 | <kbd>e</kbd>                                                                 | Export feeds to an OPML file (in the picker)                                                                     |
+| <kbd>m</kbd>                                                                 | Manage feeds and categories (in the picker)                                                                      |
+| <kbd>a</kbd>                                                                 | Add a feed by its address (in the picker, or managing feeds)                                                     |
+| <kbd>r</kbd>                                                                 | Rename the feed or category (managing feeds)                                                                     |
+| <kbd>m</kbd>                                                                 | Move the feed to another category, or a new one (managing feeds)                                                 |
+| <kbd>d</kbd>                                                                 | Remove the feed, or delete the category; it asks first (managing feeds)                                          |
+| <kbd>f</kbd>                                                                 | Have the server fetch its feeds now, on Miniflux (managing feeds)                                                |
 | <kbd>h</kbd>                                                                 | Switch between unread and history (read items, newest first)                                                     |
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                                  | Article font size; the column width scales with it (remembered)                                                  |
 | <kbd>[</kbd> / <kbd>]</kbd>                                                  | Narrower / wider column (remembered)                                                                             |

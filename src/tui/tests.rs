@@ -778,7 +778,7 @@ fn the_help_leaves_out_what_the_server_cant_do() {
 
 #[test]
 fn the_help_fits_a_narrow_terminal_by_stacking() {
-    let mut s = Screenful::new(44, 60);
+    let mut s = Screenful::new(44, 80);
     s.keys("?");
     assert!(s.shows("scroll a page") && s.shows("skip (keeps unread)"), "{}", s.text());
     s.keys("?");
@@ -790,7 +790,7 @@ fn the_help_scrolls_on_a_short_terminal() {
     let mut s = Screenful::new(100, 10);
     s.keys("?");
     assert!(!s.shows("quit"));
-    for _ in 0..30 {
+    for _ in 0..50 {
         s.keys("j");
     }
     assert!(s.shows("quit"), "{}", s.text());

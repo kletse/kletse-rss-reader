@@ -19,6 +19,7 @@ pub mod feeds;
 pub mod ffi;
 pub mod greader;
 pub mod keys;
+pub mod manage;
 pub mod miniflux;
 mod moved;
 pub mod opml;

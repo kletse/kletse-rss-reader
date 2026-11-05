@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::dates;
-use crate::feeds::{Category, Feed, FeedCount};
+use crate::feeds::{Applied, Feed, FeedCount, FeedOps};
 use crate::keys::Action;
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
@@ -101,6 +101,8 @@ struct Harness {
     /// Probes and logins, left unanswered until a test says what comes back.
     looked_at: Vec<(u64, Address)>,
     logins: Vec<Login>,
+    /// What the server lists when it's asked for its feeds: changes are answered by hand, with `changed`.
+    list: FeedList,
 }
 
 fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
@@ -140,6 +142,7 @@ impl Harness {
             saved_values: None,
             looked_at: Vec::new(),
             logins: Vec::new(),
+            list: FeedList::default(),
         }
     }
 
@@ -293,6 +296,12 @@ impl Harness {
             }
             // Answered by hand, as a test needs them in flight: see `imported` and `exported`.
             Effect::ChooseFeedFile(_) | Effect::ImportFeeds { .. } | Effect::ExportFeeds { .. } => None,
+            Effect::LoadFeedList { serial } => Some(Outcome::FeedList { serial, result: Ok(self.list.clone()) }),
+            Effect::CountCategory { job, category } => {
+                Some(Outcome::CategoryCounted { job, category, result: Ok(self.list.clone()) })
+            }
+            // Answered by hand: see `changed`.
+            Effect::ChangeFeeds { .. } => None,
             Effect::UseSamples(on) => {
                 let status = Status { configured: on, readeck: on, capabilities: Capabilities::EVERYTHING };
                 Some(Outcome::SamplesSwitched { on, status })
@@ -819,7 +828,7 @@ fn o_opens_the_original_and_marks_it_read() {
     h.key("o");
     assert!(h.calls.contains(&Effect::OpenInBrowser {
         url: "https://example.com/1".into(),
-        then: AfterOpen::MarkRead { index: 0 }
+        then: AfterOpen::MarkRead { index: 0, id: 1 }
     }));
     assert_eq!(h.toast(), Some("Opened in browser"));
     assert_eq!(h.app.current().unwrap().status, EntryStatus::Read);
@@ -3462,11 +3471,11 @@ fn leaving_the_samples_makes_an_answer_on_its_way_a_no_op() {
 fn what_the_server_cant_do_is_left_out_and_said() {
     // Miniflux through its Google Reader integration, or some other Google Reader server.
     let mut h = empty_account();
-    let cannot = Capabilities { import_feeds: false, ..Capabilities::EVERYTHING };
+    let cannot = Capabilities { import_feeds: false, feeds: FeedOps::NONE, ..Capabilities::EVERYTHING };
     h.status = Status { configured: true, readeck: false, capabilities: cannot };
     h.start();
-    assert!(!h.app.offers_import());
-    assert!(h.app.picker_empty_text().contains("add feeds on the server's own page"));
+    assert!(!h.app.offers_import() && !h.app.offers_add());
+    assert!(h.app.picker_empty_text().contains("Onward can only change feeds"));
     assert!(!h.app.help_lines().iter().any(|(keys, _)| keys == "i"));
 
     h.key("i");
@@ -3579,4 +3588,810 @@ fn nothing_else_happens_behind_the_panel() {
         assert_eq!(h.app.overlay(), Overlay::Transfer, "{key}");
     }
     assert_eq!(h.calls.len(), calls);
+}
+
+// ---- Changing the feeds ----------------------------------------------------------------------------------------------
+
+/// News has Alpha and Beta, Tech has Gamma, and Empty has nothing.
+fn feed_list() -> FeedList {
+    let (news, tech) = (cat(1, "News"), cat(2, "Tech"));
+    let feed = |id, title: &str, category: &Category| FeedCount {
+        feed: Feed { id, title: title.into(), category: category.clone() },
+        unread: Some(5),
+        read: Some(1),
+    };
+    let feeds = vec![feed(10, "Alpha", &news), feed(11, "Beta", &news), feed(12, "Gamma", &tech)];
+    FeedList::new(Counts { feeds, starred: Some(0) }, vec![news, tech, cat(3, "Empty")], None)
+}
+
+fn cat(id: i64, title: &str) -> Category {
+    Category { id, title: title.into() }
+}
+
+/// Articles 1 to 3 of feed 10, 4 and 5 of feed 12.
+fn of_two_feeds() -> Vec<Entry> {
+    let mut entries = items(5);
+    for entry in &mut entries {
+        entry.feed.id = if entry.id <= 3 { 10 } else { 12 };
+        entry.feed.title = if entry.id <= 3 { "Alpha".into() } else { "Gamma".into() };
+    }
+    entries
+}
+
+const FRESHRSS: Capabilities = Capabilities { refresh: false, feeds: FeedOps::FRESHRSS, ..Capabilities::EVERYTHING };
+
+/// In the picker, on a server that can do `can`, with `feed_list` on it and the panel open.
+fn managing(can: Capabilities) -> Harness {
+    let mut h = Harness::new(of_two_feeds());
+    h.status.capabilities = can;
+    h.list = feed_list();
+    h.counts = h.list.counts.feeds.clone();
+    h.start();
+    h.key("m");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    h
+}
+
+impl Harness {
+    fn changes(&self) -> Vec<FeedChange> {
+        let changes = self.calls.iter().filter_map(|call| match call {
+            Effect::ChangeFeeds { change, .. } => Some(change.clone()),
+            _ => None,
+        });
+        changes.collect()
+    }
+
+    fn manage_stage(&self) -> &'static str {
+        self.app.manage_view().map_or("closed", |view| view.stage)
+    }
+
+    fn cursor_on(&mut self, label: &str) {
+        for _ in 0..20 {
+            let view = self.app.manage_view().unwrap();
+            if view.rows[view.cursor].label == label {
+                return;
+            }
+            self.key("j");
+        }
+        panic!("no row called {label}");
+    }
+
+    /// Answers the change in flight, the server having done `applied` and now listing `list`.
+    fn changed(&mut self, applied: Applied, list: Option<FeedList>, problem: Option<&str>) {
+        let job = self.app.latest_manage;
+        let change = self.changes().pop().expect("a change was sent");
+        let result = Ok(Changed { applied, list, problem: problem.map(str::to_string) });
+        let fx = self.app.apply(Outcome::FeedsChanged { job, change, result });
+        self.run(fx);
+    }
+
+    fn refused(&mut self, message: &str) {
+        let job = self.app.latest_manage;
+        let change = self.changes().pop().expect("a change was sent");
+        let fx = self.app.apply(Outcome::FeedsChanged { job, change, result: Err(message.to_string()) });
+        self.run(fx);
+    }
+
+    fn notice(&self) -> String {
+        self.app.manage_view().unwrap().notice
+    }
+
+    fn list_without(&self, feed: i64) -> FeedList {
+        let mut list = self.list.clone();
+        list.counts.feeds.retain(|f| f.feed.id != feed);
+        list
+    }
+}
+
+#[test]
+fn nothing_is_removed_before_the_answer_and_enter_isnt_one() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("d");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert!(h.app.manage_shown());
+    let question = h.app.confirm_text().to_string();
+    assert!(question.contains("Alpha") && question.contains("articles go too"), "{question}");
+    assert!(question.contains("can't be undone"), "{question}");
+    assert!(h.changes().is_empty());
+
+    h.key("Enter");
+    assert_eq!(h.app.overlay(), Overlay::Confirm, "a key pressed once too often doesn't lose anything");
+    assert!(h.changes().is_empty());
+    assert!(h.app.confirm_hint().starts_with("y to go ahead"));
+
+    h.key("n");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    assert!(h.changes().is_empty());
+
+    h.key("d");
+    h.key("Escape");
+    assert!(h.changes().is_empty());
+
+    h.key("d");
+    h.key("y");
+    assert_eq!(h.changes(), [FeedChange::RemoveFeed { id: 10 }]);
+    assert_eq!(h.manage_stage(), "working");
+}
+
+#[test]
+fn a_miniflux_category_goes_only_after_being_told_how_many_feeds_and_articles_go_with_it() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("News");
+    // Added elsewhere since the panel opened: the question goes by what the server says now.
+    let news = cat(1, "News");
+    let mut extra = h.list.counts.feeds[0].clone();
+    (extra.feed.id, extra.feed.title) = (13, "Delta".into());
+    h.list.counts.feeds.push(extra);
+    assert_eq!(news.title, h.list.counts.feeds[3].feed.category.title);
+
+    h.key("d");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    let question = h.app.confirm_text().to_string();
+    for words in ["“News”", "3 feeds", "all their articles", "can't be undone", "move them"] {
+        assert!(question.contains(words), "{words}: {question}");
+    }
+    let looks_only = h.calls.iter().filter(|c| matches!(c, Effect::CountCategory { .. })).count();
+    assert_eq!(looks_only, 1);
+    assert!(h.changes().is_empty());
+    h.key("Enter");
+    assert!(h.changes().is_empty(), "Enter says nothing here");
+    h.key("n");
+    assert!(h.changes().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+
+    h.key("d");
+    h.key("y");
+    assert_eq!(h.changes(), [FeedChange::DeleteCategory { category: news }]);
+}
+
+#[test]
+fn on_freshrss_the_same_key_says_the_feeds_stay_and_an_empty_category_says_so_too() {
+    let mut h = managing(FRESHRSS);
+    h.cursor_on("News");
+    h.key("d");
+    let question = h.app.confirm_text().to_string();
+    assert!(question.contains("2 feeds and their articles stay"), "{question}");
+    assert!(!question.contains("undone"), "{question}");
+    assert!(h.app.confirm_hint().starts_with("Enter"), "nothing's lost");
+    h.key("Enter");
+    assert_eq!(h.changes().len(), 1);
+
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Empty");
+    h.key("d");
+    assert!(h.app.confirm_text().contains("no feeds in it"));
+    assert!(h.app.confirm_hint().starts_with("Enter"), "nothing's lost on Miniflux either");
+}
+
+#[test]
+fn a_category_someone_else_deleted_isnt_asked_about() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Empty");
+    h.list.categories.retain(|c| c.id != 3);
+    h.key("d");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    assert_eq!(h.notice(), feeds::GONE);
+    assert!(h.changes().is_empty());
+}
+
+#[test]
+fn what_a_server_cant_do_isnt_offered_and_its_key_does_nothing() {
+    let renames_only = FeedOps { rename: true, ..FeedOps::NONE };
+    let mut h = managing(Capabilities { feeds: renames_only, ..Capabilities::EVERYTHING });
+    h.cursor_on("Alpha");
+    let keys: String = h.app.manage_view().unwrap().keys.iter().map(|k| k.key).collect();
+    assert_eq!(keys, "rf");
+    for key in ["a", "m", "d"] {
+        h.key(key);
+        assert_eq!(h.app.overlay(), Overlay::Manage);
+        assert_eq!(h.manage_stage(), "list", "{key}");
+    }
+    assert!(h.changes().is_empty());
+}
+
+#[test]
+fn a_connection_that_can_change_nothing_says_why_and_stays_in_the_picker() {
+    let mut h = Harness::new(items(2));
+    h.status.capabilities = Capabilities { feeds: FeedOps::NONE, ..Capabilities::EVERYTHING };
+    h.start();
+    for key in ["m", "a"] {
+        h.key(key);
+        assert_eq!(h.app.overlay(), Overlay::Picker);
+        assert_eq!(h.toast(), Some(feeds::MANAGE_REFUSED));
+    }
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::LoadFeedList { .. })));
+}
+
+#[test]
+fn the_samples_say_plainly_that_their_feeds_cant_change_and_ask_no_server() {
+    let mut h = Harness::new(items(2));
+    h.status.capabilities = Capabilities::SAMPLES;
+    h.start();
+    for key in ["m", "a"] {
+        h.key(key);
+        assert_eq!(h.app.overlay(), Overlay::Picker);
+        assert_eq!(h.toast(), Some(feeds::SAMPLES_HAVE_NO_FEEDS));
+    }
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::LoadFeedList { .. } | Effect::ChangeFeeds { .. })));
+}
+
+#[test]
+fn an_empty_account_is_led_to_adding_a_feed_and_lands_on_its_row() {
+    let mut h = Harness::new(Vec::new());
+    h.counts = Vec::new();
+    h.start();
+    assert!(h.app.offers_add() && h.app.offers_import());
+    assert!(h.app.picker_empty_text().contains("Press a to add one by its address"));
+    h.key("a");
+    assert_eq!(h.manage_stage(), "field");
+    assert_eq!(h.app.manage_view().unwrap().field.unwrap().action, "Add");
+    // Typing in a window's field: j and the like aren't keys here.
+    let (used, _) = h.app.key(&KeyPress { key: "j".into(), typing: true, ..KeyPress::default() });
+    assert!(!used);
+    let fx = h.app.submit_manage("  ");
+    assert!(fx.is_empty());
+    assert!(!h.app.manage_view().unwrap().error.is_empty());
+
+    let fx = h.app.submit_manage(" https://a.example/feed ");
+    h.run(fx);
+    assert_eq!(h.manage_stage(), "working");
+    assert_eq!(h.changes(), [FeedChange::Add { url: "https://a.example/feed".into(), category: None }]);
+
+    let mut list = feed_list();
+    list.counts.feeds[1].unread = Some(0);
+    list.counts.feeds[1].read = Some(0);
+    let applied = Applied { feed: Some(11), category: None };
+    h.changed(applied, Some(list), None);
+    let view = h.app.manage_view().unwrap();
+    assert_eq!(view.stage, "list");
+    assert_eq!(view.rows[view.cursor].label, "Beta");
+    assert!(view.notice.contains("No articles yet: press f"), "{}", view.notice);
+    assert!(h.calls.iter().any(|c| matches!(c, Effect::ReloadPickerAfter { .. })), "the numbers follow");
+    assert!(!h.app.no_feeds(), "the picker has it too");
+}
+
+#[test]
+fn a_new_feed_goes_where_the_cursor_is_and_a_refusal_brings_the_address_back_with_the_servers_words() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Gamma");
+    h.key("a");
+    assert!(h.app.manage_view().unwrap().text.contains("“Tech”"));
+    let fx = h.app.submit_manage("http://feeds.example/x.xml");
+    h.run(fx);
+    assert_eq!(
+        h.changes(),
+        [FeedChange::Add { url: "http://feeds.example/x.xml".into(), category: Some(cat(2, "Tech")) }]
+    );
+    h.refused("Miniflux says: This feed already exists.");
+    let view = h.app.manage_view().unwrap();
+    assert_eq!(view.stage, "field");
+    assert_eq!(view.error, "Miniflux says: This feed already exists.");
+    assert_eq!(view.field.unwrap().value, "http://feeds.example/x.xml");
+    h.key("Escape");
+    assert_eq!(h.manage_stage(), "list");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.manage_stage(), "closed");
+}
+
+#[test]
+fn renaming_keeps_its_field_and_a_name_thats_taken_or_unchanged_sends_nothing() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Tech");
+    h.key("r");
+    assert_eq!(h.app.manage_view().unwrap().field.unwrap().value, "Tech");
+    assert!(h.app.submit_manage("Tech").is_empty());
+    assert_eq!(h.manage_stage(), "list");
+    h.key("r");
+    assert!(h.app.submit_manage("news").is_empty(), "FreshRSS says OK to this and does nothing");
+    let view = h.app.manage_view().unwrap();
+    assert!(view.error.contains("already a category called “news”"), "{}", view.error);
+    assert_eq!(view.field.unwrap().value, "news");
+    assert!(h.changes().is_empty());
+    assert!(h.app.submit_manage("").is_empty());
+    assert_eq!(h.app.manage_view().unwrap().error, "It needs a name.");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    assert_eq!(h.changes(), [FeedChange::RenameCategory { category: cat(2, "Tech"), title: "Science".into() }]);
+}
+
+#[test]
+fn moving_offers_the_other_categories_and_a_new_name_that_turns_out_to_exist_is_that_one() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("m");
+    let view = h.app.manage_view().unwrap();
+    assert_eq!(view.stage, "choose");
+    let labels: Vec<&str> = view.rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(labels, ["Empty", "Tech", "New category…"]);
+    h.key("j");
+    h.key("Enter");
+    assert_eq!(
+        h.changes(),
+        [FeedChange::MoveFeed { id: 10, to: Destination::Existing(cat(2, "Tech")) }],
+        "the row under the cursor"
+    );
+    h.changed(Applied { feed: None, category: Some(cat(2, "Tech")) }, Some(feed_list()), None);
+    assert_eq!(h.notice(), "Moved “Alpha” to “Tech”.");
+
+    h.cursor_on("Alpha");
+    h.key("m");
+    h.key("k");
+    h.key("Enter");
+    assert_eq!(h.manage_stage(), "field");
+    let fx = h.app.submit_manage("  tech ");
+    h.run(fx);
+    assert_eq!(h.changes()[1], FeedChange::MoveFeed { id: 10, to: Destination::Existing(cat(2, "Tech")) });
+    h.refused("nope");
+    let fx = h.app.submit_manage("Brand New");
+    h.run(fx);
+    assert_eq!(h.changes()[2], FeedChange::MoveFeed { id: 10, to: Destination::New("Brand New".into()) });
+}
+
+#[test]
+fn the_defaults_of_freshrss_and_a_feed_with_no_category_say_why_theres_nothing_to_rename() {
+    let mut h = Harness::new(items(1));
+    h.status.capabilities = FRESHRSS;
+    h.list = feed_list();
+    h.list.fixed = Some(1);
+    h.start();
+    h.key("m");
+    h.cursor_on("News");
+    h.key("r");
+    assert_eq!(h.manage_stage(), "list");
+    assert!(h.notice().contains("default category"), "{}", h.notice());
+    h.key("d");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    assert!(h.changes().is_empty());
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::CountCategory { .. })));
+}
+
+#[test]
+fn a_yes_the_list_doesnt_bear_out_is_reported_as_what_happened() {
+    let mut h = managing(FRESHRSS);
+    h.cursor_on("Tech");
+    h.key("r");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    let said = "The server said yes, but “Tech” kept its name. Nothing changed.";
+    h.changed(Applied { feed: None, category: Some(cat(99, "Science")) }, Some(feed_list()), Some(said));
+    let view = h.app.manage_view().unwrap();
+    assert_eq!(view.notice, said);
+    assert!(view.worrying);
+}
+
+#[test]
+fn closing_the_panel_leaves_a_change_running_and_its_answer_is_a_toast() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("r");
+    let fx = h.app.submit_manage("Renamed");
+    h.run(fx);
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.manage_stage(), "working", "it's still going");
+    h.key("m");
+    assert_eq!(h.manage_stage(), "working", "and back there");
+    h.key("Escape");
+    h.changed(Applied::default(), Some(feed_list()), None);
+    assert_eq!(h.manage_stage(), "closed");
+    assert_eq!(h.toast(), Some("Renamed to “Renamed”."));
+}
+
+#[test]
+fn a_change_of_server_makes_the_answer_a_no_op() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    h.key("Escape");
+    let (job, list) = (h.app.latest_manage, h.app.latest_list);
+    h.key(",");
+    h.run(vec![Effect::LoadSettings]);
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(h.manage_stage(), "closed");
+    let change = FeedChange::RemoveFeed { id: 10 };
+    let changed = Changed { applied: Applied::default(), list: Some(feed_list()), problem: None };
+    let fx = h.app.apply(Outcome::FeedsChanged { job, change, result: Ok(changed) });
+    assert!(fx.is_empty());
+    assert!(h.app.apply(Outcome::FeedList { serial: list, result: Ok(feed_list()) }).is_empty());
+    assert_eq!(h.manage_stage(), "closed");
+}
+
+#[test]
+fn a_list_asked_for_before_a_change_doesnt_overwrite_what_came_after() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    let old_serial = h.app.latest_list;
+    h.cursor_on("Alpha");
+    h.key("r");
+    let fx = h.app.submit_manage("Renamed");
+    h.run(fx);
+    let mut after = feed_list();
+    after.counts.feeds[0].feed.title = "Renamed".into();
+    h.changed(Applied::default(), Some(after), None);
+    h.app.apply(Outcome::FeedList { serial: old_serial, result: Ok(feed_list()) });
+    assert!(h.app.manage_view().unwrap().rows.iter().any(|r| r.label == "Renamed"));
+}
+
+#[test]
+fn a_renamed_feed_keeps_its_queue_and_shows_the_new_name() {
+    let mut h = Harness::new(of_two_feeds());
+    h.list = feed_list();
+    h.start();
+    h.app.opened = None;
+    let fx = h.app.choose_row(0);
+    h.run(fx);
+    h.app.opened = Some(Opened::Feeds(Selection::Feed { id: 10 }));
+    h.app.selection_label = "Alpha".into();
+    h.app.overlay = Overlay::Picker;
+    h.key("m");
+    h.cursor_on("Alpha");
+    h.key("r");
+    let fx = h.app.submit_manage("Alpha One");
+    h.run(fx);
+    h.changed(Applied::default(), Some(feed_list()), None);
+    assert_eq!(h.app.selection_label(), "Alpha One");
+    assert_eq!(h.app.queue()[0].feed.title, "Alpha One");
+    assert_eq!(h.app.queue()[4].feed.title, "Gamma");
+    assert_eq!(h.app.queue().len(), 5);
+}
+
+/// `selection` is open with `of_two_feeds` in it, and the panel is up over it.
+fn reading(selection: Selection, label: &str, can: Capabilities) -> Harness {
+    let mut h = Harness::new(of_two_feeds());
+    h.status.capabilities = can;
+    h.list = feed_list();
+    h.counts = h.list.counts.feeds.clone();
+    h.start();
+    let mut fx = Vec::new();
+    h.app.close_picker();
+    h.app.open_selection(selection, label.to_string(), Mode::Unread, &mut fx);
+    h.run(fx);
+    assert!(h.app.current().is_some());
+    h.key("p");
+    h.key("m");
+    h
+}
+
+#[test]
+fn a_category_thats_open_goes_on_under_its_new_id_with_its_place_kept() {
+    let mut h = reading(Selection::Category { id: 2 }, "Tech", FRESHRSS);
+    h.key("Escape");
+    h.key("Escape");
+    h.key("j");
+    h.key("p");
+    h.key("m");
+    h.cursor_on("Tech");
+    h.key("r");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    h.changed(Applied { feed: None, category: Some(cat(77, "Science")) }, Some(feed_list()), None);
+    assert_eq!(h.app.selection_label(), "Science");
+    assert_eq!(h.app.opened, Some(Opened::Feeds(Selection::Category { id: 77 })));
+    assert_eq!(h.app.current().map(|e| e.id), Some(2), "you're where you were");
+    assert_eq!(h.app.queue().len(), 5);
+}
+
+#[test]
+fn a_rename_that_keeps_the_id_leaves_a_page_on_its_way_alone_only_when_the_id_is_the_same() {
+    // A page for the old id can't be answered any more: it's dropped, and the next one asks by the new id.
+    let mut entries = items(PAGE as i64 + 5);
+    for entry in &mut entries {
+        entry.feed.id = 12;
+    }
+    let mut h = Harness::new(entries);
+    h.status.capabilities = FRESHRSS;
+    h.list = feed_list();
+    h.start();
+    let mut fx = Vec::new();
+    h.app.close_picker();
+    h.app.open_selection(Selection::Category { id: 2 }, "Tech".into(), Mode::Unread, &mut fx);
+    h.run(fx);
+    h.hold_next_page = true;
+    for _ in 0..PAGE - PREFETCH {
+        h.key("n");
+    }
+    assert!(h.held.is_some());
+    let stale = h.held.take().unwrap();
+    h.key("p");
+    h.key("m");
+    h.cursor_on("Tech");
+    h.key("r");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    h.changed(Applied { feed: None, category: Some(cat(77, "Science")) }, Some(feed_list()), None);
+
+    let Some(Outcome::Page { load, .. }) = h.exec(stale) else { panic!("a page") };
+    let late = Outcome::Page { load, arrivals: false, result: Err("That feed or category isn't there".into()) };
+    h.app.apply(late);
+    assert_eq!(h.app.toast(), None, "an answer about the old id is a no-op");
+    h.key("Escape");
+    h.key("Escape");
+    h.key("n");
+    let next = h.entries_calls().last().map(|c| (*c).clone());
+    assert!(matches!(next, Some(Effect::LoadPage { selection: Selection::Category { id: 77 }, .. })), "{next:?}");
+}
+
+#[test]
+fn a_question_about_a_list_that_changes_id_or_goes_is_dropped_rather_than_answered() {
+    let mut h = reading(Selection::Category { id: 2 }, "Tech", FRESHRSS);
+    h.cursor_on("Tech");
+    h.key("r");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    h.key("Escape");
+    h.key("Escape");
+    h.shift("A");
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    h.changed(Applied { feed: None, category: Some(cat(77, "Science")) }, Some(feed_list()), None);
+    assert_eq!(h.app.overlay(), Overlay::None);
+    h.key("y");
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::MarkAllRead { .. })));
+}
+
+#[test]
+fn a_feed_thats_open_and_removed_leaves_nothing_to_read_and_the_picker_up() {
+    let mut h = reading(Selection::Feed { id: 10 }, "Alpha", Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    h.hold_next_page = true;
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    assert_eq!(h.app.queue().len(), 0);
+    assert_eq!(h.app.current(), None);
+    assert_eq!(h.app.selection_label(), "");
+    assert_eq!(h.notice(), "Removed “Alpha” and its articles.");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker, "nothing to go back to");
+    assert_eq!(h.app.picker_list(), &PickerList::Ready(h.counts_as_listed()));
+}
+
+impl Harness {
+    /// What the picker shows after the last answer to `FeedCounts`: the fake's counts.
+    fn counts_as_listed(&self) -> Counts {
+        Counts { feeds: self.counts.clone(), starred: self.starred }
+    }
+}
+
+#[test]
+fn a_feed_removed_while_its_list_is_being_read_with_the_panel_closed_goes_back_to_the_picker() {
+    let mut h = reading(Selection::Feed { id: 10 }, "Alpha", Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    h.key("Escape");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::None, "reading it still");
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.toast(), Some("Removed “Alpha” and its articles."));
+    assert_eq!(h.app.current(), None);
+}
+
+#[test]
+fn a_removed_feeds_articles_leave_a_longer_list_and_your_place_stays() {
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    h.key("Escape");
+    h.key("Escape");
+    for _ in 0..3 {
+        h.key("n");
+    }
+    assert_eq!(h.app.current().map(|e| e.id), Some(4));
+    h.key("p");
+    h.key("m");
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    let ids: Vec<i64> = h.app.queue().iter().map(|e| e.id).collect();
+    assert_eq!(ids, [4, 5]);
+    assert_eq!(h.app.current().map(|e| e.id), Some(4), "the same article");
+    assert_eq!(h.app.position(), "1 / 2");
+}
+
+#[test]
+fn removing_the_feed_of_the_article_on_screen_puts_the_next_one_there() {
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    assert_eq!(h.app.current().map(|e| e.id), Some(4));
+    h.key("Escape");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.app.screen(), Screen::Article);
+}
+
+#[test]
+fn an_answer_for_an_article_that_moved_up_the_queue_changes_nothing_else() {
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    h.key("Escape");
+    h.key("Escape");
+    h.key("n");
+    let then = AfterOpen::MarkRead { index: 1, id: 2 };
+    h.key("p");
+    h.key("m");
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    // Index 1 is article 5 now, and `o` was pressed on article 2, which is gone.
+    let fx = h.app.apply(Outcome::OpenedInBrowser { then, result: Ok(()) });
+    assert!(fx.is_empty());
+    assert!(h.app.queue().iter().all(|e| e.status == EntryStatus::Unread));
+}
+
+#[test]
+fn a_page_on_its_way_can_bring_back_nothing_of_a_removed_feed() {
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    let load = h.app.latest_load;
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    assert_ne!(h.app.latest_load, load);
+    let stale = EntryPage { total: 9, entries: of_two_feeds() };
+    h.app.apply(Outcome::Page { load, arrivals: false, result: Ok(stale) });
+    assert_eq!(h.app.queue().len(), 2);
+}
+
+#[test]
+fn the_last_articles_of_a_list_going_loads_what_comes_after_them() {
+    let mut h = reading(Selection::Category { id: 1 }, "News", Capabilities::EVERYTHING);
+    h.fake.entries.retain(|e| e.feed.id == 12);
+    h.app.has_more = true;
+    h.app.queue.retain(|e| e.feed.id == 10);
+    h.cursor_on("Alpha");
+    h.key("d");
+    h.key("y");
+    let before = h.entries_calls().len();
+    let list = h.list_without(10);
+    h.changed(Applied::default(), Some(list), None);
+    assert_eq!(h.entries_calls().len(), before + 1, "it starts again, as there's nothing to page on from");
+    assert!(h.app.current().is_some());
+}
+
+#[test]
+fn a_miniflux_category_that_goes_takes_its_feeds_out_of_every_open_list() {
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    h.cursor_on("News");
+    h.key("d");
+    h.key("y");
+    let mut after = feed_list();
+    after.counts.feeds.retain(|f| f.feed.category.id != 1);
+    after.categories.retain(|c| c.id != 1);
+    h.changed(Applied::default(), Some(after), None);
+    assert_eq!(h.app.queue().iter().map(|e| e.id).collect::<Vec<_>>(), [4, 5]);
+    assert!(h.notice().contains("with its 2 feeds and their articles"), "{}", h.notice());
+
+    let mut h = reading(Selection::Feed { id: 10 }, "Alpha", Capabilities::EVERYTHING);
+    h.cursor_on("News");
+    h.key("d");
+    h.key("y");
+    h.changed(Applied::default(), Some(FeedList::default()), None);
+    assert_eq!(h.app.current(), None, "the feed being read went with it");
+    assert_eq!(h.app.selection_label(), "");
+}
+
+#[test]
+fn a_freshrss_category_that_goes_keeps_its_articles_and_only_its_own_open_list_closes() {
+    let mut h = reading(Selection::All, "All unread", FRESHRSS);
+    h.cursor_on("News");
+    h.key("d");
+    h.key("y");
+    let mut after = feed_list();
+    after.categories.retain(|c| c.id != 1);
+    h.changed(Applied::default(), Some(after), None);
+    assert_eq!(h.app.queue().len(), 5, "the feeds are still there");
+    assert!(h.notice().contains("Its 2 feeds are kept"), "{}", h.notice());
+
+    let mut h = reading(Selection::Feed { id: 10 }, "Alpha", FRESHRSS);
+    h.cursor_on("News");
+    h.key("d");
+    h.key("y");
+    h.changed(Applied::default(), Some(feed_list()), None);
+    assert_eq!(h.app.selection_label(), "Alpha", "a feed outlives its category");
+
+    let mut h = reading(Selection::Category { id: 1 }, "News", FRESHRSS);
+    h.cursor_on("News");
+    h.key("d");
+    h.key("y");
+    h.changed(Applied::default(), Some(feed_list()), None);
+    assert_eq!(h.app.selection_label(), "", "there's no such list any more");
+}
+
+#[test]
+fn a_feed_that_moves_out_of_the_open_category_takes_its_articles_with_it() {
+    let mut h = reading(Selection::Category { id: 1 }, "News", Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("m");
+    h.key("j");
+    h.key("Enter");
+    h.changed(Applied { feed: None, category: Some(cat(2, "Tech")) }, Some(feed_list()), None);
+    assert_eq!(h.app.queue().iter().map(|e| e.id).collect::<Vec<_>>(), [4, 5]);
+
+    let mut h = reading(Selection::All, "All unread", Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("m");
+    h.key("j");
+    h.key("Enter");
+    h.changed(Applied { feed: None, category: Some(cat(2, "Tech")) }, Some(feed_list()), None);
+    assert_eq!(h.app.queue().len(), 5, "still in All");
+}
+
+#[test]
+fn a_list_that_wont_come_after_a_change_still_counts_as_done_and_is_asked_for_again() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("Alpha");
+    h.key("r");
+    let fx = h.app.submit_manage("Renamed");
+    h.run(fx);
+    h.changed(Applied::default(), None, None);
+    assert!(h.notice().contains("couldn't get the list back"), "{}", h.notice());
+    assert!(h.app.manage_view().unwrap().worrying);
+}
+
+#[test]
+fn f_asks_a_server_that_can_and_says_what_to_expect() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.key("f");
+    assert!(h.calls.contains(&Effect::RefreshFeeds));
+    assert!(h.notice().contains("fetching"), "{}", h.notice());
+
+    let mut h = managing(FRESHRSS);
+    h.key("f");
+    assert!(!h.calls.contains(&Effect::RefreshFeeds));
+    assert_eq!(h.manage_stage(), "list");
+}
+
+#[test]
+fn a_click_on_a_row_goes_there_and_on_a_category_to_move_to_it_moves() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    assert!(h.app.manage_row(2).is_empty());
+    assert_eq!(h.app.manage_view().unwrap().cursor, 2);
+    h.cursor_on("Alpha");
+    h.key("m");
+    let fx = h.app.manage_row(1);
+    h.run(fx);
+    assert_eq!(h.changes(), [FeedChange::MoveFeed { id: 10, to: Destination::Existing(cat(2, "Tech")) }]);
+}
+
+#[test]
+fn the_panel_keeps_its_keys_and_help_comes_back_to_it() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.key("?");
+    assert_eq!(h.app.overlay(), Overlay::Help);
+    assert!(h.app.help_lines().iter().any(|(_, action)| action.contains("(managing feeds)")));
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    h.key("/");
+    h.key(",");
+    h.key("Enter");
+    assert_eq!(h.app.overlay(), Overlay::Manage);
+    assert!(h.app.settings().is_none());
+}
+
+#[test]
+fn a_list_that_fails_says_so_where_the_rows_would_be_and_esc_still_closes() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.key("Escape");
+    h.key("m");
+    let serial = h.app.latest_list;
+    h.app.manage = Some(Manage::default());
+    h.app.apply(Outcome::FeedList { serial, result: Err("Could not reach Miniflux".into()) });
+    let view = h.app.manage_view().unwrap();
+    assert_eq!((view.stage, view.error.as_str()), ("loading", "Could not reach Miniflux"));
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
 }

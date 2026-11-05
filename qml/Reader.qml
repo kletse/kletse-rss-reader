@@ -188,7 +188,8 @@ Flickable {
             width: page.width - 2 * reader.gutter
             sourceComponent: {
                 switch (reader.model.screen) {
-                case "settings": return settings
+                // First run has the whole window (Main.qml).
+                case "settings": return reader.model.overlay === "settings" ? settings : null
                 case "loading": return loading
                 case "article": return article
                 case "end": return end

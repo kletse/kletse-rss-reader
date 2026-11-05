@@ -5,12 +5,12 @@
 #![allow(unsafe_code)] // the generated FFI; nothing hand-written here is unsafe
 #![allow(clippy::too_many_arguments)] // `key` takes one flag per modifier, as QML has them
 
-use crate::app::{App, Effect, KeyPress, PickerList, SettingsValues, ToastKind};
+use crate::app::{App, Effect, KeyPress, PickerList, ToastKind};
 use crate::backend::Backend;
-use crate::config::Server;
 use crate::content::convert;
 use crate::keys;
 use crate::paging::Mode;
+use crate::providers::{self, FieldKey};
 use crate::theme::{self, Palette};
 use crate::{
     prefs::{self, Colours},
@@ -18,6 +18,7 @@ use crate::{
 };
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
@@ -98,15 +99,19 @@ pub mod qobject {
         #[qproperty(bool, settings_checking)]
         // Which kind of server the form starts on: a `name` from `server_kinds`.
         #[qproperty(QString, server)]
-        // What the form offers: `[{ name, label }, …]`, as JSON.
-        #[qproperty(QString, server_kinds)]
-        #[qproperty(QString, miniflux_url)]
-        #[qproperty(QString, miniflux_api_key)]
-        #[qproperty(QString, greader_url)]
-        #[qproperty(QString, greader_username)]
-        #[qproperty(QString, greader_password)]
-        #[qproperty(QString, readeck_url)]
-        #[qproperty(QString, readeck_token)]
+        // What the form offers: `providers::PROVIDERS` and `READECK`, as JSON.
+        #[qproperty(QString, providers)]
+        #[qproperty(QString, readeck_fields)]
+        // Every field's value by its key, as JSON. It changes when the settings serial does.
+        #[qproperty(QString, form_values)]
+        // First run: "welcome", "connect" or "no_server", the row the arrows are on, and its words as JSON.
+        #[qproperty(QString, onboarding_step)]
+        #[qproperty(i32, onboarding_cursor)]
+        #[qproperty(QString, first_run)]
+        // The last link opened from a form, shown as text: a browser may not have opened.
+        #[qproperty(QString, shown_link)]
+        // Reading the sample articles, chosen on the first screen.
+        #[qproperty(bool, samples)]
         // Prefs
         #[qproperty(i32, article_size)]
         #[qproperty(i32, width_factor)]
@@ -161,17 +166,10 @@ pub mod qobject {
         #[qinvokable]
         fn open_link(self: Pin<&mut Model>, url: &QString);
         #[qinvokable]
-        fn submit_settings(
-            self: Pin<&mut Model>,
-            server: &QString,
-            miniflux_url: &QString,
-            miniflux_api_key: &QString,
-            greader_url: &QString,
-            greader_username: &QString,
-            greader_password: &QString,
-            readeck_url: &QString,
-            readeck_token: &QString,
-        );
+        fn submit_settings(self: Pin<&mut Model>, server: &QString, fields: &QString);
+        /// A row of the first-run step on screen.
+        #[qinvokable]
+        fn choose_onboarding(self: Pin<&mut Model>, row: i32);
         #[qinvokable]
         fn cancel_settings(self: Pin<&mut Model>);
         /// The search box's Enter.
@@ -277,14 +275,14 @@ pub struct ModelRust {
     settings_error: QString,
     settings_checking: bool,
     server: QString,
-    server_kinds: QString,
-    miniflux_url: QString,
-    miniflux_api_key: QString,
-    greader_url: QString,
-    greader_username: QString,
-    greader_password: QString,
-    readeck_url: QString,
-    readeck_token: QString,
+    providers: QString,
+    readeck_fields: QString,
+    form_values: QString,
+    onboarding_step: QString,
+    onboarding_cursor: i32,
+    first_run: QString,
+    shown_link: QString,
+    samples: bool,
     article_size: i32,
     width_factor: i32,
     colours: QString,
@@ -376,14 +374,14 @@ impl Default for ModelRust {
             settings_error: QString::default(),
             settings_checking: false,
             server: QString::default(),
-            server_kinds: QString::from("[]"),
-            miniflux_url: QString::default(),
-            miniflux_api_key: QString::default(),
-            greader_url: QString::default(),
-            greader_username: QString::default(),
-            greader_password: QString::default(),
-            readeck_url: QString::default(),
-            readeck_token: QString::default(),
+            providers: QString::from(&json(&providers::PROVIDERS)),
+            readeck_fields: QString::from(&json(&providers::READECK)),
+            form_values: QString::from("{}"),
+            onboarding_step: QString::from("welcome"),
+            onboarding_cursor: 0,
+            first_run: QString::from(&json(&providers::FIRST_RUN)),
+            shown_link: QString::default(),
+            samples: false,
             article_size: 18,
             width_factor: 40,
             colours: QString::default(),
@@ -417,6 +415,11 @@ impl Default for ModelRust {
     }
 }
 
+/// Tables of plain text, which always serialize.
+fn json(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "[]".into())
+}
+
 fn qs(s: &str) -> QString {
     QString::from(s)
 }
@@ -441,8 +444,6 @@ impl qobject::Model {
     }
 
     pub fn start(mut self: Pin<&mut Self>) {
-        let kinds: Vec<_> = Server::ALL.map(|k| serde_json::json!({ "name": k.name(), "label": k.label() })).to_vec();
-        self.as_mut().set_server_kinds(qs(&serde_json::Value::from(kinds).to_string()));
         self.as_mut().apply_theme(theme::load());
 
         let qt = self.qt_thread();
@@ -539,31 +540,14 @@ impl qobject::Model {
         self.run(fx);
     }
 
-    pub fn submit_settings(
-        mut self: Pin<&mut Self>,
-        server: &QString,
-        miniflux_url: &QString,
-        miniflux_api_key: &QString,
-        greader_url: &QString,
-        greader_username: &QString,
-        greader_password: &QString,
-        readeck_url: &QString,
-        readeck_token: &QString,
-    ) {
-        let Some(server) = self.as_mut().state().app.server_named(&server.to_string()) else {
-            return self.sync();
-        };
-        let values = SettingsValues {
-            server,
-            miniflux_url: miniflux_url.to_string(),
-            miniflux_api_key: miniflux_api_key.to_string(),
-            greader_url: greader_url.to_string(),
-            greader_username: greader_username.to_string(),
-            greader_password: greader_password.to_string(),
-            readeck_url: readeck_url.to_string(),
-            readeck_token: readeck_token.to_string(),
-        };
-        let fx = self.as_mut().state().app.submit_settings(values);
+    pub fn submit_settings(mut self: Pin<&mut Self>, server: &QString, fields: &QString) {
+        let fields: HashMap<String, String> = serde_json::from_str(&fields.to_string()).unwrap_or_default();
+        let fx = self.as_mut().state().app.submit_fields(&server.to_string(), &fields);
+        self.run(fx);
+    }
+
+    pub fn choose_onboarding(mut self: Pin<&mut Self>, row: i32) {
+        let fx = self.as_mut().state().app.choose_onboarding(usize::try_from(row).unwrap_or(usize::MAX));
         self.run(fx);
     }
 
@@ -654,7 +638,14 @@ impl qobject::Model {
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
+        let (step, cursor) = (app.step().name(), to_i32(app.step_cursor()));
+        let shown_link = app.shown_link().unwrap_or_default().to_string();
+        let samples = app.samples();
 
+        self.as_mut().set_onboarding_step(qs(step));
+        self.as_mut().set_onboarding_cursor(cursor);
+        self.as_mut().set_shown_link(qs(&shown_link));
+        self.as_mut().set_samples(samples);
         self.as_mut().set_screen(qs(screen));
         self.as_mut().set_overlay(qs(overlay));
         self.as_mut().set_end_title(qs(end_title));
@@ -800,14 +791,9 @@ impl qobject::Model {
         let fill = (!s.settings_shown).then(|| form.values.clone());
         s.settings_shown = true;
         if let Some(values) = fill {
+            let fields: HashMap<_, _> = FieldKey::ALL.map(|key| (key.name(), values.field(key))).into();
             self.as_mut().set_server(qs(values.server.name()));
-            self.as_mut().set_miniflux_url(qs(&values.miniflux_url));
-            self.as_mut().set_miniflux_api_key(qs(&values.miniflux_api_key));
-            self.as_mut().set_greader_url(qs(&values.greader_url));
-            self.as_mut().set_greader_username(qs(&values.greader_username));
-            self.as_mut().set_greader_password(qs(&values.greader_password));
-            self.as_mut().set_readeck_url(qs(&values.readeck_url));
-            self.as_mut().set_readeck_token(qs(&values.readeck_token));
+            self.as_mut().set_form_values(qs(&json(&fields)));
             let serial = self.as_ref().settings_serial().wrapping_add(1);
             self.as_mut().set_settings_serial(serial);
         }

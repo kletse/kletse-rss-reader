@@ -228,6 +228,26 @@ pub const NO_SERVER: NoServer = NoServer {
     more: Link { label: "More on choosing", url: "https://onward.kletse.dev/no-server/" },
 };
 
+/// All the words of first run, for the windows that take them in one piece.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FirstRun {
+    pub welcome_title: &'static str,
+    pub welcome_text: &'static str,
+    pub welcome: [WelcomeRow; 3],
+    pub connect_title: &'static str,
+    pub connect_text: &'static str,
+    pub no_server: NoServer,
+}
+
+pub const FIRST_RUN: FirstRun = FirstRun {
+    welcome_title: WELCOME_TITLE,
+    welcome_text: WELCOME_TEXT,
+    welcome: WELCOME,
+    connect_title: CONNECT_TITLE,
+    connect_text: CONNECT_TEXT,
+    no_server: NO_SERVER,
+};
+
 impl NoServer {
     /// What the arrows move through on this screen, top to bottom.
     pub fn links(&self) -> [Link; 3] {

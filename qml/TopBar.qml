@@ -27,7 +27,8 @@ Rectangle {
                 ui: bar.ui
                 logo: true
                 text: bar.model.selectionLabel !== "" ? bar.model.selectionLabel : "Feeds"
-                width: Math.min(implicitWidth, bar.width * 0.4)
+                // The samples' button below needs the room.
+                width: Math.min(implicitWidth, bar.model.samples ? Math.max(100, bar.width * 0.2) : bar.width * 0.4)
                 tip: "Feeds (p)"
                 onClicked: bar.model.press("picker")
             }
@@ -49,10 +50,19 @@ Rectangle {
                     font.letterSpacing: 0.9
                 }
             }
+            // The samples aren't your feeds, and this is the way out of them.
+            Button {
+                visible: bar.model.samples
+                ui: bar.ui
+                text: bar.width >= 860 ? "Sample articles · Connect" : "Samples · Connect"
+                tip: "Connect your server (,)"
+                onClicked: bar.model.press("settings")
+            }
         }
 
         Text {
             id: position
+            visible: !bar.model.samples || bar.width >= 640
             anchors.centerIn: parent
             text: bar.model.position
             color: bar.model.fgDim

@@ -15,6 +15,17 @@ and how to build it is in the [README](README.md).
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.
+- **`src/providers.rs` is what the windows draw the form and first run from:** the kinds of server with their fields,
+  help and links, Readeck's fields, and first run's words. A window never names a field: it gets the table, keeps a
+  value per `key`, and hands them all back (`App::submit_fields`). A new field or row is one edit there, plus a slot in
+  `SettingsValues`. A hosted service gets a row only after it passes against a real account.
+- **First run is `Overlay::Onboarding` plus `Step`** (Welcome, Connect, NoServer) in app.rs; Esc steps back and Welcome
+  is the end of that. "Try it with sample articles" is `Effect::UseSamples`, an effect with an answer because effects
+  run concurrently: `Outcome::SamplesSwitched` is what opens the picker, so nothing reaches the backend before it
+  switched. `App::samples` is that choice and only that. `ONWARD_DEMO=1` sets `Backend`'s demo from the start, skips first
+  run, and has no marker and no way to Connect, for UI work. In the samples `Action::Settings` means leave them, into
+  Connect: a save there would go nowhere. `leave_samples` starts from a new `App`, so a field added later is left behind
+  too; only `latest_load` and the like carry over. Prefs aren't saved in the samples, and go back when you leave.
 - **`src/bridge.rs` is the only QObject.** It runs effects on a tokio runtime, queues the outcomes back onto the
   Qt thread (`qt_thread().queue`), and after every change `sync()` copies state into properties. Setters only
   notify on a real change, so syncing everything each time is fine. The article is re-rendered only when its id,
@@ -102,6 +113,9 @@ space as `Space`). It then waits 3 s for images, saves the window to the PNG and
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
 `"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j j Enter j"` (the end of a feed, with where j goes next), `"Enter *"` (a starred article), `"j Enter"` (the Starred list; the demo starts with two starred, in memory).
+First run works the same with `XDG_CONFIG_HOME` and `XDG_STATE_HOME` on an empty folder and no `ONWARD_DEMO`: `" "` (the first
+screen), `"ArrowDown Enter"` (Connect), `"ArrowUp Enter"` (no server), `"ArrowUp Enter Enter"` (a link opened; that does
+run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the marker), `"Enter Enter ,"` (leaving them).
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
@@ -139,6 +153,10 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   is the `Loader` (null for a moment at creation), hence the `parent?.modelData` in `Blocks.qml`. Recursive
   layouts (quotes, lists) load `Blocks.qml` again with `Loader.setSource(url, props)`, because a QML type can't
   contain itself.
+- **A bare `model` in a root binding crashes in any file, not just `Settings.qml`.** `Onboarding.qml`'s `color: model.bg` was
+  exit 139 with no message. Give the root an `id` and write `o.model`.
+- **A `running:` binding on a `Timer` is re-read when what it depends on changes,** even after `start()`. The snapshot
+  timer's stopped halfway through first run's keys until its binding allowed for keys in progress.
 - **Key text with Ctrl held is a control character.** `keyName()` falls back to the key code for letters, digits
   and `=`/`+`/`-`. On macOS, Qt reports ⌘ as `ControlModifier` and the Control key as `MetaModifier`.
 - **Linking needs lld.** When `ld` is GNU bfd, cxx-qt's build helper picks `lld` if it's installed and `ld.gold`
@@ -216,6 +234,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
 
 Traps here:
 
+- **The form and first run are a `Page` in `draw.rs`,** which keeps what has the focus in view when the rows don't fit.
+  `FORM_WIDTH` leaves room for the longest link on one line.
 - **Don't call `Terminal::clear`.** It asks the terminal for the cursor position, and the answer can't get past the
   thread blocked in `event::read`, which holds crossterm's lock: a 2 s stall, then an error that ends the app. Use
   `repaint` in `mod.rs`. `Terminal::resize` is fine.
@@ -261,6 +281,8 @@ Traps here:
   until something else takes the focus.
 - **Don't give menu items single-key shortcuts.** AppKit matches menu key equivalents before the text field
   sees the key, so typing `j` in the settings would go to the next article.
+- **The decoder's `.convertFromSnakeCase` rewrites an object's keys in a dictionary too,** so field values come as a list of
+  `{key, value}`, and a field's `key` stays `miniflux_url` as the core sends it.
 - **A C callback must not be main-actor code.** A closure written inside a `@MainActor` type is inferred as
   isolated to it and traps when tokio calls it; `wake` in `Core.swift` is a top-level function for that reason.
 - **The window must be told to open at launch** (`.defaultLaunchBehavior(.presented)`): macOS remembers a

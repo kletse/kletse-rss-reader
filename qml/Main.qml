@@ -46,6 +46,8 @@ ApplicationWindow {
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
         // A step's fields go with it (Onboarding.qml), and Connect's take the keyboard themselves.
         onOnboardingStepChanged: if (onboardingStep !== "connect") keys.forceActiveFocus()
+        // The feeds panel's field takes it itself too (FeedManager.qml), and it goes with its stage.
+        onManageFieldChanged: if (!manageField) keys.forceActiveFocus()
     }
 
     // macOS: follow the system appearance.
@@ -171,6 +173,12 @@ ApplicationWindow {
         }
         Help { ui: win; anchors.fill: parent; visible: model.overlay === "help" }
         Transfer { ui: win; anchors.fill: parent; visible: model.overlay === "transfer" }
+        // Made when it opens, as its field takes the keyboard on being made.
+        Loader {
+            anchors.fill: parent
+            active: model.manageShown
+            sourceComponent: FeedManager { ui: win }
+        }
         Confirm { ui: win; anchors.fill: parent; visible: model.overlay === "confirm" }
         // Over everything while it's there: nothing is behind it yet. Made when it opens, so a field that's gone
         // keeps no focus.
@@ -231,8 +239,8 @@ ApplicationWindow {
     // ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (Enter: open the first
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
     // loads and draws. Besides keys: type:text goes into the field with the focus, accept is Enter in that field, tab
-    // moves to the next one, row:n presses a row of first run, find is Settings' way to the address box, and file:path
-    // is what the file dialog would hand over.
+    // moves to the next one, row:n presses a row of first run, find is Settings' way to the address box, file:path is
+    // what the file dialog would hand over, and manage:n is a click on a row of the feeds panel.
     Timer {
         id: snapshotKeys
         property var pending: null
@@ -259,6 +267,8 @@ ApplicationWindow {
                 model.findServer()
             else if (name?.startsWith("file:"))
                 model.feedFile(name.slice(5))
+            else if (name?.startsWith("manage:"))
+                model.manageRow(Number(name.slice(7)))
             else if (name !== undefined)
                 model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
             if (pending.length === 0) {

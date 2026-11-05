@@ -5,8 +5,8 @@ Panel {
     id: confirm
 
     panelWidth: Math.min(480, width - 32)
-    // Over the picker (Shift+A on a row), lower down, clear of the top of the list it's about.
-    panelY: ui.model.pickerShown ? Math.max(height * 0.08, (height - panelHeight) / 2) : height * 0.08
+    // Over the picker (Shift+A on a row) or the feeds panel, lower down, clear of the top of the list it's about.
+    panelY: ui.model.pickerShown || ui.model.manageShown ? Math.max(height * 0.08, (height - panelHeight) / 2) : height * 0.08
 
     Column {
         x: 20
@@ -25,7 +25,7 @@ Panel {
         }
         Text {
             width: parent.width
-            text: "Enter / y to confirm · Esc / n to cancel"
+            text: confirm.ui.model.confirmHint
             color: confirm.ui.model.fgDim
             wrapMode: Text.Wrap
             font.family: confirm.ui.uiFont

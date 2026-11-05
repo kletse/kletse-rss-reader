@@ -78,6 +78,13 @@ Panel {
     actions: [
         Button {
             ui: picker.ui
+            visible: picker.model.manages
+            iconPath: "M4 6h16 M4 12h10 M4 18h6 M18 14v6 M15 17h6"
+            tip: "Manage feeds and categories (m)"
+            onClicked: picker.model.press("manage")
+        },
+        Button {
+            ui: picker.ui
             visible: picker.model.imports
             iconPath: "M12 3v12 M7 10l5 5 5-5 M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
             tip: "Import feeds from an OPML file (i)"
@@ -146,7 +153,7 @@ Panel {
     Column {
         visible: picker.model.pickerState !== "ready" || picker.rows.length === 0
         width: parent.width
-        bottomPadding: importOffer.visible ? 14 : 0
+        bottomPadding: offers.visible ? 14 : 0
 
         Text {
             width: parent.width
@@ -162,15 +169,28 @@ Panel {
             font.family: picker.ui.uiFont
             font.pixelSize: 14
         }
-        // An empty account's way forward.
-        Button {
-            id: importOffer
-            ui: picker.ui
-            visible: picker.model.pickerState === "ready" && picker.model.pickerOffersImport
+        // An empty account's ways forward.
+        Row {
+            id: offers
+            visible: picker.model.pickerState === "ready" && (addOffer.visible || importOffer.visible)
             x: 14
-            primary: true
-            text: "Import feeds…"
-            onClicked: picker.model.press("import")
+            spacing: 8
+            Button {
+                id: addOffer
+                ui: picker.ui
+                visible: picker.model.pickerOffersAdd
+                primary: true
+                text: "Add a feed…"
+                onClicked: picker.model.press("add_feed")
+            }
+            Button {
+                id: importOffer
+                ui: picker.ui
+                visible: picker.model.pickerOffersImport
+                primary: !addOffer.visible
+                text: "Import feeds…"
+                onClicked: picker.model.press("import")
+            }
         }
     }
 

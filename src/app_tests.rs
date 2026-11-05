@@ -2975,7 +2975,7 @@ fn a_turned_down_freshrss_login_covers_unset_and_wrong_and_says_where_to_go() {
         ..SettingsValues::default()
     });
     let error = h.form_error();
-    for words in ["never set", "aren't sure", "https://rss.example.com/i/", "API management", "couple of seconds"] {
+    for words in ["never set", "aren't sure", "https://rss.example.com/i/", "External access", "couple of seconds"] {
         assert!(error.contains(words), "{words}: {error}");
     }
     assert!(!h.app.settings().unwrap().checking);

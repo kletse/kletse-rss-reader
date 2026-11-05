@@ -56,8 +56,9 @@ const MINIFLUX_PAGES: [&str; 25] = [
 
 /// Servers Onward can't read, by the page a plain `GET <base>/` gives: the name, and how the page's title starts.
 const TITLES: [(&str, &str); 3] = [("yarr", "yarr!"), ("selfoss", "selfoss"), ("Tiny Tiny RSS", "tiny tiny rss")];
-/// The same for those that redirect from there, by a cookie that answer sets.
-const COOKIES: [(&str, &str); 2] = [("Nextcloud", "oc_sessionPassphrase"), ("Stringer", "_stringer_session")];
+/// The same for what can't be told by its title: the cookie it sets, on the page or on the redirect to its sign-in.
+/// Stringer isn't here: it redirects and sets nothing, so one request can't tell it from anything else.
+const COOKIES: [(&str, &str); 1] = [("Nextcloud", "oc_sessionPassphrase")];
 
 /// Where to look for a server: the URLs to try, in order, each without a trailing slash.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -444,6 +445,13 @@ async fn walk(http: &reqwest::Client, base: &str) -> Result<Walked, reqwest::Err
     found(Detected::Unknown { base: base.to_string(), sign_in })
 }
 
+/// Why a request got no answer, as someone at the address box can use it.
+fn failed_because(e: &reqwest::Error) -> String {
+    let why = error::root_cause(e);
+    // What rustls makes of a server that doesn't speak TLS at all.
+    if why.contains("InvalidContentType") { "it doesn't speak https on that port".to_string() } else { why }
+}
+
 /// Tries the address, https first, and says what's there. It's at most five requests, and none of them repeats.
 pub async fn probe(http: &reqwest::Client, address: &Address) -> Detected {
     let mut failure = None;
@@ -457,7 +465,7 @@ pub async fn probe(http: &reqwest::Client, address: &Address) -> Detected {
                 Ok(Walked::Secure(_)) => return Detected::Unknown { base: at, sign_in: false },
                 Err(e) if error::is_certificate(&e) => return Detected::Certificate { base: at },
                 Err(e) => {
-                    failure.get_or_insert((at.clone(), error::root_cause(&e)));
+                    failure.get_or_insert((at.clone(), failed_because(&e)));
                     break;
                 }
             }

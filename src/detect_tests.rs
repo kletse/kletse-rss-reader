@@ -269,12 +269,6 @@ async fn servers_onward_cant_read_are_named_from_their_home_page_with_no_failed_
                 .insert_header("Set-Cookie", "oc_sessionPassphrase=abc; path=/; secure; HttpOnly"),
             "Nextcloud",
         ),
-        (
-            ResponseTemplate::new(302)
-                .insert_header("Location", "/login")
-                .insert_header("Set-Cookie", "_stringer_session=abc; path=/; HttpOnly"),
-            "Stringer",
-        ),
     ] {
         let server = server(vec![("/", page)]).await;
         assert_eq!(detect(&server.uri()).await, Detected::CantRead { name, base: server.uri() });

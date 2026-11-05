@@ -158,9 +158,9 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
                 FieldKey::GreaderPassword,
                 "API password",
                 "",
-                "This isn't your login password. In FreshRSS, sign in, then go to Settings → Profile → API \
-                 management. If you never set one, or aren't sure of it, set one there: a new one can take a couple \
-                 of seconds to work.",
+                "This isn't your login password. In FreshRSS, sign in, then go to Settings → Profile → External access \
+                 via API. If you never set one, or aren't sure of it, set one there: a new one can take a couple of \
+                 seconds to work.",
             ),
         ],
         links: &[Link {
@@ -259,7 +259,7 @@ pub const OPEN_FRESHRSS_ROW: &str = "Open FreshRSS";
 pub fn freshrss_refused(web: &str) -> String {
     format!(
         "FreshRSS turned down that username and API password. If you've never set one, or aren't sure of it: sign in \
-         at {web}, then go to Settings → Profile → API management and set one. If you've only just set it, wait a \
+         at {web}, then go to Settings → Profile → External access via API and set one. If you've only just set it, wait a \
          couple of seconds and try again."
     )
 }

@@ -6,11 +6,12 @@
 use super::draw;
 use super::images::{self, Job};
 use super::ui::{Inline, Ui};
-use crate::app::{Effect, Outcome, Overlay, Screen, Status};
+use crate::app::{Effect, Outcome, Overlay, Screen, Status, Step};
 use crate::backend::Backend;
 use crate::config::Server;
 use crate::feeds::Capabilities;
 use crate::prefs::Prefs;
+use crate::providers::{self, FieldKey};
 use base64::Engine as _;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -41,18 +42,37 @@ impl Screenful {
     }
 
     fn starting(width: u16, height: u16, status: Status) -> Self {
-        let mut ui = Ui::new(Prefs::default(), true, Picker::halfblocks());
+        Self::on(width, height, status, Backend::unconfigured(true), true)
+    }
+
+    /// With nothing set up and no `ONWARD_DEMO`: a first run, on the first screen.
+    fn first_run(width: u16, height: u16) -> Self {
+        let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
+        Self::on(width, height, unset, Backend::unconfigured(false), false)
+    }
+
+    fn on(width: u16, height: u16, status: Status, backend: Backend, demo: bool) -> Self {
+        let mut ui = Ui::new(Prefs::default(), demo, Picker::halfblocks());
         ui.start(status);
         let mut screen = Self {
             ui,
             terminal: Terminal::new(TestBackend::new(width, height)).unwrap(),
-            backend: Arc::new(Backend::unconfigured(true)),
+            backend: Arc::new(backend),
             runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
             opened: Vec::new(),
             content: None,
         };
         screen.settle();
         screen
+    }
+
+    /// A first run, at Connect.
+    fn at_connect(width: u16, height: u16) -> Self {
+        let mut s = Self::first_run(width, height);
+        s.key(KeyCode::Down).key(KeyCode::Enter);
+        s.settle();
+        assert_eq!(s.ui.app.step(), Step::Connect);
+        s
     }
 
     /// The article that opens next has this as its text.
@@ -293,7 +313,7 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
     s.keys(",");
     s.settle();
     assert!(s.shows("● Miniflux") && s.shows("Miniflux URL") && !s.shows("Username"), "{}", s.text());
-    s.ui.form.as_mut().unwrap().focus = super::ui::CHOICE;
+    s.ui.form.as_mut().unwrap().focus = None;
     s.keys("x"); // typing on the choice does nothing
     s.key(KeyCode::Right);
     s.settle();
@@ -301,11 +321,19 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
     assert!(s.shows("FreshRSS: https://your-freshrss/api/greader.php."), "the hint: {}", s.text());
     assert!(!s.shows("Miniflux URL"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, 2, "the Google Reader URL");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::GreaderUrl));
     s.keys("x");
     let form = s.ui.form.as_ref().unwrap();
-    assert!(form.fields[2].text().ends_with('x'));
-    assert_eq!(form.shown(), [super::ui::CHOICE, 2, 3, 4, 5, 6]);
+    assert!(form.text(FieldKey::GreaderUrl).ends_with('x'));
+    let shown = [
+        None,
+        Some(FieldKey::GreaderUrl),
+        Some(FieldKey::GreaderUsername),
+        Some(FieldKey::GreaderPassword),
+        Some(FieldKey::ReadeckUrl),
+        Some(FieldKey::ReadeckToken),
+    ];
+    assert_eq!(form.shown(), shown);
     s.key(KeyCode::BackTab).key(KeyCode::Left);
     s.settle();
     assert!(s.shows("● Miniflux"), "{}", s.text());
@@ -317,16 +345,16 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     s.keys(",");
     assert_eq!(s.ui.app.screen(), Screen::Settings);
     let form = s.ui.form.as_mut().unwrap();
-    form.focus = 6; // Readeck's token
+    form.focus = Some(FieldKey::ReadeckToken);
     s.keys("j");
     s.ui.paste("-pasted\n");
     s.settle();
-    assert!(s.ui.form.as_ref().unwrap().fields[6].text().ends_with("j-pasted"));
+    assert!(s.ui.form.as_ref().unwrap().text(FieldKey::ReadeckToken).ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, super::ui::CHOICE, "round to the top: the server choice");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, None, "round to the top: the server choice");
     s.key(KeyCode::BackTab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, 6);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::ReadeckToken));
     s.key(KeyCode::Esc);
     assert!(s.ui.form.is_none());
     assert!(s.shows("1 / 8"), "back on the article: {}", s.text());
@@ -334,32 +362,128 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 
 #[test]
 fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
-    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
-    let mut s = Screenful::starting(80, 24, unset);
+    let mut s = Screenful::at_connect(80, 24);
     s.key(KeyCode::BackTab).key(KeyCode::Right);
     for _ in 0..3 {
         s.key(KeyCode::Tab);
     }
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, 4, "the password");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::GreaderPassword));
     s.keys("secret");
     assert!(s.shows("the API password from your profile"), "{}", s.text());
     s.ui.app.apply(Outcome::SettingsSaved(Err(crate::greader::LOGIN_REJECTED.into())));
     s.key(KeyCode::Tab);
+    s.key(KeyCode::BackTab);
     assert!(s.shows("turned down the username or API"), "{}", s.text());
     assert!(s.shows("Settings → Integrations."), "the whole message: {}", s.text());
     assert!(s.shows("Enter to connect"), "{}", s.text());
+    assert!(s.shows("••••••"), "the field with the cursor is still there: {}", s.text());
 }
 
 #[test]
-fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
-    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
-    let mut s = Screenful::starting(100, 30, unset);
+fn a_sample_article_is_two_keys_away_with_no_server_and_no_env() {
+    let mut s = Screenful::first_run(100, 30);
     assert!(s.shows("Welcome to Onward"), "{}", s.text());
+    for offered in ["Try it with sample articles", "Connect", "I don't have a server"] {
+        assert!(s.shows(offered), "{offered}: {}", s.text());
+    }
+    assert!(s.shows("› Try it"), "{}", s.text());
+    s.key(KeyCode::Enter);
+    s.settle();
+    assert!(s.shows("All unread"), "the picker: {}", s.text());
+    s.key(KeyCode::Enter);
+    s.settle();
+    assert_eq!(s.ui.app.screen(), Screen::Article);
+    assert!(s.shows("sample articles") && s.shows(", connect"), "the marker: {}", s.text());
+}
+
+#[test]
+fn connecting_from_the_samples_drops_them() {
+    let mut s = Screenful::first_run(100, 30);
+    s.key(KeyCode::Enter);
+    s.settle();
+    s.key(KeyCode::Enter);
+    s.settle();
+    s.keys(",");
+    s.settle();
+    assert_eq!(s.ui.app.step(), Step::Connect);
+    assert!(s.shows("Connect your server"), "{}", s.text());
+    assert!(!s.shows("sample articles"), "{}", s.text());
+    assert!(!s.backend.demo());
+    assert!(!s.backend.status().configured, "what comes next needs a server");
+    s.key(KeyCode::Esc);
+    s.settle();
+    assert_eq!(s.ui.app.step(), Step::Welcome);
+    assert!(s.shows("› Connect"), "{}", s.text());
+}
+
+#[test]
+fn first_run_has_no_readeck_and_settings_does() {
+    let s = Screenful::at_connect(100, 40);
+    assert!(s.shows("Miniflux URL") && !s.shows("Readeck"), "{}", s.text());
+    assert!(!s.ui.form.as_ref().unwrap().shown().contains(&Some(FieldKey::ReadeckUrl)));
+    let mut s = Screenful::reading(100, 40);
+    s.keys(",");
+    s.settle();
+    assert!(s.shows("Readeck URL") && s.shows("API token"), "{}", s.text());
+}
+
+#[test]
+fn a_field_takes_what_only_the_first_run_keys_would_otherwise_take() {
+    let mut s = Screenful::at_connect(100, 30);
+    s.keys("jk");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk");
+    s.ui.paste("-pasted");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted");
+    s.key(KeyCode::Esc);
+    s.ui.paste("elsewhere");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted", "no field on this step");
+    s.key(KeyCode::Enter);
+    s.settle();
+    assert_eq!(s.ui.app.step(), Step::Connect, "the cursor is on Connect, and what was typed is still there");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted");
+}
+
+#[test]
+fn the_no_server_screen_prints_its_addresses_in_full_at_the_smallest_size() {
+    let mut s = Screenful::first_run(80, 24);
+    s.key(KeyCode::Up).key(KeyCode::Enter);
+    s.settle();
+    assert!(s.shows("no deal with any of them"), "{}", s.text());
+    let hosted = providers::NO_SERVER.offers[0].link.url;
+    assert!(s.shows("$15 a year") && s.shows("60 days") && s.shows(hosted), "{}", s.text());
+    s.key(KeyCode::Down);
+    s.settle();
+    assert!(s.shows("$1.80") && s.shows(providers::NO_SERVER.offers[1].link.url), "{}", s.text());
+    s.key(KeyCode::Down);
+    s.settle();
+    assert!(s.shows(providers::NO_SERVER.more.url), "{}", s.text());
+    s.key(KeyCode::Enter);
+    s.settle();
+    assert_eq!(s.opened, [providers::NO_SERVER.more.url]);
+    s.key(KeyCode::Esc);
+    assert_eq!(s.ui.app.step(), Step::Welcome);
+}
+
+#[test]
+fn a_problem_with_the_config_shows_on_every_step() {
+    let mut s = Screenful::first_run(100, 30);
+    s.ui.outcome(Outcome::SettingsLoaded { values: Default::default(), problem: Some("Line 3 is broken".into()) });
+    s.settle();
+    assert!(s.shows("Line 3 is broken"), "{}", s.text());
+    s.key(KeyCode::Down).key(KeyCode::Enter);
+    s.settle();
+    assert!(s.shows("Line 3 is broken"), "{}", s.text());
+}
+
+#[test]
+fn first_run_only_steps_back_and_ctrl_c_still_quits() {
+    let mut s = Screenful::first_run(100, 30);
     s.key(KeyCode::Esc);
     assert_eq!(s.ui.app.overlay(), Overlay::Onboarding);
     assert!(!s.ui.quitting());
+    s.key(KeyCode::Down).key(KeyCode::Enter);
     s.ctrl('c');
-    assert!(s.ui.quitting());
+    assert!(s.ui.quitting(), "from a field too");
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! Runs the app's server effects: the feed server (Miniflux or a Google Reader API server), Readeck, the config
 //! file and the browser. The answer to each comes
-//! back as an `Outcome`. With `ONWARD_DEMO=1` it serves the built-in sample data and never touches a server.
+//! back as an `Outcome`. In demo mode (`ONWARD_DEMO=1`, or the first screen's "Try it with sample articles") it serves
+//! the built-in sample data and never touches a server.
 
 use crate::app::{Effect, Outcome, Saved, SettingsValues, Status};
 use crate::config;
@@ -13,6 +14,7 @@ use crate::paging::PageRequest;
 use crate::readeck;
 use crate::server::Server;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -33,7 +35,8 @@ pub struct Backend {
     /// For images, wherever they live: nothing we sign in with goes through it.
     #[cfg(feature = "tui")]
     images: reqwest::Client,
-    demo: bool,
+    /// Only `Effect::UseSamples` changes it after the start.
+    demo: AtomicBool,
     /// The demo's starred articles, which `*` changes in memory.
     stars: demo::Stars,
 }
@@ -120,7 +123,7 @@ impl Backend {
             http,
             #[cfg(feature = "tui")]
             images: client().build().expect("the HTTP client only needs built-in TLS roots"),
-            demo,
+            demo: AtomicBool::new(demo),
             stars: demo::Stars::default(),
         }
     }
@@ -136,17 +139,25 @@ impl Backend {
         *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    /// `ONWARD_DEMO=1`: sample data, and nothing is saved, prefs included.
+    /// Sample data, and nothing is saved, prefs included.
     pub fn demo(&self) -> bool {
-        self.demo
+        self.demo.load(Ordering::Acquire)
+    }
+
+    /// In or out of the samples, which leaves nothing of the other side: no client made for a server, no stars.
+    fn set_demo(&self, on: bool) {
+        self.demo.store(on, Ordering::Release);
+        *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.stars.reset();
     }
 
     pub fn status(&self) -> Status {
         let cfg = self.config();
+        let demo = self.demo();
         Status {
-            configured: self.demo || cfg.is_complete(),
-            readeck: self.demo || cfg.readeck.is_some(),
-            capabilities: if self.demo { Capabilities::EVERYTHING } else { cfg.server().capabilities() },
+            configured: demo || cfg.is_complete(),
+            readeck: demo || cfg.readeck.is_some(),
+            capabilities: if demo { Capabilities::EVERYTHING } else { cfg.server().capabilities() },
         }
     }
 
@@ -197,7 +208,7 @@ impl Backend {
     /// stops everything; Readeck values that fail don't: see `check_readeck`.
     async fn save_settings(&self, values: SettingsValues) -> Result<Saved, Error> {
         let Checked { cfg, username, readeck_problem } = self.check_settings(values).await?;
-        if !self.demo {
+        if !self.demo() {
             // Writing and flushing the file blocks; keep it off the runtime's few workers.
             let (saved, path) = (cfg.clone(), self.config_path.clone());
             tokio::task::spawn_blocking(move || config::save(&saved, path.as_deref())).await.map_err(|e| {
@@ -235,7 +246,7 @@ impl Backend {
         }
         let readeck = cfg.readeck.take();
         cfg.validate()?;
-        let username = if self.demo { None } else { Some(self.client_for(&cfg)?.check().await?) };
+        let username = if self.demo() { None } else { Some(self.client_for(&cfg)?.check().await?) };
         let (readeck, readeck_problem) = match self.check_readeck(readeck, half_filled).await {
             Ok(readeck) => (readeck, None),
             Err(e) => (self.config().readeck, Some(e.message())),
@@ -256,7 +267,7 @@ impl Backend {
         }
         if let Some(readeck) = &readeck {
             config::validate_url(&readeck.url)?;
-            if !self.demo {
+            if !self.demo() {
                 readeck::check(&self.http, readeck).await?;
             }
         }
@@ -265,14 +276,14 @@ impl Backend {
 
     async fn entries(&self, sel: Selection, status: EntryStatus, request: PageRequest) -> Result<EntryPage, Error> {
         let PageRequest { past, limit, order } = request;
-        if self.demo {
+        if self.demo() {
             return Ok(demo::entries(sel, status, order, past, limit, &self.stars));
         }
         self.server()?.entries(sel, status, order, past, limit).await
     }
 
     async fn search(&self, query: &str, offset: usize, limit: usize) -> Result<EntryPage, Error> {
-        if self.demo {
+        if self.demo() {
             return Ok(demo::search(query, offset, limit, &self.stars));
         }
         self.server()?.search(query, offset, limit).await
@@ -281,7 +292,7 @@ impl Backend {
     /// The selection's newest unread id, and how many are unread up to it.
     async fn count_row(&self, sel: Selection) -> Result<(i64, i64), Error> {
         let newest = self.newest_unread_id(sel).await?;
-        let count = if self.demo {
+        let count = if self.demo() {
             demo::unread_count(sel, newest, &self.stars)
         } else {
             self.server()?.unread_count(sel, newest).await?
@@ -290,7 +301,7 @@ impl Backend {
     }
 
     async fn newest_unread_id(&self, sel: Selection) -> Result<i64, Error> {
-        if self.demo {
+        if self.demo() {
             return Ok(demo::newest_unread_id(sel, &self.stars));
         }
         self.server()?.newest_unread_id(sel).await
@@ -300,7 +311,7 @@ impl Backend {
     /// `data:` images only, and stays off the network.
     #[cfg(feature = "tui")]
     pub async fn fetch_image(&self, url: &str) -> Result<Vec<u8>, Error> {
-        if self.demo || !reqwest::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
+        if self.demo() || !reqwest::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
             return Err(Error::Refused(format!("Not loading {url}")));
         }
         let failed = |source| Error::Unexpected { context: "The image didn't load".into(), source: Some(source) };
@@ -336,11 +347,11 @@ impl Backend {
                 }
             }
             Effect::SetStatus { ids, status, revert, announce } => {
-                let result = if self.demo { Ok(()) } else { self.set_status(&ids, status).await };
+                let result = if self.demo() { Ok(()) } else { self.set_status(&ids, status).await };
                 Outcome::StatusSet { status, revert, announce, result: result.map_err(msg) }
             }
             Effect::SetStarred { index, id, starred } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     self.stars.set(id, starred);
                     Ok(())
                 } else {
@@ -352,7 +363,7 @@ impl Backend {
                 Outcome::StarredSet { index, id, starred, result: result.map_err(msg) }
             }
             Effect::FetchContent { index, id } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     Ok(demo::content(id))
                 } else {
                     match self.server() {
@@ -363,7 +374,7 @@ impl Backend {
                 Outcome::ContentFetched { index, id, result: result.map_err(msg) }
             }
             Effect::FeedCounts => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     Ok(demo::feed_counts(&self.stars))
                 } else {
                     match self.server() {
@@ -374,7 +385,7 @@ impl Backend {
                 Outcome::FeedCounts(result.map_err(msg))
             }
             Effect::RefreshFeeds => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     Ok(())
                 } else {
                     match self.server() {
@@ -389,7 +400,7 @@ impl Backend {
                 Outcome::PickerReloadDue
             }
             Effect::SaveToReadeck { index, id, url } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     Ok(())
                 } else {
                     match self.config().readeck {
@@ -403,7 +414,7 @@ impl Backend {
                 Outcome::OpenedInBrowser { then, result: open_in_browser(&url).map_err(msg) }
             }
             Effect::CountUnread { load, selection, up_to, later } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     Ok(demo::unread_count(selection, up_to, &self.stars))
                 } else {
                     match self.server() {
@@ -414,7 +425,7 @@ impl Backend {
                 Outcome::UnreadCounted { load, selection, up_to, later, result: result.map_err(msg) }
             }
             Effect::MarkAllRead { load, selection, up_to, later } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     demo::mark_read_up_to(selection, up_to, &self.stars);
                     Ok(())
                 } else {
@@ -433,7 +444,7 @@ impl Backend {
                 Outcome::RowCounted { selection, label, result: self.count_row(selection).await.map_err(msg) }
             }
             Effect::MarkRowRead { selection, label, up_to } => {
-                let result = if self.demo {
+                let result = if self.demo() {
                     demo::mark_read_up_to(selection, up_to, &self.stars);
                     Ok(())
                 } else {
@@ -449,6 +460,10 @@ impl Backend {
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
             Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
+            Effect::UseSamples(on) => {
+                self.set_demo(on);
+                Outcome::SamplesSwitched { on, status: self.status() }
+            }
             Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings => return None,
         })
     }
@@ -609,6 +624,59 @@ mod tests {
         let saved = save(values("https://m.example.com", " ", "tok")).await.unwrap();
         assert_eq!(saved.readeck_problem.as_deref(), Some("Fill in both Readeck fields, or leave both empty."));
         assert_eq!(save(values("https://m.example.com", "", "")).await.unwrap().readeck_problem, None);
+    }
+
+    fn complete() -> config::Config {
+        let miniflux = config::Miniflux { url: "https://m.example.com".into(), api_key: "key".into() };
+        config::Config { miniflux, ..config::Config::default() }
+    }
+
+    #[tokio::test]
+    async fn the_samples_serve_their_own_and_leave_no_client_or_stars_behind() {
+        let backend = Backend::unconfigured(false);
+        assert!(!backend.status().configured);
+        let Some(Outcome::SamplesSwitched { on, status }) = backend.run(Effect::UseSamples(true)).await else {
+            panic!("no answer")
+        };
+        assert!(on && status.configured && status.readeck);
+        assert_eq!(status.capabilities, Capabilities::EVERYTHING);
+        let Some(Outcome::FeedCounts(Ok(_))) = backend.run(Effect::FeedCounts).await else {
+            panic!("sample feeds, with nothing set up")
+        };
+
+        let before = demo::feed_counts(&backend.stars);
+        (1..=8).for_each(|id| backend.stars.set(id, true));
+        assert_ne!(demo::feed_counts(&backend.stars), before);
+        backend.set_config(complete());
+        backend.server().unwrap();
+        assert!(backend.server.lock().unwrap().is_some());
+        backend.run(Effect::UseSamples(false)).await;
+        assert!(!backend.demo());
+        assert!(backend.server.lock().unwrap().is_none(), "the client mustn't outlive the switch");
+        assert_eq!(demo::feed_counts(&backend.stars), before, "the stars are back as they were");
+    }
+
+    #[tokio::test]
+    async fn leaving_the_samples_with_nothing_set_up_is_not_being_set_up() {
+        let backend = Backend::unconfigured(false);
+        backend.run(Effect::UseSamples(true)).await;
+        backend.run(Effect::UseSamples(false)).await;
+        assert!(!backend.status().configured);
+        let Some(Outcome::FeedCounts(Err(_))) = backend.run(Effect::FeedCounts).await else {
+            panic!("no feed server, and no samples either")
+        };
+    }
+
+    #[tokio::test]
+    async fn a_demo_isnt_remembered() {
+        let dir = std::env::temp_dir().join(format!("onward-samples-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let backend = Backend::with_config_dir(false, &dir);
+        backend.run(Effect::UseSamples(true)).await;
+        backend.run(Effect::SetStatus { ids: vec![1], status: EntryStatus::Read, revert: None, announce: false }).await;
+        assert!(!dir.join("config.toml").exists());
+        assert!(!Backend::with_config_dir(false, &dir).status().configured, "the next launch opens on Welcome");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A backend that really checks, with this Readeck saved. Tests go through `check_settings`, which writes

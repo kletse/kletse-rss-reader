@@ -270,6 +270,10 @@ impl Harness {
                 Some(Outcome::SettingsLoaded { values: SettingsValues::default(), problem: self.problem.clone() })
             }
             Effect::SaveSettings(_) => Some(Outcome::SettingsSaved(self.save_result.clone())),
+            Effect::UseSamples(on) => {
+                let status = Status { configured: on, readeck: on, capabilities: Capabilities::EVERYTHING };
+                Some(Outcome::SamplesSwitched { on, status })
+            }
         }
     }
 
@@ -1032,22 +1036,282 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
     assert_eq!(h.app.overlay(), Overlay::Settings);
 }
 
-#[test]
-fn onboarding_cant_be_cancelled_and_connects_on_submit() {
+/// A first run, on the first screen.
+fn first_run() -> Harness {
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
-    h.save_result = Ok(saved(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }));
     h.start();
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
-    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Welcome);
+    h
+}
+
+/// A first run, reading the first sample article.
+fn in_the_samples() -> Harness {
+    let mut h = first_run();
+    h.key("Enter");
+    h.key("Enter");
+    h
+}
+
+#[test]
+fn a_sample_article_is_two_key_presses_away() {
+    let h = in_the_samples();
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert!(h.app.samples());
+    assert!(h.title().is_some(), "an article is open");
+}
+
+#[test]
+fn a_sample_article_is_two_clicks_away() {
+    let mut h = first_run();
+    let fx = h.app.choose_onboarding(0);
+    h.run(fx);
+    assert!(h.picker_loaded());
+    let fx = h.app.choose_row(0);
+    h.run(fx);
+    assert!(h.title().is_some());
+}
+
+#[test]
+fn nothing_is_asked_of_the_backend_before_it_has_switched() {
+    let mut h = first_run();
+    let (used, fx) = h.app.key(&KeyPress { key: "Enter".into(), ..KeyPress::default() });
+    assert!(used);
+    assert_eq!(fx, [Effect::UseSamples(true)], "the feeds are asked for once its answer is in");
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn the_first_screen_offers_three_things_and_the_arrows_go_round_them() {
+    let mut h = first_run();
+    assert_eq!(h.app.step_cursor(), 0);
+    h.key("ArrowDown");
+    h.key("j");
+    assert_eq!(h.app.step_cursor(), 2);
+    h.key("ArrowDown");
+    assert_eq!(h.app.step_cursor(), 0);
+    h.key("ArrowUp");
+    assert_eq!(h.app.step_cursor(), 2);
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::NoServer);
+}
+
+#[test]
+fn esc_steps_back_to_the_row_you_left_and_no_further() {
+    let mut h = first_run();
+    h.key("ArrowDown");
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::Connect);
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Welcome, 1));
+    h.key("ArrowDown");
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::NoServer);
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Welcome, 2));
+    let (used, fx) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
+    assert!(!used && fx.is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Onboarding, "there's nothing behind the first screen");
     assert!(h.app.cancel_settings().is_empty());
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn esc_steps_back_from_a_field_and_the_rest_of_the_keys_are_the_fields() {
+    let mut h = first_run();
+    let fx = h.app.choose_onboarding(1);
+    h.run(fx);
+    for key in ["j", "Enter", "ArrowDown"] {
+        let (used, fx) = h.app.key(&KeyPress { key: key.into(), typing: true, ..KeyPress::default() });
+        assert!(!used && fx.is_empty(), "{key}");
+    }
+    assert_eq!(h.app.step(), Step::Connect);
+    let (used, _) = h.app.key(&KeyPress { key: "Escape".into(), typing: true, ..KeyPress::default() });
+    assert!(used);
+    assert_eq!(h.app.step(), Step::Welcome);
+}
+
+#[test]
+fn a_modifier_goes_on_to_the_system() {
+    let mut h = first_run();
+    let (used, _) = h.app.key(&KeyPress { key: "Enter".into(), ctrl: true, ..KeyPress::default() });
+    assert!(!used);
+    assert_eq!(h.app.step(), Step::Welcome);
+}
+
+#[test]
+fn the_macs_menus_do_nothing_on_first_run() {
+    let mut h = first_run();
+    for action in [Action::OpenPicker, Action::Settings, Action::Help, Action::Next { mark_read: true }] {
+        assert!(h.app.action(action).is_empty(), "{action:?}");
+        assert_eq!(h.app.overlay(), Overlay::Onboarding, "{action:?}");
+    }
+}
+
+#[test]
+fn connect_saves_and_goes_on_to_the_picker() {
+    let mut h = first_run();
+    h.key("ArrowDown");
+    h.key("Enter");
+    h.save_result = Ok(saved(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }));
     let fx = h.app.submit_settings(SettingsValues::default());
     assert!(h.app.settings().unwrap().checking);
     h.run(fx);
     assert!(h.picker_loaded());
     assert!(h.app.readeck());
+    assert!(!h.app.samples());
+}
+
+#[test]
+fn a_failed_connect_stays_put_and_says_why() {
+    let mut h = first_run();
+    h.key("ArrowDown");
+    h.key("Enter");
+    h.save_result = Err("Miniflux rejected the API key".into());
+    let typed = SettingsValues { miniflux_url: "https://m.example.com".into(), ..SettingsValues::default() };
+    let fx = h.app.submit_settings(typed.clone());
+    h.run(fx);
+    assert_eq!((h.app.overlay(), h.app.step()), (Overlay::Onboarding, Step::Connect));
+    let form = h.app.settings().unwrap();
+    assert_eq!(form.error, "Miniflux rejected the API key");
+    assert_eq!(form.values, typed);
+    assert!(!form.checking);
+}
+
+#[test]
+fn esc_waits_for_a_save_being_checked() {
+    let mut h = first_run();
+    h.key("ArrowDown");
+    h.key("Enter");
+    let _still_going = h.app.submit_settings(SettingsValues::default());
+    let (used, _) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
+    assert!(used);
+    assert_eq!(h.app.step(), Step::Connect);
+}
+
+#[test]
+fn a_form_is_handed_in_by_field_name_and_keeps_what_isnt_on_screen() {
+    let mut h = first_run();
+    let fields = [("greader_url", "https://f.example.com"), ("readeck_token", "tok"), ("nonsense", "x")];
+    let fields = fields.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let fx = h.app.submit_fields("greader", &fields);
+    let [Effect::SaveSettings(values)] = fx.as_slice() else { panic!("{fx:?}") };
+    assert_eq!(values.0.server, Server::GReader);
+    assert_eq!(values.0.greader_url, "https://f.example.com");
+    assert_eq!(values.0.readeck_token, "tok", "Readeck isn't on this screen, and stays what it was");
+}
+
+#[test]
+fn a_form_naming_an_unknown_kind_of_server_says_so() {
+    let mut h = first_run();
+    assert!(h.app.submit_fields("feedbin", &HashMap::new()).is_empty());
+    assert!(h.app.settings().unwrap().error.contains("feedbin"));
+}
+
+#[test]
+fn the_no_server_links_open_and_leave_their_address_to_read() {
+    let mut h = first_run();
+    let fx = h.app.choose_onboarding(2);
+    h.run(fx);
+    assert_eq!(h.app.shown_link(), None);
+    h.key("ArrowDown");
+    h.key("Enter");
+    let url = providers::NO_SERVER.offers[1].link.url;
+    assert_eq!(h.app.shown_link(), Some(url), "whatever xdg-open says");
+    assert!(h.calls.contains(&Effect::OpenInBrowser { url: url.into(), then: AfterOpen::Nothing }));
+    h.key("Escape");
+    assert_eq!(h.app.shown_link(), None);
+}
+
+#[test]
+fn an_articles_links_leave_nothing_to_read() {
+    let mut h = first_second();
+    let fx = h.app.open_link("https://example.com/a");
+    h.run(fx);
+    assert_eq!(h.app.shown_link(), None);
+}
+
+#[test]
+fn the_samples_write_no_prefs_and_leave_none_behind() {
+    let mut h = in_the_samples();
+    let before = h.app.prefs();
+    let (_, fx) = h.app.key(&KeyPress { key: "]".into(), ..KeyPress::default() });
+    assert!(h.app.prefs() != before, "it still works for the look of it");
+    assert!(!fx.iter().any(|e| matches!(e, Effect::SavePrefs(_))));
+    h.key(",");
+    assert_eq!(h.app.prefs(), before);
+    let (_, fx) = h.app.key(&KeyPress { key: "]".into(), ..KeyPress::default() });
+    assert!(fx.is_empty(), "a form has the keyboard");
+    h.key("Escape");
+    let fx = h.app.set_colours(Colours::OnwardDark);
+    assert!(matches!(fx.as_slice(), [Effect::SavePrefs(_)]), "out of the samples, prefs are written again");
+}
+
+#[test]
+fn connect_from_the_samples_leaves_nothing_of_them() {
+    let mut h = in_the_samples();
+    assert!(h.app.readeck());
+    h.key("/");
+    let fx = h.app.search("watch");
+    h.run(fx);
+    h.key(",");
+    assert_eq!((h.app.overlay(), h.app.step()), (Overlay::Onboarding, Step::Connect));
+    assert!(!h.app.samples());
+    assert!(h.calls.contains(&Effect::UseSamples(false)));
+    assert!(h.app.settings().is_some(), "the form, loaded afresh");
+    assert!(h.app.queue().is_empty());
+    assert_eq!(h.app.selection_label(), "");
+    assert_eq!(h.app.search_query(), "");
+    assert!(!h.app.readeck());
+    assert_eq!(h.app.position(), "");
+    assert_eq!(h.app.picker_list(), &PickerList::Loading);
+}
+
+#[test]
+fn an_answer_on_its_way_when_the_samples_are_left_changes_nothing() {
+    let mut h = in_the_samples();
+    h.fake.entries = items(i64::try_from(2 * PAGE).unwrap());
+    h.key("p");
+    let fx = h.app.choose_row(0);
+    h.run(fx);
+    h.hold_next_page = true;
+    while h.held.is_none() {
+        h.key("j");
+    }
+    h.key(",");
+    h.answer();
+    assert!(h.app.queue().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+}
+
+#[test]
+fn the_samples_can_be_tried_again_after_stepping_back() {
+    let mut h = in_the_samples();
+    h.key(",");
+    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Welcome);
+    assert_eq!(h.app.step_cursor(), 1);
+    h.key("ArrowUp");
+    h.key("Enter");
+    h.key("Enter");
+    assert!(h.app.samples() && h.title().is_some());
+}
+
+#[test]
+fn in_the_samples_the_help_says_connect_where_it_said_settings() {
+    let h = in_the_samples();
+    assert!(h.app.help_lines().iter().any(|(keys, action)| keys == "," && action == "connect"));
+    let h = first_second();
+    assert!(h.app.help_lines().iter().any(|(keys, action)| keys == "," && action == "settings"));
+}
+
+#[test]
+fn a_server_set_up_from_the_start_is_no_sample() {
+    let mut h = first_second();
+    assert!(!h.app.samples());
+    h.key(",");
+    assert_eq!(h.app.overlay(), Overlay::Settings, "ONWARD_DEMO comes this way too");
 }
 
 #[test]
@@ -1238,7 +1502,12 @@ fn onboarding_says_why_the_config_file_wasnt_used() {
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.problem = Some(problem.into());
     h.start();
+    assert_eq!(h.app.step(), Step::Welcome);
     assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem));
+    h.key("Enter");
+    h.key(",");
+    assert_eq!(h.app.step(), Step::Connect);
+    assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem), "the samples don't lose it");
 }
 
 #[test]

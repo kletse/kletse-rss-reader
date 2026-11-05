@@ -1,9 +1,10 @@
 //! Draws the state in `Ui`, the way the QML does: a top bar, the reader under it, and the overlays over that.
 
 use super::article::{self, ACCENT, DIM, Row};
-use super::ui::{CHOICE, FIELDS, Inline, Picture, SECRET, Ui};
-use crate::app::{Overlay, PickerList, Screen, ToastKind};
+use super::ui::{Form, Inline, Picture, Ui};
+use crate::app::{Overlay, PickerList, Screen, Step, ToastKind};
 use crate::paging::Mode;
+use crate::providers::{self, Field};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -84,13 +85,20 @@ fn top_bar(ui: &Ui, frame: &mut Frame, area: Rect) {
         middle.push(Span::raw("  "));
     }
     frame.render_widget(Line::from(middle).centered(), inner);
-    frame.render_widget(Line::styled("? keys", DIM).right_aligned(), inner);
+    // There's a key for it, and no room for both: the samples are short of neither `?` nor time.
+    if app.samples() {
+        let marker = vec![Span::styled("sample articles", ACCENTED), Span::styled(" · , connect", DIM)];
+        frame.render_widget(Line::from(marker).right_aligned(), inner);
+    } else {
+        frame.render_widget(Line::styled("? keys", DIM).right_aligned(), inner);
+    }
     frame.render_widget(Line::styled("─".repeat(usize::from(area.width)), DIM), row_at(area.y + 1, area));
 }
 
 fn body(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     match ui.app.screen() {
         Screen::Article => reader(ui, frame, area),
+        Screen::Settings if ui.app.overlay() == Overlay::Onboarding => onboarding(ui, frame, area),
         Screen::Settings => settings(ui, frame, area),
         Screen::Loading => message(ui, frame, "", "", "Loading…"),
         Screen::End => {
@@ -154,124 +162,233 @@ fn reader(ui: &Ui, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
-    let Some(form) = ui.app.settings() else { return };
-    let (problem, error, checking) = (form.problem.clone(), form.error.clone(), form.checking);
-    let first_run = ui.app.overlay() == Overlay::Onboarding;
-    let Some(fields) = &ui.form else { return };
-    let width = area.width.saturating_sub(4).min(64);
-    let column = Rect::new(area.x + (area.width - width.min(area.width)) / 2, area.y, width, area.height);
-    let w = usize::from(width);
+/// Wide enough for the longest link in `providers.rs`, indented, to stay on one line and be copied.
+const FORM_WIDTH: u16 = 72;
 
-    let mut rows = vec![Row::default()];
-    let title = if first_run { "Welcome to Onward" } else { "Settings" };
-    rows.extend(article::plain(title, BOLD, w));
-    rows.push(Row::default());
-    let intro = if first_run {
-        "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save \
-         articles for later."
-    } else {
-        "Changes are checked against your servers before they are saved."
-    };
-    rows.extend(article::plain(intro, DIM, w));
-    rows.push(Row::default());
-    if let Some(problem) = &problem {
-        rows.extend(article::plain(problem, Style::new().fg(Color::Yellow), w));
-        rows.push(Row::default());
+/// Where the form and the first-run screens go. They take the whole window, with no top bar over them.
+fn form_column(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(4).min(FORM_WIDTH);
+    Rect::new(area.x + (area.width - width.min(area.width)) / 2, area.y, width, area.height)
+}
+
+/// Rows, and the place in them to keep in view.
+#[derive(Default)]
+struct Page {
+    rows: Vec<Row>,
+    /// Row and column of the text cursor.
+    cursor: Option<(usize, usize)>,
+    /// The rows that have to stay on screen: the field or link with the focus and what's said about it.
+    focused: std::ops::Range<usize>,
+}
+
+impl Page {
+    fn text(&mut self, text: &str, style: Style, width: usize) {
+        self.rows.extend(article::plain(text, style, width));
     }
 
-    const SECTIONS: [(usize, &str, &str); 4] = [
-        (CHOICE, "Server", "← → to switch"),
-        (0, "Miniflux", "required"),
-        (2, "Google Reader API", "required"),
-        (5, "Readeck", "optional: leave empty to hide the bookmark button"),
-    ];
-    const LABELS: [&str; FIELDS] =
-        ["Miniflux URL", "API key", "Server URL", "Username", "Password", "Readeck URL", "API token"];
-    const PLACEHOLDERS: [&str; FIELDS] = [
-        "https://miniflux.example.com",
-        "Settings → API Keys → Create a new API key",
-        "https://freshrss.example.com/api/greader.php",
-        "",
-        "",
-        "https://readeck.example.com",
-        "Profile → API Tokens (needs “Bookmarks: write”)",
-    ];
-    const GREADER_HINT: &str = "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.";
-    const PASSWORD_HINT: &str = "FreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations.";
-    let mut cursor = None;
-    let shown = fields.shown();
-    for (n, &i) in shown.iter().enumerate() {
-        if let Some((_, title, note)) = SECTIONS.iter().find(|(first, ..)| *first == i) {
-            let line = Line::from(vec![Span::styled(*title, ACCENTED), Span::styled(format!(" · {note}"), DIM)]);
-            rows.push(Row { line, ..Row::default() });
+    fn blank(&mut self) {
+        self.rows.push(Row::default());
+    }
+
+    /// A heading and a line under it, and any problem with the config, which every step has to say.
+    fn head(&mut self, title: &str, text: &str, problem: Option<&str>, width: usize) {
+        self.blank();
+        self.text(title, BOLD, width);
+        self.blank();
+        self.text(text, DIM, width);
+        self.blank();
+        if let Some(problem) = problem {
+            self.text(problem, Style::new().fg(Color::Yellow), width);
+            self.blank();
         }
-        let focused = i == fields.focus;
-        if i == CHOICE {
-            let mark = if focused { Span::styled("› ", ACCENTED) } else { Span::raw("  ") };
-            let option = |on: bool, name: &'static str| {
-                let style = if on { BOLD } else { DIM };
-                Span::styled(format!("{} {name}", if on { "●" } else { "○" }), style)
-            };
-            let mut line = vec![Span::raw("  "), mark];
-            for (n, kind) in crate::config::Server::ALL.into_iter().enumerate() {
-                if n > 0 {
-                    line.push(Span::raw("   "));
-                }
-                line.push(option(kind == fields.server, kind.label()));
-            }
-            rows.push(Row { line: Line::from(line), ..Row::default() });
-            rows.push(Row::default());
-            continue;
-        }
-        rows.push(Row {
-            line: Line::from(Span::styled(format!("  {}", LABELS[i]), if focused { BOLD } else { DIM })),
-            ..Row::default()
-        });
-        let (text, at) = fields.fields[i].view(w.saturating_sub(4), SECRET[i]);
-        let mark = if focused { Span::styled("› ", ACCENTED) } else { Span::raw("  ") };
+    }
+
+    fn section(&mut self, title: &str, note: &str) {
+        let line = Line::from(vec![Span::styled(title.to_string(), ACCENTED), Span::styled(format!(" · {note}"), DIM)]);
+        self.rows.push(Row { line, ..Row::default() });
+    }
+
+    fn indented(&mut self, text: &str, style: Style, width: usize) {
+        let indent = Span::raw("    ");
+        self.rows.extend(article::prefixed(article::plain(text, style, width.saturating_sub(4)), &indent, &indent));
+    }
+
+    fn field(&mut self, form: &Form, field: &Field, width: usize) {
+        let focused = form.focus == Some(field.key);
+        let start = self.rows.len();
+        let label = format!("  {}", field.label);
+        self.rows
+            .push(Row { line: Line::from(Span::styled(label, if focused { BOLD } else { DIM })), ..Row::default() });
+        let editor = form.fields.get(&field.key);
+        let (text, at) = editor.map_or((String::new(), 0), |e| e.view(width.saturating_sub(4), field.secret));
         let value = if text.is_empty() {
-            Span::styled(fitted(PLACEHOLDERS[i], w.saturating_sub(4)), DIM)
+            Span::styled(fitted(field.placeholder, width.saturating_sub(4)), DIM)
         } else {
             Span::raw(text)
         };
         if focused {
-            cursor = Some((rows.len(), 4 + at));
+            self.cursor = Some((self.rows.len(), 4 + at));
         }
-        rows.push(Row { line: Line::from(vec![Span::raw("  "), mark, value]), ..Row::default() });
-        let hint = match i {
-            2 => Some(GREADER_HINT),
-            4 => Some(PASSWORD_HINT),
-            _ => None,
-        };
-        if let Some(hint) = hint {
-            let indent = Span::raw("    ");
-            rows.extend(article::prefixed(article::plain(hint, DIM, w.saturating_sub(4)), &indent, &indent));
+        self.rows.push(Row { line: Line::from(vec![Span::raw("  "), mark(focused), value]), ..Row::default() });
+        if !field.help.is_empty() {
+            self.indented(field.help, DIM, width);
         }
-        if n + 1 < shown.len() {
-            rows.push(Row::default());
+        if focused {
+            self.focused = start..self.rows.len();
         }
     }
+
+    /// The server choice, the chosen server's fields and links, and Readeck when it's on the form.
+    fn form(&mut self, form: &Form, width: usize) {
+        self.section("Server", "← → to switch");
+        let mut choice = vec![Span::raw("  "), mark(form.focus.is_none())];
+        for (n, provider) in providers::PROVIDERS.iter().enumerate() {
+            if n > 0 {
+                choice.push(Span::raw("   "));
+            }
+            let on = provider.protocol == form.server;
+            let style = if on { BOLD } else { DIM };
+            choice.push(Span::styled(format!("{} {}", if on { "●" } else { "○" }, provider.label), style));
+        }
+        self.rows.push(Row { line: Line::from(choice), ..Row::default() });
+        self.blank();
+        let provider = providers::provider(form.server);
+        self.section(provider.short_label, "required");
+        for (n, field) in provider.fields.iter().enumerate() {
+            if n > 0 {
+                self.blank();
+            }
+            self.field(form, field, width);
+        }
+        let last = provider.fields.last().map(|f| f.key);
+        for link in provider.links {
+            self.blank();
+            self.indented(&format!("{}: {}", link.label, link.url), DIM, width);
+            // They can't take the focus, so on a small screen they come into view with the field above them.
+            if form.focus == last {
+                self.focused.end = self.rows.len();
+            }
+        }
+        if form.readeck {
+            self.blank();
+            self.section("Readeck", "optional: leave empty to hide the bookmark button");
+            for (n, field) in providers::READECK.iter().enumerate() {
+                if n > 0 {
+                    self.blank();
+                }
+                self.field(form, field, width);
+            }
+        }
+    }
+
+    /// The rows, cut to leave room for `foot` and keep what has the focus in view: the foot says what went wrong, so
+    /// it's what the rows give way to.
+    fn draw(&self, frame: &mut Frame, foot: &[Row], column: Rect, cursor: bool) {
+        let foot_height = u16::try_from(foot.len()).unwrap_or(u16::MAX).min(column.height);
+        let height = column.height - foot_height;
+        let room = usize::from(height);
+        let start = self.focused.end.saturating_sub(room).min(self.focused.start).min(self.rows.len());
+        let shown = &self.rows[start..];
+        let form_height = u16::try_from(shown.len()).unwrap_or(u16::MAX).min(height);
+        draw_rows(frame, shown, Rect { height: form_height, ..column });
+        draw_rows(frame, foot, Rect { y: column.y + form_height, height: foot_height, ..column });
+        if let Some((row, x)) = self.cursor.filter(|_| cursor)
+            && let (Ok(row), Ok(x)) = (u16::try_from(row.saturating_sub(start)), u16::try_from(x))
+            && row < form_height
+        {
+            frame.set_cursor_position(Position::new(column.x + x, column.y + row));
+        }
+    }
+}
+
+fn mark(focused: bool) -> Span<'static> {
+    if focused { Span::styled("› ", ACCENTED) } else { Span::raw("  ") }
+}
+
+/// Under the form: what went wrong, and what the keys do.
+fn form_foot(error: &str, hint: &str, width: usize) -> Vec<Row> {
     let mut foot = vec![Row::default()];
     if !error.is_empty() {
-        foot.extend(article::plain(&error, ERROR, w));
+        foot.extend(article::plain(error, ERROR, width));
         foot.push(Row::default());
     }
-    let action = if first_run { "Enter to connect" } else { "Enter to save · Esc to cancel" };
-    let hint = if checking { "Checking…".to_string() } else { format!("{action} · Tab for the next field") };
-    foot.extend(article::plain(&hint, DIM, w));
-    // The form doesn't scroll, so when it's too tall the fields give way: what went wrong has to be read.
-    let foot_height = u16::try_from(foot.len()).unwrap_or(u16::MAX).min(column.height);
-    let form_height = u16::try_from(rows.len()).unwrap_or(u16::MAX).min(column.height - foot_height);
-    draw_rows(frame, &rows, Rect { height: form_height, ..column });
-    draw_rows(frame, &foot, Rect { y: column.y + form_height, height: foot_height, ..column });
-    if let Some((row, x)) = cursor
-        && !checking
-        && let (Ok(row), Ok(x)) = (u16::try_from(row), u16::try_from(x))
-        && row < form_height
-    {
-        frame.set_cursor_position(Position::new(column.x + x, column.y + row));
+    foot.extend(article::plain(hint, DIM, width));
+    foot
+}
+
+fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
+    let Some(state) = ui.app.settings() else { return };
+    let Some(form) = &ui.form else { return };
+    let column = form_column(area);
+    let w = usize::from(column.width);
+    let mut page = Page::default();
+    let intro = "Changes are checked against your servers before they are saved.";
+    page.head("Settings", intro, state.problem.as_deref(), w);
+    page.form(form, w);
+    let hint = if state.checking { "Checking…" } else { "Enter to save · Esc to cancel · Tab for the next field" };
+    page.draw(frame, &form_foot(&state.error, hint, w), column, !state.checking);
+}
+
+/// First run, on the step it's at. Each step has what it needs, so nothing here waits on another.
+fn onboarding(ui: &mut Ui, frame: &mut Frame, area: Rect) {
+    let column = form_column(area);
+    let w = usize::from(column.width);
+    let state = ui.app.settings();
+    let problem = state.and_then(|s| s.problem.as_deref());
+    let cursor = ui.app.step_cursor();
+    let mut page = Page::default();
+    match ui.app.step() {
+        Step::Welcome => {
+            page.head(providers::WELCOME_TITLE, providers::WELCOME_TEXT, problem, w);
+            for (n, row) in providers::WELCOME.iter().enumerate() {
+                let style = if row.quiet { DIM } else { Style::new() };
+                let line = Line::from(vec![mark(n == cursor), Span::styled(row.label, style)]);
+                page.rows.push(Row { line, ..Row::default() });
+            }
+            page.draw(frame, &form_foot("", "↑ ↓ and Enter · Ctrl+C to quit", w), column, false);
+        }
+        Step::NoServer => {
+            let panel = providers::NO_SERVER;
+            page.head(panel.title, panel.text, problem, w);
+            for (n, offer) in panel.offers.iter().enumerate() {
+                let start = page.rows.len();
+                page.section(offer.name, offer.price);
+                page.indented(offer.text, Style::new(), w);
+                link_row(&mut page, offer.link.url, n == cursor, w);
+                if n == cursor {
+                    page.focused = start..page.rows.len();
+                }
+                page.blank();
+            }
+            page.text(panel.note, DIM, w);
+            page.blank();
+            let start = page.rows.len();
+            page.text(panel.more.label, ACCENTED, w);
+            link_row(&mut page, panel.more.url, cursor == panel.offers.len(), w);
+            if cursor == panel.offers.len() {
+                page.focused = start..page.rows.len();
+            }
+            page.draw(frame, &form_foot("", "↑ ↓ and Enter to open · Esc to go back", w), column, false);
+        }
+        Step::Connect => {
+            page.head(providers::CONNECT_TITLE, providers::CONNECT_TEXT, problem, w);
+            let (error, checking) = state.map_or(("", false), |s| (s.error.as_str(), s.checking));
+            if let Some(form) = &ui.form {
+                page.form(form, w);
+            }
+            let hint =
+                if checking { "Checking…" } else { "Enter to connect · Esc to go back · Tab for the next field" };
+            page.draw(frame, &form_foot(error, hint, w), column, !checking);
+        }
     }
+}
+
+/// A URL in full: a terminal may have no browser to open, and being told one opened proves nothing.
+fn link_row(page: &mut Page, url: &str, focused: bool, width: usize) {
+    let style = if focused { ACCENTED } else { DIM };
+    let first = if focused { Span::styled("  › ", ACCENTED) } else { Span::raw("    ") };
+    let rows = article::plain(url, style, width.saturating_sub(4));
+    page.rows.extend(article::prefixed(rows, &first, &Span::raw("    ")));
 }
 
 /// Makes sure every cell of `area` gets written. After a repaint ratatui leaves out blanks, as the screen is blank,
@@ -316,9 +433,10 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
     let refresh = if ui.app.capabilities().refresh { " · r refresh" } else { "" };
+    let settings = if ui.app.samples() { "connect" } else { "settings" };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
-        .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));
+        .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , {settings} · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));
     }

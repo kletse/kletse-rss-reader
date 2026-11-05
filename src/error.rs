@@ -41,6 +41,9 @@ pub enum Error {
     /// No answer at all: DNS, a refused connection, TLS, a timeout. The cause is in `source`.
     #[error("Could not reach {service} at {url}")]
     Unreachable { service: Service, url: String, source: reqwest::Error },
+    /// The server's TLS certificate isn't one Onward trusts.
+    #[error("The certificate at {url} isn't trusted, so Onward stopped there.")]
+    Certificate { url: String },
     /// The server answered, but turned down the API key or token.
     #[error("{0}")]
     Rejected(String),
@@ -73,6 +76,18 @@ pub struct RedirectRefused {
     pub to: String,
 }
 
+/// The last cause in an error's chain: the part that says what really happened.
+pub fn root_cause(error: &reqwest::Error) -> String {
+    let root = std::iter::successors(error.source(), |&e| e.source()).last();
+    root.map_or_else(|| error.to_string(), ToString::to_string)
+}
+
+/// TLS failed on the certificate, rather than on there being no TLS. rustls gives no type to look for through
+/// reqwest's layers, only this text ("invalid peer certificate: UnknownIssuer").
+pub fn is_certificate(error: &reqwest::Error) -> bool {
+    std::iter::successors(error.source(), |&e| e.source()).any(|e| e.to_string().contains("certificate"))
+}
+
 fn body_suffix(body: &str) -> String {
     if body.is_empty() { String::new() } else { format!(": {body}") }
 }
@@ -98,7 +113,7 @@ impl Error {
     pub fn kind(&self) -> ErrorKind {
         match self {
             Error::Setup(_) | Error::Redirected { .. } => ErrorKind::Setup,
-            Error::Unreachable { .. } => ErrorKind::Unreachable,
+            Error::Unreachable { .. } | Error::Certificate { .. } => ErrorKind::Unreachable,
             Error::Rejected(_) => ErrorKind::Rejected,
             Error::Http { .. } | Error::Unexpected { .. } => ErrorKind::Server,
             Error::Io { .. } | Error::Refused(_) => ErrorKind::Local,
@@ -124,6 +139,7 @@ impl Error {
             std::iter::successors(source.source(), |&e| e.source()).find_map(|e| e.downcast_ref::<RedirectRefused>());
         match refused {
             Some(refused) => Error::Redirected { service, url: url.to_string(), to: refused.to.clone() },
+            None if is_certificate(&source) => Error::Certificate { url: url.to_string() },
             None => Error::Unreachable { service, url: url.to_string(), source },
         }
     }

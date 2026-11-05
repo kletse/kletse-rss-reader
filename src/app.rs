@@ -15,12 +15,16 @@
 
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
+use crate::detect::{Address, Api, Detected};
 use crate::feeds::{self, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
+use crate::greader;
 use crate::keys::{self, Action};
+use crate::miniflux::MintFailed;
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
-use crate::providers::{self, Choice, FieldKey};
+use crate::providers::{self, Choice, Field, FieldKey, Provider};
+use serde::Serialize;
 use std::collections::HashMap;
 
 pub const APP_NAME: &str = "Onward";
@@ -61,6 +65,93 @@ impl Overlay {
             Overlay::Image => "image",
         }
     }
+}
+
+/// How far Connect has got, from the address box to what that server needs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum Stage {
+    /// The box, and what became of the last look, if that left nothing to ask for.
+    #[default]
+    Address,
+    /// Miniflux, and how it gets a key.
+    Miniflux {
+        base: String,
+        key: KeyRoute,
+    },
+    FreshRss {
+        web: String,
+        api: String,
+    },
+    /// The whole form, as it was before anything was detected.
+    ByHand,
+}
+
+/// How a Miniflux user comes to a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyRoute {
+    /// A username and password, traded for one.
+    Password,
+    /// Pasted, by choice: signing in with a password is still on offer.
+    Chosen,
+    /// Pasted, as this server has no password sign-in.
+    NoPasswords,
+    /// Pasted, as this server couldn't make one. That says nothing about the password.
+    NoMinting,
+}
+
+/// A row of Connect, under the fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RowDoes {
+    /// Open a page.
+    Open(String),
+    /// Go looking at a hosted service's address.
+    Hosted(&'static str),
+    /// Miniflux's key page, and the box to paste what it gives.
+    KeyPage(String),
+    UsePassword,
+    ByHand,
+    /// Back to the address box, from filling in by hand.
+    ToAddress,
+}
+
+/// One thing to press on Connect. `url` is what it opens, for a terminal to print in full.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConnectRow {
+    pub label: String,
+    pub url: Option<String>,
+}
+
+/// Connect as the windows draw it. They keep what's typed; the core says what's on screen and what it's for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConnectView {
+    /// "address" for the address box with `fields` under it, or "by_hand" for the whole form.
+    pub stage: &'static str,
+    /// What was found.
+    pub text: String,
+    /// About the connection itself: it's plain http.
+    pub note: String,
+    pub fields: Vec<Field>,
+    pub rows: Vec<ConnectRow>,
+    /// What the main button says. It runs whatever `submit_settings` is on this stage.
+    pub action: &'static str,
+    /// Looking at an address. Fields stay open: typing makes the answer a no-op.
+    pub probing: bool,
+}
+
+#[derive(Debug, Default)]
+struct Connect {
+    stage: Stage,
+    /// What's in the box, and what `stage` is about.
+    address: String,
+    probing: bool,
+    /// Rows a look left behind, with no fields to go with them.
+    found_rows: Vec<(String, RowDoes)>,
+    /// A look found a server, and it can't go further yet: the button looks again.
+    look_again: bool,
+    /// Plain http is in use, on an address where that's expected.
+    plain: bool,
+    /// Opened from Settings, which is where Esc goes back to.
+    from_settings: bool,
 }
 
 /// Where first run is. It opens on `Welcome`, and Esc comes back there from the others.
@@ -130,8 +221,13 @@ pub struct Saved {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct SettingsValues {
     pub server: Server,
+    /// What's in the address box. It's turned into one of the URLs below, never saved as it is.
+    pub address: String,
     pub miniflux_url: String,
     pub miniflux_api_key: String,
+    /// Only on the way to a key: `App` hands these on in an effect and keeps neither the password nor a copy of it.
+    pub miniflux_username: String,
+    pub miniflux_password: String,
     pub greader_url: String,
     pub greader_username: String,
     pub greader_password: String,
@@ -142,8 +238,11 @@ pub struct SettingsValues {
 impl SettingsValues {
     pub fn field(&self, key: FieldKey) -> &str {
         match key {
+            FieldKey::Address => &self.address,
             FieldKey::MinifluxUrl => &self.miniflux_url,
             FieldKey::MinifluxApiKey => &self.miniflux_api_key,
+            FieldKey::MinifluxUsername => &self.miniflux_username,
+            FieldKey::MinifluxPassword => &self.miniflux_password,
             FieldKey::GreaderUrl => &self.greader_url,
             FieldKey::GreaderUsername => &self.greader_username,
             FieldKey::GreaderPassword => &self.greader_password,
@@ -154,8 +253,11 @@ impl SettingsValues {
 
     pub fn field_mut(&mut self, key: FieldKey) -> &mut String {
         match key {
+            FieldKey::Address => &mut self.address,
             FieldKey::MinifluxUrl => &mut self.miniflux_url,
             FieldKey::MinifluxApiKey => &mut self.miniflux_api_key,
+            FieldKey::MinifluxUsername => &mut self.miniflux_username,
+            FieldKey::MinifluxPassword => &mut self.miniflux_password,
             FieldKey::GreaderUrl => &mut self.greader_url,
             FieldKey::GreaderUsername => &mut self.greader_username,
             FieldKey::GreaderPassword => &mut self.greader_password,
@@ -179,6 +281,9 @@ pub struct SettingsForm {
     pub problem: Option<String>,
     pub error: String,
     pub checking: bool,
+    /// Bumped when `values` should replace what the window holds, after it started from them: the password, gone
+    /// the moment it has been used.
+    pub refill: u64,
 }
 
 /// Puts an optimistic status change back if the server turns it down.
@@ -313,6 +418,13 @@ pub enum Effect {
     UseSamples(bool),
     LoadSettings,
     SaveSettings(SettingsValuesBox),
+    /// Looks at an address, with no credentials. `probe` is compared when the answer comes, as tasks can't be stopped.
+    Probe {
+        probe: u64,
+        address: Address,
+    },
+    /// Trades a Miniflux password for a key, once.
+    MintKey(Login),
     SavePrefs(Prefs),
     ScrollPage {
         up: bool,
@@ -327,6 +439,21 @@ pub struct SettingsValuesBox(pub SettingsValues);
 impl std::fmt::Debug for SettingsValuesBox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SettingsValues { .. }")
+    }
+}
+
+/// A username and password on their way to the one request that uses them. `Debug` shows nothing.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Login {
+    pub probe: u64,
+    pub base: String,
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for Login {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Login { .. }")
     }
 }
 
@@ -398,6 +525,14 @@ pub enum Outcome {
         problem: Option<String>,
     },
     SettingsSaved(Result<Saved, String>),
+    Probed {
+        probe: u64,
+        found: Detected,
+    },
+    KeyMinted {
+        probe: u64,
+        result: Result<String, MintFailed>,
+    },
     /// The backend switched, and this is what it has now.
     SamplesSwitched {
         on: bool,
@@ -494,6 +629,10 @@ pub struct App {
     settings_window_open: bool,
     /// See `Step`; means nothing outside `Overlay::Onboarding`.
     step: Step,
+    /// How far `Step::Connect` has got.
+    connect: Connect,
+    /// A new address, or stepping back, makes the probes still in flight no-ops: each remembers this and compares.
+    latest_probe: u64,
     /// The row the arrows are on, in `Welcome` and `NoServer`.
     step_cursor: usize,
     /// The last link opened from first run or the form. Whether a browser really opened is more than `xdg-open`
@@ -552,6 +691,8 @@ impl App {
             settings_in_window: false,
             settings_window_open: false,
             step: Step::Welcome,
+            connect: Connect::default(),
+            latest_probe: 0,
             step_cursor: 0,
             shown_link: None,
             samples: None,
@@ -1654,14 +1795,20 @@ impl App {
         self.submit_settings(values)
     }
 
-    /// The form's Save / Connect: the backend checks both servers before anything is written.
+    /// The form's Save, or the main button of Connect, which does what its stage is for.
     pub fn submit_settings(&mut self, values: SettingsValues) -> Vec<Effect> {
+        if self.overlay == Overlay::Onboarding { self.submit_connect(values) } else { self.save_values(values) }
+    }
+
+    /// The backend checks both servers before anything is written.
+    fn save_values(&mut self, mut values: SettingsValues) -> Vec<Effect> {
         let Some(form) = self.settings.as_mut() else { return Vec::new() };
         if form.checking {
             return Vec::new();
         }
         form.error.clear();
         form.checking = true;
+        values.miniflux_password.clear();
         form.values = values.clone();
         vec![Effect::SaveSettings(SettingsValuesBox(values))]
     }
@@ -1683,6 +1830,291 @@ impl App {
         self.shown_link = None;
     }
 
+    /// Connect as it stands.
+    pub fn connect_view(&self) -> ConnectView {
+        let c = &self.connect;
+        let (stage, text, action) = match &c.stage {
+            Stage::Address if c.look_again => ("address", "", "Check again"),
+            Stage::Address => ("address", "", "Continue"),
+            Stage::ByHand => ("by_hand", "", "Connect"),
+            Stage::FreshRss { .. } => ("address", providers::FRESHRSS_FOUND, "Connect"),
+            Stage::Miniflux { key: KeyRoute::Password, .. } => ("address", providers::MINIFLUX_FOUND, "Sign in"),
+            Stage::Miniflux { key: KeyRoute::Chosen, .. } => ("address", providers::MINIFLUX_PASTE, "Connect"),
+            Stage::Miniflux { key: KeyRoute::NoPasswords, .. } => {
+                ("address", providers::MINIFLUX_NO_PASSWORDS, "Connect")
+            }
+            Stage::Miniflux { key: KeyRoute::NoMinting, .. } => ("address", providers::MINIFLUX_NO_MINTING, "Connect"),
+        };
+        ConnectView {
+            stage,
+            text: text.to_string(),
+            note: if c.plain { providers::PLAIN_HTTP.to_string() } else { String::new() },
+            fields: self.connect_fields(),
+            rows: self
+                .connect_rows()
+                .into_iter()
+                .map(|(label, does)| {
+                    let url = match does {
+                        RowDoes::Open(url) | RowDoes::KeyPage(url) => Some(url),
+                        _ => None,
+                    };
+                    ConnectRow { label, url }
+                })
+                .collect(),
+            action,
+            probing: c.probing,
+        }
+    }
+
+    /// What this stage needs typed, under the address box.
+    fn connect_fields(&self) -> Vec<Field> {
+        let miniflux = providers::provider(Server::Miniflux);
+        match &self.connect.stage {
+            Stage::Address | Stage::ByHand => Vec::new(),
+            Stage::Miniflux { key: KeyRoute::Password, .. } => miniflux.asks.to_vec(),
+            Stage::Miniflux { .. } => {
+                miniflux.fields.iter().filter(|f| f.key == FieldKey::MinifluxApiKey).copied().collect()
+            }
+            Stage::FreshRss { .. } => providers::provider(Server::GReader).asks.to_vec(),
+        }
+    }
+
+    fn connect_rows(&self) -> Vec<(String, RowDoes)> {
+        let row = |label: &str, does| (label.to_string(), does);
+        match &self.connect.stage {
+            Stage::Address => {
+                let mut rows = self.connect.found_rows.clone();
+                rows.extend(hosted_rows(providers::HOSTED));
+                rows.push(row(providers::BY_HAND_ROW, RowDoes::ByHand));
+                rows
+            }
+            // The page and the paste box are always there: a 401 can't tell a wrong password from an account with none.
+            Stage::Miniflux { base, key: KeyRoute::Password } => {
+                vec![row(providers::NO_PASSWORD_ROW, RowDoes::KeyPage(format!("{base}/keys/create")))]
+            }
+            Stage::Miniflux { base, key } => {
+                let mut rows = vec![row(providers::KEY_PAGE_ROW, RowDoes::Open(format!("{base}/keys/create")))];
+                if *key == KeyRoute::Chosen {
+                    rows.push(row(providers::USE_PASSWORD_ROW, RowDoes::UsePassword));
+                }
+                rows
+            }
+            Stage::FreshRss { web, .. } => vec![row(providers::OPEN_FRESHRSS_ROW, RowDoes::Open(web.clone()))],
+            Stage::ByHand => vec![row(providers::TO_ADDRESS_ROW, RowDoes::ToAddress)],
+        }
+    }
+
+    /// A row of Connect: Enter on it, or a click.
+    fn choose_connect_row(&mut self, row: usize) -> Vec<Effect> {
+        let checking = self.settings.as_ref().is_some_and(|f| f.checking);
+        let Some((_, does)) = self.connect_rows().into_iter().nth(row).filter(|_| !checking) else {
+            return Vec::new();
+        };
+        match does {
+            RowDoes::Open(url) => self.open_link(&url),
+            RowDoes::Hosted(url) => {
+                let Some(form) = self.settings.as_mut() else { return Vec::new() };
+                url.clone_into(&mut form.values.address);
+                form.refill += 1;
+                url.clone_into(&mut self.connect.address);
+                self.look(url)
+            }
+            RowDoes::KeyPage(url) => {
+                self.use_route(KeyRoute::Chosen);
+                self.open_link(&url)
+            }
+            RowDoes::UsePassword => {
+                self.use_route(KeyRoute::Password);
+                Vec::new()
+            }
+            RowDoes::ByHand => {
+                self.to_address();
+                self.connect.stage = Stage::ByHand;
+                Vec::new()
+            }
+            RowDoes::ToAddress => {
+                self.to_address();
+                Vec::new()
+            }
+        }
+    }
+
+    /// Asks the window to take `form.values` again, which have no password in them.
+    fn forget_password(&mut self) {
+        let address = self.connect.address.clone();
+        if let Some(form) = self.settings.as_mut() {
+            form.values.address = address;
+            form.refill += 1;
+        }
+    }
+
+    fn use_route(&mut self, key: KeyRoute) {
+        if let Stage::Miniflux { base, .. } = &self.connect.stage {
+            self.connect.stage = Stage::Miniflux { base: base.clone(), key };
+            self.forget_password();
+            self.clear_connect_error();
+        }
+    }
+
+    fn clear_connect_error(&mut self) {
+        if let Some(form) = self.settings.as_mut() {
+            form.error.clear();
+        }
+    }
+
+    /// Back to the box. What's still being looked at is forgotten, as is what was found.
+    fn to_address(&mut self) {
+        self.latest_probe += 1;
+        let password = matches!(self.connect.stage, Stage::Miniflux { key: KeyRoute::Password, .. });
+        let Connect { address, from_settings, .. } = std::mem::take(&mut self.connect);
+        self.connect = Connect { address, from_settings, ..Connect::default() };
+        self.shown_link = None;
+        if password {
+            self.forget_password();
+        }
+        self.clear_connect_error();
+    }
+
+    /// The address box changed. No request goes out for typing: this only makes what was found, or is on its way, out
+    /// of date. While a key or a save is being made, the box is read-only.
+    pub fn address_edited(&mut self, text: &str) {
+        let checking = self.settings.as_ref().is_some_and(|f| f.checking);
+        if self.overlay == Overlay::Onboarding && self.connect.address != text && !checking {
+            text.clone_into(&mut self.connect.address);
+            self.to_address();
+        }
+    }
+
+    fn submit_connect(&mut self, mut values: SettingsValues) -> Vec<Effect> {
+        let fields = self.connect_fields();
+        let Some(form) = self.settings.as_mut() else { return Vec::new() };
+        if form.checking {
+            return Vec::new();
+        }
+        if let Some(field) = fields.iter().find(|f| values.field(f.key).trim().is_empty()) {
+            form.error = format!("{} is still empty.", field.label);
+            return Vec::new();
+        }
+        match self.connect.stage.clone() {
+            Stage::Address => {
+                values.miniflux_password.clear();
+                let address = values.address.clone();
+                form.values = values;
+                self.connect.address.clone_from(&address);
+                self.look(&address)
+            }
+            Stage::ByHand => self.save_values(values),
+            Stage::FreshRss { api, .. } => {
+                values.server = Server::GReader;
+                values.greader_url = api;
+                self.save_values(values)
+            }
+            Stage::Miniflux { base, key: KeyRoute::Password } => {
+                let password = std::mem::take(&mut values.miniflux_password);
+                let username = values.miniflux_username.trim().to_string();
+                form.error.clear();
+                form.checking = true;
+                form.values = values;
+                vec![Effect::MintKey(Login { probe: self.latest_probe, base, username, password })]
+            }
+            Stage::Miniflux { base, .. } => {
+                values.server = Server::Miniflux;
+                values.miniflux_url = base;
+                self.save_values(values)
+            }
+        }
+    }
+
+    /// A look at what's in the box, by Enter or the button and never by typing.
+    fn look(&mut self, text: &str) -> Vec<Effect> {
+        if self.connect.probing {
+            return Vec::new();
+        }
+        let Some(form) = self.settings.as_mut() else { return Vec::new() };
+        match Address::parse(text) {
+            Err(message) => {
+                form.error = message;
+                Vec::new()
+            }
+            Ok(address) => {
+                form.error.clear();
+                self.latest_probe += 1;
+                self.connect.probing = true;
+                self.connect.found_rows.clear();
+                self.connect.look_again = false;
+                vec![Effect::Probe { probe: self.latest_probe, address }]
+            }
+        }
+    }
+
+    fn probed(&mut self, found: Detected) {
+        self.connect.probing = false;
+        let message = found.problem();
+        match found {
+            Detected::Miniflux { base, sign_in } => {
+                let key = if sign_in { KeyRoute::Password } else { KeyRoute::NoPasswords };
+                self.connect.plain = base.starts_with("http://");
+                self.connect.stage = Stage::Miniflux { base, key };
+            }
+            Detected::FreshRss { web, api, state: Api::Ready } => {
+                self.connect.plain = api.starts_with("http://");
+                self.connect.stage = Stage::FreshRss { web, api };
+            }
+            Detected::FreshRss { web, state: Api::Off, .. } => {
+                self.connect.found_rows = vec![(providers::OPEN_FRESHRSS_ROW.to_string(), RowDoes::Open(web))];
+                self.connect.look_again = true;
+            }
+            Detected::FreshRss { state: Api::Stripped, .. } => {
+                let docs = providers::DOCS_MOBILE;
+                self.connect.found_rows = vec![(docs.label.to_string(), RowDoes::Open(docs.url.to_string()))];
+                self.connect.look_again = true;
+            }
+            _ => {}
+        }
+        if let Some(form) = self.settings.as_mut() {
+            form.error = message.unwrap_or_default();
+        }
+    }
+
+    fn key_minted(&mut self, result: Result<String, MintFailed>, fx: &mut Vec<Effect>) {
+        let Stage::Miniflux { base, .. } = self.connect.stage.clone() else { return };
+        let Some(form) = self.settings.as_mut() else { return };
+        form.checking = false;
+        form.refill += 1;
+        match result {
+            Ok(key) => {
+                let mut values = form.values.clone();
+                values.server = Server::Miniflux;
+                values.miniflux_url = base;
+                values.miniflux_api_key = key;
+                fx.extend(self.save_values(values));
+            }
+            Err(MintFailed::Refused) => providers::MINT_REFUSED.clone_into(&mut form.error),
+            Err(MintFailed::Redirected) => providers::MINT_REDIRECTED.clone_into(&mut form.error),
+            Err(MintFailed::Other(message)) => form.error = message,
+            Err(MintFailed::NoSuchCall) => self.use_route(KeyRoute::NoMinting),
+        }
+    }
+
+    /// A save that failed, on the step that made it. What Connect knows makes it a better message, and a key already
+    /// made isn't made again: it's in the field now, for another try.
+    fn save_failed(&mut self, message: String) {
+        let web = match &self.connect.stage {
+            Stage::FreshRss { web, .. } if self.overlay == Overlay::Onboarding => Some(web.clone()),
+            _ => None,
+        };
+        if matches!(self.connect.stage, Stage::Miniflux { key: KeyRoute::Password, .. }) {
+            self.use_route(KeyRoute::Chosen);
+        }
+        if let Some(form) = self.settings.as_mut() {
+            form.checking = false;
+            form.error = match web {
+                Some(web) if message == greader::LOGIN_REJECTED => providers::freshrss_refused(&web),
+                _ => message,
+            };
+        }
+    }
+
     /// The rows of the step on screen, if it has rows.
     fn step_rows(&self) -> usize {
         match self.step {
@@ -1700,7 +2132,7 @@ impl App {
         }
         let rows = self.step_rows();
         match press.key.as_str() {
-            "Escape" => return self.step_back(),
+            "Escape" => return self.step_back(fx),
             "ArrowDown" | "j" if rows > 0 && !press.typing => self.step_cursor = (self.step_cursor + 1) % rows,
             "ArrowUp" | "k" if rows > 0 && !press.typing => self.step_cursor = (self.step_cursor + rows - 1) % rows,
             "Enter" if rows > 0 && !press.typing => {
@@ -1711,14 +2143,39 @@ impl App {
         true
     }
 
-    /// Esc: to the first screen, on the row you came from. A save that's being checked is seen through.
-    fn step_back(&mut self) -> bool {
+    /// Settings' way into the address box: everything first run does to find a server, for a change of server.
+    pub fn find_server(&mut self) -> Vec<Effect> {
+        if self.overlay != Overlay::Settings && !self.settings_window_open {
+            return Vec::new();
+        }
+        self.settings_window_open = false;
+        self.settings = None;
+        self.overlay = Overlay::Onboarding;
+        self.connect = Connect { from_settings: true, ..Connect::default() };
+        self.go_to_step(Step::Connect, 0);
+        vec![Effect::LoadSettings]
+    }
+
+    /// Esc: back through Connect's stages, then to where it was opened from. A save that's being checked is seen
+    /// through, and so is a key being made.
+    fn step_back(&mut self, fx: &mut Vec<Effect>) -> bool {
         let row = |wanted| providers::WELCOME.iter().position(|r| r.choice == wanted).unwrap_or(0);
         let checking = self.settings.as_ref().is_some_and(|f| f.checking);
         match self.step {
             Step::Welcome => return false,
             Step::Connect if checking => return true,
-            Step::Connect => self.go_to_step(Step::Welcome, row(Choice::Connect)),
+            Step::Connect if self.connect.stage != Stage::Address => self.to_address(),
+            Step::Connect => {
+                let from_settings = self.connect.from_settings;
+                self.to_address();
+                self.connect.from_settings = false;
+                self.go_to_step(Step::Welcome, row(Choice::Connect));
+                if from_settings {
+                    self.overlay = Overlay::None;
+                    self.settings = None;
+                    self.open_settings(false, fx);
+                }
+            }
             Step::NoServer => self.go_to_step(Step::Welcome, row(Choice::NoServer)),
         }
         true
@@ -1749,7 +2206,7 @@ impl App {
                 }
                 None => Vec::new(),
             },
-            Step::Connect => Vec::new(),
+            Step::Connect => self.choose_connect_row(row),
         }
     }
 
@@ -1774,6 +2231,7 @@ impl App {
         let mut fresh = App::new(prefs, self.mac);
         fresh.settings_in_window = self.settings_in_window;
         fresh.latest_load = self.latest_load + 1;
+        fresh.latest_probe = self.latest_probe + 1;
         fresh.toast_serial = self.toast_serial;
         *self = fresh;
         self.overlay = Overlay::Onboarding;
@@ -2009,18 +2467,25 @@ impl App {
             }
             Outcome::SettingsLoaded { values, problem } => {
                 if self.in_settings() || self.settings_window_open {
-                    self.settings = Some(SettingsForm { values, problem, error: String::new(), checking: false });
+                    let refill = 0;
+                    self.settings =
+                        Some(SettingsForm { values, problem, error: String::new(), checking: false, refill });
                 }
             }
             Outcome::SettingsSaved(result) => match result {
                 Ok(saved) => self.close_settings(Some(saved), &mut fx),
-                Err(message) => {
-                    if let Some(form) = self.settings.as_mut() {
-                        form.error = message;
-                        form.checking = false;
-                    }
-                }
+                Err(message) => self.save_failed(message),
             },
+            Outcome::Probed { probe, found } => {
+                if probe == self.latest_probe {
+                    self.probed(found);
+                }
+            }
+            Outcome::KeyMinted { probe, result } => {
+                if probe == self.latest_probe {
+                    self.key_minted(result, &mut fx);
+                }
+            }
             Outcome::SamplesSwitched { on, status } => {
                 if on && !self.samples() {
                     self.samples_on(status, &mut fx);
@@ -2029,6 +2494,12 @@ impl App {
         }
         fx
     }
+}
+
+/// The rows of hosted services. Each goes to the same probe as a typed address.
+fn hosted_rows(table: &[Provider]) -> Vec<(String, RowDoes)> {
+    let hosted = table.iter().filter_map(|p| p.fixed_url.map(|url| (p.label, url)));
+    hosted.map(|(label, url)| (label.to_string(), RowDoes::Hosted(url))).collect()
 }
 
 /// Feeds a selection takes in.

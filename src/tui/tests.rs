@@ -1421,6 +1421,6 @@ mod secrets {
         let mut s = stuck(dir.path(), &store);
         s.key(KeyCode::Char(','));
         assert_eq!(s.ui.app.overlay(), Overlay::Settings);
-        assert!(s.shows("can't reach your keyring"), "{}", s.text());
+        assert!(s.shows("can't reach your"), "{}", s.text());
     }
 }

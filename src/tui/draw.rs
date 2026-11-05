@@ -3,6 +3,7 @@
 use super::article::{self, ACCENT, DIM, Row};
 use super::ui::{Focus, Form, Inline, Picture, Ui};
 use crate::app::{ConnectRow, ConnectView, Overlay, PickerList, Screen, Step, ToastKind};
+use crate::grant::GrantView;
 use crate::paging::Mode;
 use crate::providers::{self, Field};
 use ratatui::Frame;
@@ -273,8 +274,9 @@ impl Page {
         }
     }
 
-    /// The server choice, the chosen server's fields and links, and Readeck when it's on the form.
-    fn form(&mut self, form: &Form, width: usize) {
+    /// The server choice, the chosen server's fields and links, and Readeck when it's on the form, with `grant`, the way
+    /// in that needs no token.
+    fn form(&mut self, form: &Form, grant: &GrantView, width: usize) {
         self.section("Server", "← → to switch");
         let mut choice = vec![Span::raw("  "), mark(form.focus == Focus::Choice)];
         for (n, provider) in providers::PROVIDERS.iter().enumerate() {
@@ -313,6 +315,29 @@ impl Page {
                 }
                 self.field(form, field, width);
             }
+            self.grant(form, grant, width);
+        }
+    }
+
+    /// What's going on, printed in full: over SSH there's no browser here, and the code and address are the whole of it.
+    /// Once a row has the focus, all of this comes into view with it.
+    fn grant(&mut self, form: &Form, view: &GrantView, width: usize) {
+        let start = self.rows.len();
+        self.blank();
+        self.indented(&view.text, if view.failed { ERROR } else { DIM }, width);
+        if !view.code.is_empty() {
+            self.blank();
+            self.indented(&format!("Code: {}", view.code), BOLD, width);
+            self.indented(&view.address, Style::new(), width);
+        }
+        if !view.note.is_empty() {
+            self.indented(&view.note, Style::new().fg(Color::Yellow), width);
+        }
+        for (n, row) in view.rows.iter().enumerate() {
+            self.row(row, form.focus == Focus::Grant(n), width);
+        }
+        if matches!(form.focus, Focus::Grant(_)) {
+            self.focused = start..self.rows.len();
         }
     }
 
@@ -376,7 +401,7 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let find = ConnectRow { label: providers::TO_ADDRESS_ROW.to_string(), url: None };
     page.row(&find, form.focus == Focus::Row(0), w);
     page.blank();
-    page.form(form, w);
+    page.form(form, &ui.app.readeck_view(), w);
     let hint = if state.checking { "Checking…" } else { "Enter to save · Esc to cancel · Tab for the next field" };
     page.draw(frame, &form_foot(&state.error, hint, w), column, !state.checking);
 }
@@ -430,7 +455,7 @@ fn onboarding(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             let (error, checking) = state.map_or(("", false), |s| (s.error.as_str(), s.checking));
             if let Some(form) = &ui.form {
                 if by_hand {
-                    page.form(form, w);
+                    page.form(form, &GrantView::default(), w);
                 } else {
                     page.connect(form, &view, w);
                 }

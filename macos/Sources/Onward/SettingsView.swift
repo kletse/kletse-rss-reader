@@ -10,11 +10,17 @@ import SwiftUI
 private enum Field {
     case minifluxUrl, minifluxApiKey, greaderUrl, greaderUsername, greaderPassword
 
-    static func first(_ values: SettingsValues) -> Field {
-        let fields: [(Field, String)] = values.server == "greader"
-            ? [(.greaderUrl, values.greaderUrl), (.greaderUsername, values.greaderUsername),
-               (.greaderPassword, values.greaderPassword)]
-            : [(.minifluxUrl, values.minifluxUrl), (.minifluxApiKey, values.minifluxApiKey)]
+    static func first(_ values: SettingsValues) -> Field? {
+        let fields: [(Field, String)]
+        switch values.server {
+        case "greader":
+            fields = [(.greaderUrl, values.greaderUrl), (.greaderUsername, values.greaderUsername),
+                      (.greaderPassword, values.greaderPassword)]
+        case "miniflux":
+            fields = [(.minifluxUrl, values.minifluxUrl), (.minifluxApiKey, values.minifluxApiKey)]
+        default:
+            return nil
+        }
         return (fields.first { $0.1.isEmpty } ?? fields[fields.count - 1]).0
     }
 }
@@ -57,7 +63,7 @@ struct SettingsWindow: View {
         let settings = model.state?.settings
         TabView {
             Tab("Feed Server", systemImage: "antenna.radiowaves.left.and.right") {
-                pane(settings) { FeedServerSections(values: $values, focus: $focus) }
+                pane(settings) { FeedServerSections(kinds: settings?.kinds ?? [], values: $values, focus: $focus) }
             }
             Tab("Readeck", systemImage: "bookmark") {
                 pane(settings) { ReadeckSection(values: $values) }
@@ -74,7 +80,7 @@ struct SettingsWindow: View {
             guard settings != nil, let loaded = model.settingsValues else { return }
             values = loaded
             saved = loaded
-            focus = .first(loaded)
+            focus = Field.first(loaded)
         }
         // What's left unsaved when the window closes is dropped. A save closes it from `Model`.
         .onDisappear { model.cancelSettings() }
@@ -143,7 +149,7 @@ struct OnboardingView: View {
             }
             // What was wrong with the config file, above the fields it is about.
             MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
-            FeedServerSections(values: $values, focus: $focus)
+            FeedServerSections(kinds: settings?.kinds ?? [], values: $values, focus: $focus)
             ReadeckSection(values: $values)
             MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
             HStack {
@@ -159,22 +165,22 @@ struct OnboardingView: View {
         .onChange(of: settings?.serial, initial: true) {
             guard settings != nil, let loaded = model.settingsValues else { return }
             values = loaded
-            focus = .first(loaded)
+            focus = Field.first(loaded)
         }
     }
 }
 
 private struct FeedServerSections: View {
+    let kinds: [ServerKind]
     @Binding var values: SettingsValues
     var focus: FocusState<Field?>.Binding
 
     var body: some View {
         Section {
             Picker("Server type", selection: $values.server) {
-                Text("Miniflux").tag("miniflux")
-                Text("Google Reader API").tag("greader")
+                ForEach(kinds) { Text($0.label).tag($0.name) }
             }
-            .onChange(of: values.server) { focus.wrappedValue = .first(values) }
+            .onChange(of: values.server) { focus.wrappedValue = Field.first(values) }
             if values.server == "greader" {
                 TextField("Server URL", text: $values.greaderUrl,
                           prompt: Text(verbatim: "https://freshrss.example.com/api/greader.php"))
@@ -183,7 +189,7 @@ private struct FeedServerSections: View {
                     .focused(focus, equals: .greaderUsername)
                 SecureField("Password", text: $values.greaderPassword)
                     .focused(focus, equals: .greaderPassword)
-            } else {
+            } else if values.server == "miniflux" {
                 TextField("Server URL", text: $values.minifluxUrl,
                           prompt: Text(verbatim: "https://miniflux.example.com"))
                     .focused(focus, equals: .minifluxUrl)
@@ -194,7 +200,7 @@ private struct FeedServerSections: View {
             Group {
                 if values.server == "greader" {
                     Text(verbatim: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.\nFreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations.")
-                } else {
+                } else if values.server == "miniflux" {
                     Text("In Miniflux: Settings → API Keys → Create a new API key.")
                 }
             }

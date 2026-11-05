@@ -78,7 +78,7 @@ Panel {
     actions: [
         Button {
             ui: picker.ui
-            visible: picker.model.fetches
+            visible: picker.model.refreshes
             iconPath: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5"
             tip: "Refresh feeds (r)"
             onClicked: picker.model.press("refresh")
@@ -140,7 +140,7 @@ Panel {
         text: picker.model.pickerState === "loading" ? "Loading…"
             : picker.model.pickerState === "error" ? picker.model.pickerError
             : picker.model.pickerHistory ? "Nothing read yet. Press h for unread items."
-            : picker.model.fetches ? "Nothing unread. Press r to refresh, or h for history."
+            : picker.model.refreshes ? "Nothing unread. Press r to refresh, or h for history."
             : "Nothing unread. Press h for history."
         color: picker.model.pickerState === "error" ? picker.model.red : picker.model.fgDim
         font.family: picker.ui.uiFont

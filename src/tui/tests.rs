@@ -8,6 +8,8 @@ use super::images::{self, Job};
 use super::ui::{Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status};
 use crate::backend::Backend;
+use crate::config::Server;
+use crate::feeds::Capabilities;
 use crate::prefs::Prefs;
 use base64::Engine as _;
 use ratatui::Terminal;
@@ -31,7 +33,11 @@ struct Screenful {
 
 impl Screenful {
     fn new(width: u16, height: u16) -> Self {
-        Self::starting(width, height, Status { configured: true, readeck: true, fetches: true })
+        Self::starting(
+            width,
+            height,
+            Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING },
+        )
     }
 
     fn starting(width: u16, height: u16, status: Status) -> Self {
@@ -40,7 +46,7 @@ impl Screenful {
         let mut screen = Self {
             ui,
             terminal: Terminal::new(TestBackend::new(width, height)).unwrap(),
-            backend: Arc::new(Backend::new(true)),
+            backend: Arc::new(Backend::unconfigured(true)),
             runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
             opened: Vec::new(),
             content: None,
@@ -328,7 +334,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 
 #[test]
 fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
-    let unset = Status { configured: false, readeck: false, fetches: true };
+    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut s = Screenful::starting(80, 24, unset);
     s.key(KeyCode::BackTab).key(KeyCode::Right);
     for _ in 0..3 {
@@ -346,7 +352,7 @@ fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
 
 #[test]
 fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
-    let unset = Status { configured: false, readeck: false, fetches: true };
+    let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut s = Screenful::starting(100, 30, unset);
     assert!(s.shows("Welcome to Onward"), "{}", s.text());
     s.key(KeyCode::Esc);
@@ -474,6 +480,16 @@ fn the_help_says_how_it_works_here() {
     assert!(!keys.iter().any(|k| k.contains("Shift+Space")), "most terminals don't report it: {keys:?}");
     assert!(keys.iter().any(|k| k.contains("PgDn")));
     assert!(keys.contains(&"q"));
+}
+
+#[test]
+fn the_help_leaves_out_what_the_server_cant_do() {
+    let on_greader = Status { configured: true, readeck: false, capabilities: Server::GReader.capabilities() };
+    let s = Screenful::starting(100, 30, on_greader);
+    let lines = s.ui.help_lines();
+    let keys: Vec<&str> = lines.iter().map(|(keys, _)| keys.as_str()).collect();
+    assert!(!keys.contains(&"f") && !keys.contains(&"r"), "{keys:?}");
+    assert!(keys.contains(&"/"));
 }
 
 #[test]
@@ -711,7 +727,7 @@ fn only_pixels_on_screen_make_a_repaint() {
     let mut sixel = Picker::halfblocks();
     sixel.set_protocol_type(ProtocolType::Sixel);
     let mut pixels = Ui::new(Prefs::default(), true, sixel);
-    pixels.start(Status { configured: true, readeck: true, fetches: true });
+    pixels.start(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING });
     let area = Rect::new(0, 0, 100, 60);
     let settle = |ui: &mut Ui, s: &Screenful| {
         loop {
@@ -765,7 +781,7 @@ fn png() -> Vec<u8> {
 #[tokio::test]
 async fn pictures_are_decoded_from_data_uris_and_fit_again_for_a_new_size() {
     let src = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png()));
-    let backend = Arc::new(Backend::new(true));
+    let backend = Arc::new(Backend::unconfigured(true));
     let picker = Picker::halfblocks();
     let job = Job::Load { src: src.clone(), size: Size::new(10, 5) };
     let images::Answer::Viewer { result, .. } = images::run(job, Arc::clone(&backend), picker.clone()).await else {
@@ -786,7 +802,7 @@ async fn pictures_are_decoded_from_data_uris_and_fit_again_for_a_new_size() {
 async fn demo_mode_stays_off_the_network_for_images() {
     let job = Job::Load { src: "https://example.com/a.png".into(), size: Size::new(10, 5) };
     let images::Answer::Viewer { result, .. } =
-        images::run(job, Arc::new(Backend::new(true)), Picker::halfblocks()).await
+        images::run(job, Arc::new(Backend::unconfigured(true)), Picker::halfblocks()).await
     else {
         panic!("not the viewer's answer");
     };
@@ -827,7 +843,11 @@ fn nothing_breaks_in_a_tiny_terminal() {
             s.keys(keys);
             s.keys("J");
         }
-        let mut s = Screenful::starting(width, height, Status { configured: false, readeck: false, fetches: true });
+        let mut s = Screenful::starting(
+            width,
+            height,
+            Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING },
+        );
         s.keys("x");
     }
 }

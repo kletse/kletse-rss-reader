@@ -37,7 +37,7 @@ struct OnwardApp: App {
                 Button(Model.shared.state?.article?.starred == true ? "Unstar (*)" : "Star (*)") { Model.shared.key("*") }
                 Button("Open Original (o)") { Model.shared.key("o") }
                 Button("Fetch Full Article (f)") { Model.shared.key("f") }
-                    .disabled(Model.shared.state?.fetches == false)
+                    .disabled(Model.shared.state?.capabilities.fetchFull == false)
                 Button("Save to Readeck (b)") { Model.shared.press("readeck") }
                 Divider()
                 Button("Feeds (p)") { Model.shared.press("picker") }

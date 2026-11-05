@@ -1,6 +1,6 @@
 //! Turns feed counts into the rows of the feeds picker.
 
-use crate::miniflux::{Counts, FeedCount, Selection};
+use crate::feeds::{Counts, FeedCount, Selection};
 use crate::paging::Mode;
 use std::collections::BTreeMap;
 
@@ -88,7 +88,7 @@ fn rows(counts: &[FeedCount], mode: Mode, keep_empty: bool) -> Vec<PickerItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::miniflux::{Category, Feed};
+    use crate::feeds::{Category, Feed};
 
     fn fc(id: i64, title: &str, category: (i64, &str), unread: i64, read: i64) -> FeedCount {
         FeedCount {

@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::error::Error;
+use crate::feeds::Capabilities;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -37,6 +38,42 @@ pub enum Server {
 }
 
 impl Server {
+    /// Every kind, in the order the settings form offers them.
+    pub const ALL: [Server; 2] = [Server::Miniflux, Server::GReader];
+
+    /// As the settings form offers it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Server::Miniflux => "Miniflux",
+            Server::GReader => "Google Reader API (FreshRSS, …)",
+        }
+    }
+
+    /// As the Mac's settings offer it, where the help below the picker names the servers.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Server::Miniflux => "Miniflux",
+            Server::GReader => "Google Reader API",
+        }
+    }
+
+    /// What this kind of server can do.
+    pub fn capabilities(self) -> Capabilities {
+        match self {
+            Server::Miniflux => Capabilities::EVERYTHING,
+            // The protocol has no call for the first two.
+            Server::GReader => Capabilities { fetch_full: false, refresh: false, search: None },
+        }
+    }
+
+    /// Where the kind stands in `ALL`. A new kind stops the build here, and belongs in `ALL` as well.
+    const fn place(self) -> usize {
+        match self {
+            Server::Miniflux => 0,
+            Server::GReader => 1,
+        }
+    }
+
     /// As the config file and the windows name it.
     pub fn name(self) -> &'static str {
         match self {
@@ -45,11 +82,23 @@ impl Server {
         }
     }
 
-    /// The other way round; anything else is Miniflux.
-    pub fn from_name(name: &str) -> Self {
-        if name == "greader" { Server::GReader } else { Server::Miniflux }
+    /// The other way round; `None` for a name that isn't a kind of server, which must not pass for one.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "miniflux" => Some(Server::Miniflux),
+            "greader" => Some(Server::GReader),
+            _ => None,
+        }
     }
 }
+
+const _: () = {
+    let mut at = 0;
+    while at < Server::ALL.len() {
+        assert!(Server::ALL[at].place() == at, "Server::ALL lists every kind, in the order of `place`");
+        at += 1;
+    }
+};
 
 /// `Debug` leaves out the API key.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,12 +235,12 @@ impl Config {
         {
             return Err(Error::Setup(GREADER_INCOMPLETE.into()));
         }
-        match self.server() {
-            Server::Miniflux if !self.is_complete() => {
-                return Err(Error::Setup("The Miniflux URL and API key are required.".into()));
-            }
-            Server::GReader if !self.is_complete() => return Err(Error::Setup(GREADER_INCOMPLETE.into())),
-            _ => {}
+        if !self.is_complete() {
+            let missing = match self.server() {
+                Server::Miniflux => "The Miniflux URL and API key are required.",
+                Server::GReader => GREADER_INCOMPLETE,
+            };
+            return Err(Error::Setup(missing.into()));
         }
         if self.miniflux.is_complete() {
             validate_url(&self.miniflux.url)?;
@@ -206,7 +255,7 @@ impl Config {
     }
 }
 
-const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
+pub(crate) const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
 
 fn clean_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
@@ -226,8 +275,8 @@ pub fn validate_url(url: &str) -> Result<(), Error> {
 
 /// Reads the config file. No file (or no home directory) is an empty config; a file that can't be read or
 /// parsed is an error that says where, so the settings form can show it instead of quietly starting over.
-pub fn read() -> Result<Config, Error> {
-    path().map_or(Ok(Config::default()), |p| read_from(&p))
+pub fn read(path: Option<&Path>) -> Result<Config, Error> {
+    path.map_or(Ok(Config::default()), read_from)
 }
 
 fn read_from(path: &Path) -> Result<Config, Error> {
@@ -274,10 +323,9 @@ fn broken_name(path: &Path) -> PathBuf {
 }
 
 /// Writes the config (mode 600: it holds API keys).
-pub fn save(config: &Config) -> Result<(), Error> {
-    let path =
-        path().ok_or_else(|| Error::Setup("Could not find your home directory to save the settings in".into()))?;
-    save_to(config, &path)
+pub fn save(config: &Config, path: Option<&Path>) -> Result<(), Error> {
+    let path = path.ok_or_else(|| Error::Setup("Could not find your home directory to save the settings in".into()))?;
+    save_to(config, path)
 }
 
 fn save_to(config: &Config, path: &Path) -> Result<(), Error> {
@@ -637,6 +685,24 @@ mod tests {
         assert_eq!(named.server(), Server::GReader);
         assert!(!named.is_complete(), "the named server has no settings");
         assert!(named.validate().unwrap_err().message().contains("Google Reader"));
+    }
+
+    #[test]
+    fn a_name_that_is_no_kind_of_server_is_not_taken_for_one() {
+        for kind in Server::ALL {
+            assert_eq!(Server::from_name(kind.name()), Some(kind));
+        }
+        for name in ["", "Miniflux", "feedbin"] {
+            assert_eq!(Server::from_name(name), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_config_file_naming_an_unknown_server_is_refused_not_read_as_miniflux() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "server = \"feedbin\"\n[miniflux]\nurl = \"https://m\"\napi_key = \"k\"\n").unwrap();
+        assert!(read_from(&path).unwrap_err().message().contains("feedbin"));
     }
 
     #[test]

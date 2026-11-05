@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::dates;
-use crate::miniflux::{Category, Feed, FeedCount};
+use crate::feeds::{Category, Feed, FeedCount};
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
@@ -114,7 +114,7 @@ impl Harness {
         Self {
             app: App::new(Prefs::default(), false),
             fake: Fake { entries, requests: 0 },
-            status: Status { configured: true, readeck: false, fetches: true },
+            status: Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING },
             counts: counts(2, 3),
             starred: Some(0),
             calls: Vec::new(),
@@ -130,7 +130,7 @@ impl Harness {
             fail_fetch: None,
             full_content: "<p>Full text</p>".into(),
             problem: None,
-            save_result: Ok(saved(Status { configured: true, readeck: false, fetches: true })),
+            save_result: Ok(saved(Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING })),
         }
     }
 
@@ -1035,8 +1035,8 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
 #[test]
 fn onboarding_cant_be_cancelled_and_connects_on_submit() {
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false, fetches: true };
-    h.save_result = Ok(saved(Status { configured: true, readeck: true, fetches: true }));
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
+    h.save_result = Ok(saved(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }));
     h.start();
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
     h.key("Escape");
@@ -1107,7 +1107,7 @@ fn saving_in_the_settings_window_starts_over_from_the_picker() {
 fn readeck_values_that_failed_are_reported_after_the_form_closes() {
     let mut h = first_second();
     h.key(",");
-    let status = Status { configured: true, readeck: true, fetches: true };
+    let status = Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: None, readeck_problem: Some("Readeck rejected the token".into()) });
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
@@ -1121,7 +1121,7 @@ fn readeck_values_that_failed_are_reported_after_the_form_closes() {
 #[test]
 fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run_too() {
     let problem = Some("Readeck rejected the token".to_string());
-    let status = Status { configured: true, readeck: false, fetches: true };
+    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
 
     let mut h = first_second();
     h.app.use_settings_window();
@@ -1133,7 +1133,7 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
     assert_eq!(h.toast(), Some("Settings saved. Readeck wasn't changed: Readeck rejected the token"));
 
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: None, readeck_problem: problem });
     h.start();
     let fx = h.app.submit_settings(SettingsValues::default());
@@ -1144,7 +1144,7 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
 
 #[test]
 fn saving_says_who_you_are_signed_in_as() {
-    let status = Status { configured: true, readeck: false, fetches: true };
+    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut h = first_second();
     h.key(",");
     h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
@@ -1155,7 +1155,7 @@ fn saving_says_who_you_are_signed_in_as() {
 
     // On first run too, where a plain "Settings saved" says nothing new.
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
     h.start();
     let fx = h.app.submit_settings(SettingsValues::default());
@@ -1165,7 +1165,7 @@ fn saving_says_who_you_are_signed_in_as() {
 
 #[test]
 fn a_nameless_sign_in_shows_no_empty_name() {
-    let status = Status { configured: true, readeck: false, fetches: true };
+    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
     for username in [None, Some(String::new()), Some("  ".to_string())] {
         let mut h = first_second();
         h.key(",");
@@ -1175,7 +1175,7 @@ fn a_nameless_sign_in_shows_no_empty_name() {
         assert_eq!(h.toast(), Some("Settings saved"), "{username:?}");
 
         let mut h = Harness::new(items(2));
-        h.status = Status { configured: false, readeck: false, fetches: true };
+        h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
         h.save_result = Ok(Saved { status, username, readeck_problem: None });
         h.start();
         let fx = h.app.submit_settings(SettingsValues::default());
@@ -1186,7 +1186,7 @@ fn a_nameless_sign_in_shows_no_empty_name() {
 
 #[test]
 fn the_name_and_a_readeck_problem_are_both_in_the_toast() {
-    let status = Status { configured: true, readeck: false, fetches: true };
+    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut h = first_second();
     h.key(",");
     let readeck_problem = Some("Readeck rejected the token".to_string());
@@ -1201,7 +1201,7 @@ fn the_name_and_a_readeck_problem_are_both_in_the_toast() {
 fn a_settings_window_doesnt_replace_onboarding() {
     let mut h = Harness::new(items(2));
     h.app.use_settings_window();
-    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.start();
     assert_eq!(h.app.overlay(), Overlay::Onboarding);
     h.press(KeyPress { key: ",".into(), ..KeyPress::default() });
@@ -1235,7 +1235,7 @@ fn saving_settings_starts_over_from_the_picker() {
 fn onboarding_says_why_the_config_file_wasnt_used() {
     let problem = "Couldn't use /home/me/.config/onward/config.toml. Line 3: string values must be quoted.";
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.problem = Some(problem.into());
     h.start();
     assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem));
@@ -1244,7 +1244,7 @@ fn onboarding_says_why_the_config_file_wasnt_used() {
 #[test]
 fn onboarding_shows_no_notice_when_the_config_file_is_fine() {
     let mut h = Harness::new(items(2));
-    h.status = Status { configured: false, readeck: false, fetches: true };
+    h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.start();
     assert_eq!(h.app.settings().unwrap().problem, None);
 }
@@ -1961,23 +1961,56 @@ fn a_refresh_the_server_turns_down_is_a_toast() {
 }
 
 #[test]
+fn a_kind_of_server_the_core_doesnt_know_stops_the_save_and_the_form_says_so() {
+    let mut h = Harness::new(items(1));
+    h.start();
+    h.key(",");
+    assert_eq!(h.app.server_named("greader"), Some(Server::GReader));
+    assert_eq!(h.app.settings().unwrap().error, "");
+    assert_eq!(h.app.server_named("feedbin"), None);
+    assert!(h.app.settings().unwrap().error.contains("feedbin"));
+    assert!(!h.app.settings().unwrap().checking);
+}
+
+#[test]
 fn on_a_server_that_doesnt_fetch_f_and_r_only_say_so() {
     let mut h = Harness::new(items(3));
-    h.status = Status { configured: true, readeck: false, fetches: false };
+    h.status = Status { configured: true, readeck: false, capabilities: Server::GReader.capabilities() };
     h.open(false);
-    assert!(!h.app.fetches());
+    assert!(!h.app.capabilities().fetch_full);
     h.key("f");
-    assert_eq!(h.toast(), Some(crate::greader::FETCH_CONTENT_REFUSED));
+    assert_eq!(h.toast(), Some(crate::feeds::FETCH_CONTENT_REFUSED));
     h.key("p");
     h.key("r");
-    assert_eq!(h.toast(), Some(crate::greader::REFRESH_REFUSED));
+    assert_eq!(h.toast(), Some(crate::feeds::REFRESH_REFUSED));
     assert!(!h.calls.iter().any(|c| matches!(c, Effect::FetchContent { .. } | Effect::RefreshFeeds)));
+    let listed = |h: &Harness, key: &str| h.app.help_lines().iter().any(|(keys, _)| keys == key);
+    assert!(!listed(&h, "f") && !listed(&h, "r"), "the help leaves them out");
+    assert!(listed(&h, "/"), "whether it has search only shows by trying");
     // Saved settings for a Miniflux server bring them back.
-    h.save_result = Ok(saved(Status { configured: true, readeck: false, fetches: true }));
+    h.save_result = Ok(saved(Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING }));
     h.key(",");
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
-    assert!(h.app.fetches());
+    assert!(h.app.capabilities().fetch_full);
+    assert!(listed(&h, "f") && listed(&h, "r"));
+}
+
+#[test]
+fn slash_says_so_at_once_only_on_a_server_known_to_have_no_search() {
+    let mut h = Harness::new(items(3));
+    h.status.capabilities.search = None;
+    h.open(false);
+    h.key("/");
+    assert_eq!(h.app.overlay(), Overlay::Search, "only trying will tell");
+    h.key("Escape");
+
+    let mut h = Harness::new(items(3));
+    h.status.capabilities.search = Some(false);
+    h.open(false);
+    h.key("/");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.toast(), Some(crate::feeds::NO_SEARCH));
 }
 
 #[test]

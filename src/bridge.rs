@@ -7,6 +7,7 @@
 
 use crate::app::{App, Effect, KeyPress, PickerList, SettingsValues, ToastKind};
 use crate::backend::Backend;
+use crate::config::Server;
 use crate::content::convert;
 use crate::keys;
 use crate::paging::Mode;
@@ -50,8 +51,8 @@ pub mod qobject {
         #[qproperty(bool, starred_list)]
         #[qproperty(QString, position)]
         #[qproperty(bool, readeck)]
-        // The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
-        #[qproperty(bool, fetches)]
+        // The server refreshes feeds on request (r).
+        #[qproperty(bool, refreshes)]
         // The article. The serial changes with the article or its text, not with a re-render for the theme.
         #[qproperty(i32, article_serial)]
         #[qproperty(QString, title)]
@@ -95,8 +96,10 @@ pub mod qobject {
         #[qproperty(QString, settings_problem)]
         #[qproperty(QString, settings_error)]
         #[qproperty(bool, settings_checking)]
-        // "miniflux" or "greader".
+        // Which kind of server the form starts on: a `name` from `server_kinds`.
         #[qproperty(QString, server)]
+        // What the form offers: `[{ name, label }, …]`, as JSON.
+        #[qproperty(QString, server_kinds)]
         #[qproperty(QString, miniflux_url)]
         #[qproperty(QString, miniflux_api_key)]
         #[qproperty(QString, greader_url)]
@@ -241,7 +244,7 @@ pub struct ModelRust {
     starred_list: bool,
     position: QString,
     readeck: bool,
-    fetches: bool,
+    refreshes: bool,
     article_serial: i32,
     title: QString,
     url: QString,
@@ -274,6 +277,7 @@ pub struct ModelRust {
     settings_error: QString,
     settings_checking: bool,
     server: QString,
+    server_kinds: QString,
     miniflux_url: QString,
     miniflux_api_key: QString,
     greader_url: QString,
@@ -339,7 +343,7 @@ impl Default for ModelRust {
             starred_list: false,
             position: QString::default(),
             readeck: false,
-            fetches: true,
+            refreshes: true,
             article_serial: 0,
             title: QString::default(),
             url: QString::default(),
@@ -372,6 +376,7 @@ impl Default for ModelRust {
             settings_error: QString::default(),
             settings_checking: false,
             server: QString::default(),
+            server_kinds: QString::from("[]"),
             miniflux_url: QString::default(),
             miniflux_api_key: QString::default(),
             greader_url: QString::default(),
@@ -436,8 +441,8 @@ impl qobject::Model {
     }
 
     pub fn start(mut self: Pin<&mut Self>) {
-        let help = serde_json::to_string(&self.as_mut().state().app.help_lines()).unwrap_or_else(|_| "[]".into());
-        self.as_mut().set_help_lines(qs(&help));
+        let kinds: Vec<_> = Server::ALL.map(|k| serde_json::json!({ "name": k.name(), "label": k.label() })).to_vec();
+        self.as_mut().set_server_kinds(qs(&serde_json::Value::from(kinds).to_string()));
         self.as_mut().apply_theme(theme::load());
 
         let qt = self.qt_thread();
@@ -545,8 +550,11 @@ impl qobject::Model {
         readeck_url: &QString,
         readeck_token: &QString,
     ) {
+        let Some(server) = self.as_mut().state().app.server_named(&server.to_string()) else {
+            return self.sync();
+        };
         let values = SettingsValues {
-            server: crate::config::Server::from_name(&server.to_string()),
+            server,
             miniflux_url: miniflux_url.to_string(),
             miniflux_api_key: miniflux_api_key.to_string(),
             greader_url: greader_url.to_string(),
@@ -641,7 +649,8 @@ impl qobject::Model {
         });
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
-        let fetches = app.fetches();
+        let refreshes = app.capabilities().refresh;
+        let help = serde_json::to_string(&app.help_lines()).unwrap_or_else(|_| "[]".into());
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
@@ -664,7 +673,8 @@ impl qobject::Model {
         self.as_mut().set_viewer_position(qs(&position_in_viewer));
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
-        self.as_mut().set_fetches(fetches);
+        self.as_mut().set_refreshes(refreshes);
+        self.as_mut().set_help_lines(qs(&help));
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
             Some(t) => {

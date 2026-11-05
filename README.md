@@ -264,6 +264,7 @@ src/
   content/highlight.rs  code blocks highlighted with syntect, in theme colours
   content/native.rs  the blocks' inline HTML → styled runs, for Swift and the terminal
   theme/             the Omarchy theme (watched live), the macOS appearance or the logo's colours, as a palette
+  feeds.rs           what every feed server deals in: entries, feeds, counts, selections
   server.rs          the feed server: Miniflux or a Google Reader API server, one set of calls
   miniflux.rs        Miniflux API client
   greader.rs         Google Reader API client (FreshRSS, Miniflux's integration)

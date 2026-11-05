@@ -11,7 +11,9 @@
 
 use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsValues, ToastKind};
 use crate::backend::Backend;
+use crate::config::Server;
 use crate::content::{convert, native};
+use crate::feeds::Capabilities;
 use crate::keys;
 use crate::paging::Mode;
 use crate::prefs;
@@ -147,7 +149,7 @@ enum Command {
         url: String,
     },
     SubmitSettings {
-        /// "miniflux" or "greader".
+        /// A `name` from the form's `kinds`.
         #[serde(default)]
         server: String,
         #[serde(default)]
@@ -211,8 +213,7 @@ struct State {
     starred_list: bool,
     position: String,
     readeck: bool,
-    /// The server refreshes feeds (r) and fetches whole articles (f): Miniflux, not a Google Reader server.
-    fetches: bool,
+    capabilities: Capabilities,
     article: Option<Article>,
     picker: Picker,
     /// The search box starts from the last search.
@@ -284,6 +285,8 @@ struct ToastState {
 
 #[derive(Serialize)]
 struct Settings {
+    /// What the form offers.
+    kinds: Vec<ServerKind>,
     problem: String,
     error: String,
     checking: bool,
@@ -291,6 +294,12 @@ struct Settings {
     serial: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     values: Option<Values>,
+}
+
+#[derive(Serialize)]
+struct ServerKind {
+    name: &'static str,
+    label: &'static str,
 }
 
 #[derive(Serialize)]
@@ -379,16 +388,19 @@ impl Core {
                 greader_password,
                 readeck_url,
                 readeck_token,
-            } => self.app.submit_settings(SettingsValues {
-                server: crate::config::Server::from_name(&server),
-                miniflux_url,
-                miniflux_api_key,
-                greader_url,
-                greader_username,
-                greader_password,
-                readeck_url,
-                readeck_token,
-            }),
+            } => match self.app.server_named(&server) {
+                Some(server) => self.app.submit_settings(SettingsValues {
+                    server,
+                    miniflux_url,
+                    miniflux_api_key,
+                    greader_url,
+                    greader_username,
+                    greader_password,
+                    readeck_url,
+                    readeck_token,
+                }),
+                None => Vec::new(),
+            },
             Command::CancelSettings => self.app.cancel_settings(),
             Command::Search { query } => self.app.search(&query),
             Command::CancelSearch => {
@@ -520,7 +532,7 @@ impl Core {
             starred_list: app.starred_list(),
             position: app.position(),
             readeck: app.readeck(),
-            fetches: app.fetches(),
+            capabilities: app.capabilities(),
             article,
             picker: Picker {
                 state: picker_state,
@@ -610,6 +622,7 @@ impl Core {
             readeck_token: form.values.readeck_token.clone(),
         });
         let settings = Settings {
+            kinds: Server::ALL.map(|k| ServerKind { name: k.name(), label: k.short_label() }).into(),
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
             checking: form.checking,

@@ -31,7 +31,10 @@ use std::sync::Mutex;
 use crate::config;
 use crate::dates;
 use crate::error::{Error, Service, ok_status};
-use crate::miniflux::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::feeds::{
+    Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, FETCH_CONTENT_REFUSED, Feed, FeedCount, GONE,
+    NO_CATEGORY_ITEMS, NO_FOLDER, NO_SEARCH, REFRESH_REFUSED, Selection,
+};
 use crate::paging::Order;
 
 const READING_LIST: &str = "user/-/state/com.google/reading-list";
@@ -47,7 +50,6 @@ const BATCH: usize = 100;
 /// Upper bound on one page requested by the UI.
 const MAX_PAGE: usize = 1000;
 
-const NO_SEARCH: &str = "This server has no search";
 /// The login worked and the server has items, but none of them in a form this client takes.
 const UNREADABLE_IDS: &str = "The server sent item ids Onward can't read, so it can't show these items";
 /// A wrong API password and one that was never set look the same from here, so this covers both.
@@ -499,7 +501,7 @@ impl Client {
             Selection::Starred => return Ok(STARRED.into()),
             // The "Uncategorized" row `feed_counts` makes for feeds in no folder: there is no stream for it.
             Selection::Category { id: 0 } => {
-                return Err(Error::Refused("These feeds are in no folder: open them one at a time".into()));
+                return Err(Error::Refused(NO_FOLDER.into()));
             }
             Selection::Category { id } | Selection::Feed { id } => id,
         };
@@ -507,10 +509,7 @@ impl Client {
             return Ok(stream);
         }
         self.subscriptions().await?;
-        lock(&self.streams)
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| Error::Refused("That feed or category isn't on the server any more".into()))
+        lock(&self.streams).get(&id).cloned().ok_or_else(|| Error::Refused(GONE.into()))
     }
 
     /// One listing of item ids.
@@ -690,19 +689,13 @@ impl Client {
     }
 }
 
-/// What `f` says on a Google Reader API server.
-pub const FETCH_CONTENT_REFUSED: &str = "Fetching the full article isn't available with a Google Reader API server";
-/// What `r` says on a Google Reader API server.
-pub const REFRESH_REFUSED: &str =
-    "Refreshing feeds isn't available with a Google Reader API server; it refreshes them on its own";
-
 /// Miniflux answers a category (a label stream) with a 500: say what that means.
 fn no_labels(sel: Selection, e: Error) -> Error {
     match (sel, &e) {
         (Selection::Category { .. }, Error::Http { status, .. })
             if matches!(status.as_u16(), 400 | 404 | 500 | 501) =>
         {
-            Error::Refused("This server can't list a category's items. Open its feeds one at a time.".into())
+            Error::Refused(NO_CATEGORY_ITEMS.into())
         }
         _ => e,
     }

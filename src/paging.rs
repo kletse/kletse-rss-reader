@@ -1,7 +1,7 @@
 //! Paging through a selection: where the next page starts, and what a page adds to the queue.
 //! Unread items come oldest first, history newest first.
 
-use crate::miniflux::{Entry, EntryPage, EntryStatus};
+use crate::feeds::{Entry, EntryPage, EntryStatus};
 use std::collections::HashSet;
 
 pub const PAGE: usize = 50;
@@ -96,7 +96,7 @@ pub fn merge_page(queue: &[Entry], page: EntryPage, skipped: usize) -> Merged {
 pub mod tests {
     use super::*;
     use crate::dates;
-    use crate::miniflux::EntryFeed;
+    use crate::feeds::EntryFeed;
 
     /// An entry published `minute` minutes after the start of October 2026, like the TS tests had.
     pub fn entry_at(id: i64, title: &str, status: EntryStatus, minute: i64) -> Entry {

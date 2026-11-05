@@ -15,9 +15,8 @@
 
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
-use crate::greader;
+use crate::feeds::{self, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::keys::{self, Action};
-use crate::miniflux::{Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
@@ -91,9 +90,8 @@ pub struct Status {
     pub configured: bool,
     /// Readeck is set up; otherwise hide the bookmark button.
     pub readeck: bool,
-    /// The server fetches on request: the feeds (r) and a whole article (f). Miniflux does; the Google Reader
-    /// API has no way to ask, so the keys only say so and the windows leave out their hints.
-    pub fetches: bool,
+    /// What the server can do: what it can't, the keys only say so and the windows leave out their hints.
+    pub capabilities: Capabilities,
 }
 
 /// What a save of the settings comes to. The feed server is saved; Readeck may not be.
@@ -434,8 +432,8 @@ pub struct App {
     toast: Option<Toast>,
     toast_serial: u64,
     readeck: bool,
-    /// See `Status::fetches`.
-    fetches: bool,
+    /// See `Status::capabilities`.
+    capabilities: Capabilities,
     settings: Option<SettingsForm>,
     /// The form lives in a window of its own: it takes no keys and doesn't replace the article.
     settings_in_window: bool,
@@ -485,7 +483,7 @@ impl App {
             toast: None,
             toast_serial: 0,
             readeck: false,
-            fetches: true,
+            capabilities: Capabilities::EVERYTHING,
             settings: None,
             settings_in_window: false,
             settings_window_open: false,
@@ -499,7 +497,7 @@ impl App {
         let mut fx = Vec::new();
         if status.configured {
             self.readeck = status.readeck;
-            self.fetches = status.fetches;
+            self.capabilities = status.capabilities;
             self.open_picker(Some(Mode::Unread), &mut fx);
         } else {
             self.open_settings(true, &mut fx);
@@ -553,9 +551,8 @@ impl App {
         self.readeck
     }
 
-    /// The server refreshes feeds (r) and fetches whole articles (f) on request: see `Status::fetches`.
-    pub fn fetches(&self) -> bool {
-        self.fetches
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
     }
 
     pub fn prefs(&self) -> Prefs {
@@ -609,7 +606,7 @@ impl App {
     }
 
     pub fn help_lines(&self) -> Vec<(String, String)> {
-        keys::help_lines(self.mac)
+        keys::help_lines(self.mac, self.capabilities)
     }
 
     /// "3 / 120" while reading, counting the pages not loaded yet.
@@ -1070,8 +1067,8 @@ impl App {
     /// Fetches the full article the first time, then switches between it and the feed's version.
     fn fetch_full(&mut self, fx: &mut Vec<Effect>) {
         let Some(entry) = self.current() else { return };
-        if !self.fetches {
-            self.toast_info(greader::FETCH_CONTENT_REFUSED);
+        if !self.capabilities.fetch_full {
+            self.toast_info(feeds::FETCH_CONTENT_REFUSED);
             return;
         }
         let (id, index) = (entry.id, self.index);
@@ -1342,7 +1339,9 @@ impl App {
 
     /// `/`: the search box, from the reader or the picker.
     fn open_search(&mut self) {
-        if matches!(self.overlay, Overlay::None | Overlay::Picker) {
+        if self.capabilities.search == Some(false) {
+            self.toast_info(feeds::NO_SEARCH);
+        } else if matches!(self.overlay, Overlay::None | Overlay::Picker) {
             self.before_search = self.overlay;
             self.overlay = Overlay::Search;
         }
@@ -1505,7 +1504,7 @@ impl App {
         let in_window = std::mem::take(&mut self.settings_window_open);
         if let Some(saved) = saved {
             self.readeck = saved.status.readeck;
-            self.fetches = saved.status.fetches;
+            self.capabilities = saved.status.capabilities;
             self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
@@ -1533,6 +1532,18 @@ impl App {
             None if name.is_some() || !first_run => self.toast_info(done),
             None => {}
         }
+    }
+
+    /// The kind of server a window's form names. One the core doesn't know stops the save, and the form says so:
+    /// it would otherwise be saved as some other kind.
+    pub fn server_named(&mut self, name: &str) -> Option<Server> {
+        let server = Server::from_name(name);
+        if server.is_none()
+            && let Some(form) = self.settings.as_mut()
+        {
+            form.error = format!("Onward doesn't know a server of the kind \"{name}\"");
+        }
+        server
     }
 
     /// The form's Save / Connect: the backend checks both servers before anything is written.
@@ -1713,7 +1724,7 @@ impl App {
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
-            Action::PickerRefresh if !self.fetches => self.toast_info(greader::REFRESH_REFUSED),
+            Action::PickerRefresh if !self.capabilities.refresh => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
                 fx.push(Effect::RefreshFeeds);

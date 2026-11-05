@@ -2,7 +2,7 @@
 //! Used for README screenshots and for working on the UI without touching real unread items.
 //! All feeds, authors and articles here are made up.
 
-use crate::miniflux::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::feeds::{Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
 use std::collections::BTreeSet;
 use std::sync::Mutex;

@@ -2,8 +2,9 @@
 //! doesn't care which; each method hands the call to the client for the configured kind.
 
 use crate::error::Error;
+use crate::feeds::{Counts, EntryPage, EntryStatus, Selection};
 use crate::greader;
-use crate::miniflux::{self, Counts, EntryPage, EntryStatus, Selection};
+use crate::miniflux;
 use crate::paging::Order;
 
 #[derive(Debug)]

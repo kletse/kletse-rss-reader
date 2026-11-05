@@ -213,17 +213,14 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
                 let style = if on { BOLD } else { DIM };
                 Span::styled(format!("{} {name}", if on { "●" } else { "○" }), style)
             };
-            let greader = fields.server == crate::config::Server::GReader;
-            rows.push(Row {
-                line: Line::from(vec![
-                    Span::raw("  "),
-                    mark,
-                    option(!greader, "Miniflux"),
-                    Span::raw("   "),
-                    option(greader, "Google Reader API (FreshRSS, …)"),
-                ]),
-                ..Row::default()
-            });
+            let mut line = vec![Span::raw("  "), mark];
+            for (n, kind) in crate::config::Server::ALL.into_iter().enumerate() {
+                if n > 0 {
+                    line.push(Span::raw("   "));
+                }
+                line.push(option(kind == fields.server, kind.label()));
+            }
+            rows.push(Row { line: Line::from(line), ..Row::default() });
             rows.push(Row::default());
             continue;
         }
@@ -311,14 +308,14 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         PickerList::Error(message) => Some((message.clone(), ERROR)),
         PickerList::Ready(_) if !items.is_empty() => None,
         PickerList::Ready(_) if history => Some(("Nothing read yet. Press h for unread items.".to_string(), DIM)),
-        PickerList::Ready(_) if ui.app.fetches() => {
+        PickerList::Ready(_) if ui.app.capabilities().refresh => {
             Some(("Nothing unread. Press r to refresh, or h for history.".to_string(), DIM))
         }
         PickerList::Ready(_) => Some(("Nothing unread. Press h for history.".to_string(), DIM)),
     };
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
-    let refresh = if ui.app.fetches() { " · r refresh" } else { "" };
+    let refresh = if ui.app.capabilities().refresh { " · r refresh" } else { "" };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
         .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , settings · ? keys "), DIM));

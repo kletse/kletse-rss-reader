@@ -40,13 +40,15 @@ and how to build it is in the [README](README.md).
   1:1, since the system adds its own momentum.
 - **The shared core** (`miniflux.rs`, `readeck.rs`, `config.rs`, `error.rs`, `demo.rs`) came over from the Tauri
   version unchanged apart from dropping the IPC bits. Its tests use wiremock. `greader.rs` is the Google Reader API
-  client (FreshRSS, Miniflux's integration), giving the same `Entry`/`FeedCount`/`Selection` as
-  `miniflux.rs`; `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
+  client (FreshRSS, Miniflux's integration). Both give the same `Entry`/`FeedCount`/`Selection`, from `feeds.rs`;
+  `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
   (the Google Reader one remembers its login and the stream each hashed feed id stands for). Paging goes by
-  `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. What the
-  protocol can't do comes back as `Error::Refused`, and `Status::fetches` tells the windows to leave out `r`/`f`
-  hints. To try it against a real server, FreshRSS runs in Docker; on macOS point the app at a throwaway config
-  with `HOME=<dir>` (`dirs` ignores `XDG_CONFIG_HOME` there).
+  `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. Tests
+  make a `Backend` with `unconfigured` or `with_config_dir`: `new` reads the real config. What the protocol can't do
+  comes back as `Error::Refused`, and `Status::capabilities` (per operation, from
+  `config::Server::capabilities`) tells the windows to leave out `r`/`f` hints. To try it against a real
+  server, FreshRSS runs in Docker; on macOS point the app at a throwaway config with `HOME=<dir>` (`dirs` ignores
+  `XDG_CONFIG_HOME` there).
 
 ## The old name
 
@@ -128,6 +130,9 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   `width: Math.min(implicitWidth, availableWidth)` inside a Button's `contentItem`, quietly collapses to nothing.
   Compute `implicitWidth` from children's implicit widths only. Binding loops on `height` show up as warnings, so
   watch for them.
+- **Use `s.model` in `Settings.qml`, not a bare `model`.** A binding on the root's own properties with a bare `model`
+  (`property var kinds: JSON.parse(model.serverKinds)`) crashed at startup with a null pointer and no message, on Qt
+  6.10.2, even though the form wasn't on screen. Written as `s.model`, like the rest of the file, it's fine.
 - **`grabToImage` doesn't work on `window.contentItem`** ("no QML engine"). Grab an item you declared instead
   (`Main.qml` grabs its root `FocusScope`, which paints the window colour).
 - **Components loaded with `sourceComponent`** are created in the declaring file's context. Inside them, `parent`

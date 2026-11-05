@@ -14,7 +14,7 @@ struct PickerView: View {
             HStack(spacing: 8) {
                 modeSwitch(history)
                 Spacer()
-                if model.state?.fetches != false {
+                if model.state?.capabilities.refresh != false {
                     Button { model.press("refresh") } label: { Image(systemName: "arrow.clockwise") }
                         .help("Refresh feeds (r)")
                 }
@@ -123,7 +123,7 @@ struct PickerView: View {
         case "error": return picker?.error ?? ""
         case "ready":
             if picker?.history == true { return "Nothing read yet. Press h for unread items." }
-            return model.state?.fetches == false ? "Nothing unread. Press h for history."
+            return model.state?.capabilities.refresh == false ? "Nothing unread. Press h for history."
                 : "Nothing unread. Press r to refresh, or h for history."
         default: return "Loading…"
         }

@@ -6,6 +6,7 @@
 use super::*;
 use crate::dates;
 use crate::feeds::{Category, Feed, FeedCount};
+use crate::keys::Action;
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
@@ -290,6 +291,8 @@ impl Harness {
                 self.logins.push(login);
                 None
             }
+            // Answered by hand, as a test needs them in flight: see `imported` and `exported`.
+            Effect::ChooseFeedFile(_) | Effect::ImportFeeds { .. } | Effect::ExportFeeds { .. } => None,
             Effect::UseSamples(on) => {
                 let status = Status { configured: on, readeck: on, capabilities: Capabilities::EVERYTHING };
                 Some(Outcome::SamplesSwitched { on, status })
@@ -3190,4 +3193,390 @@ fn a_look_from_before_the_samples_is_out_of_date_after_them() {
     h.key(",");
     h.found(stale, miniflux_found());
     assert!(h.app.connect_view().fields.is_empty());
+}
+
+// ---- Feed lists ------------------------------------------------------------------------------------------------
+
+/// The picker of an account with no feeds, on a server that can do both.
+fn empty_account() -> Harness {
+    let mut h = Harness::new(Vec::new());
+    h.counts = Vec::new();
+    h.start();
+    assert!(h.picker_loaded());
+    h
+}
+
+fn imported(added: usize, empty: &[&str], articles: Articles) -> Imported {
+    Imported {
+        in_file: 4,
+        added: Some(added),
+        empty: empty.iter().map(ToString::to_string).collect(),
+        private_hosts: Vec::new(),
+        articles,
+    }
+}
+
+impl Harness {
+    /// The file a dialog came up with.
+    fn choose(&mut self, path: &str) {
+        let fx = self.app.feed_file(path, false);
+        self.run(fx);
+    }
+
+    fn job(&self) -> u64 {
+        self.calls
+            .iter()
+            .rev()
+            .find_map(|c| match c {
+                Effect::ImportFeeds { job, .. } | Effect::ExportFeeds { job, .. } => Some(*job),
+                _ => None,
+            })
+            .expect("an import or export was started")
+    }
+
+    fn answer_import(&mut self, result: Result<Imported, String>) {
+        let job = self.job();
+        let fx = self.app.apply(Outcome::FeedsImported { job, result });
+        self.run(fx);
+    }
+
+    fn answer_export(&mut self, result: Result<Exported, ExportFailed>) {
+        let job = self.job();
+        let fx = self.app.apply(Outcome::FeedsExported { job, result });
+        self.run(fx);
+    }
+
+    fn stage(&self) -> Option<&'static str> {
+        self.app.transfer_view().map(|view| view.stage)
+    }
+
+    fn feed_counts_asked(&self) -> usize {
+        self.calls.iter().filter(|c| **c == Effect::FeedCounts).count()
+    }
+
+    fn reloads(&self) -> usize {
+        self.calls.iter().filter(|c| matches!(c, Effect::ReloadPickerAfter { .. })).count()
+    }
+}
+
+#[test]
+fn an_empty_account_leads_to_importing_and_on_to_a_first_article() {
+    let mut h = empty_account();
+    assert!(h.app.offers_import());
+    assert!(h.app.picker_empty_text().contains("press i"), "{}", h.app.picker_empty_text());
+
+    h.key("i");
+    assert_eq!(h.app.overlay(), Overlay::Transfer);
+    assert_eq!(h.stage(), Some("asking"));
+
+    h.key("Enter");
+    assert!(h.calls.contains(&Effect::ChooseFeedFile(FeedFile::Import)), "the window brings up its dialog");
+    h.choose("/tmp/feeds.opml");
+    assert!(h.calls.iter().any(|c| matches!(c, Effect::ImportFeeds { path, .. } if path == "/tmp/feeds.opml")));
+    assert_eq!(h.stage(), Some("working"));
+
+    h.counts = counts(3, 0);
+    h.fake.entries = vec![entry(1, "Entry 1")];
+    h.answer_import(Ok(imported(4, &[], Articles::OnTheirWay)));
+    assert_eq!(h.stage(), Some("done"));
+    let report = h.app.transfer_view().unwrap().text;
+    assert!(report.starts_with("4 feeds added."), "{report}");
+    assert!(report.contains("told to fetch their articles"), "{report}");
+
+    h.key("Enter");
+    assert_eq!(h.app.transfer_view(), None);
+    assert!(h.picker_loaded());
+    assert_eq!(h.reloads(), REFRESH_RELOAD_MS.len(), "the list fills while the server fetches");
+    assert!(!h.app.offers_import());
+    h.key("Enter");
+    assert!(h.app.current().is_some(), "a first article");
+}
+
+#[test]
+fn a_file_that_fails_goes_back_to_asking_and_says_why() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("/tmp/nothing.opml");
+    h.answer_import(Err("There's no file at /tmp/nothing.opml.".into()));
+    let view = h.app.transfer_view().unwrap();
+    assert_eq!((view.stage, view.error.as_str()), ("asking", "There's no file at /tmp/nothing.opml."));
+
+    h.choose("/tmp/feeds.opml");
+    let view = h.app.transfer_view().unwrap();
+    assert_eq!((view.stage, view.error.as_str()), ("working", ""), "the old complaint is gone");
+    assert_eq!(h.calls.iter().filter(|c| matches!(c, Effect::ImportFeeds { .. })).count(), 2);
+}
+
+#[test]
+fn an_empty_path_asks_for_one_and_sends_nothing() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("   ");
+    assert_eq!(h.stage(), Some("asking"));
+    assert!(!h.app.transfer_view().unwrap().error.is_empty());
+    assert!(!h.calls.iter().any(|c| matches!(c, Effect::ImportFeeds { .. })));
+}
+
+#[test]
+fn the_report_claims_only_what_was_seen() {
+    let says = |result: Imported| result.report();
+    let report = says(imported(0, &[], Articles::OnTheirWay));
+    assert!(report.starts_with("Nothing new"), "{report}");
+    assert!(!report.contains("fetch"), "{report}");
+
+    let partly = says(imported(3, &[], Articles::Fetched));
+    assert_eq!(partly, "3 of the 4 feeds in the file added. The server had the rest, or left them out.");
+
+    let not_asked = says(imported(4, &[], Articles::NotAsked("Miniflux 500".into())));
+    assert!(not_asked.contains("couldn't ask the server to fetch them (Miniflux 500)"), "{not_asked}");
+
+    let unknown = says(Imported { added: None, ..imported(0, &[], Articles::OnTheirWay) });
+    assert!(unknown.starts_with("The server took the file, with 4 feeds, but"), "{unknown}");
+    assert!(unknown.contains("couldn't get the list back"), "{unknown}");
+}
+
+#[test]
+fn miniflux_refuses_private_hosts_later_so_the_report_says_so_now() {
+    let private = Imported { private_hosts: vec!["feeds.lan".into()], ..imported(4, &[], Articles::OnTheirWay) };
+    let report = private.report();
+    assert!(report.contains("Feeds on feeds.lan stay empty unless"), "{report}");
+    assert!(report.contains("FETCHER_ALLOW_PRIVATE_NETWORKS"), "{report}");
+    assert!(!imported(4, &[], Articles::OnTheirWay).report().contains("FETCHER_ALLOW"));
+}
+
+#[test]
+fn feeds_that_stayed_empty_on_freshrss_are_named_with_the_likely_reason() {
+    let everything_arrived = imported(4, &[], Articles::Fetched);
+    assert_eq!(everything_arrived.report(), "4 feeds added.");
+
+    let private = Imported {
+        private_hosts: vec!["feeds.lan".into()],
+        ..imported(4, &["One", "Two", "Three", "Four"], Articles::Fetched)
+    };
+    let report = private.report();
+    assert!(report.contains("No articles yet from 4 of them: One, Two, Three and 1 more."), "{report}");
+    assert!(report.contains("INTERNAL_HOST_ALLOWLIST"), "{report}");
+    assert!(report.contains("feeds.lan"), "{report}");
+
+    let one = imported(4, &["Quiet"], Articles::Fetched).report();
+    assert!(one.contains("No articles from Quiet yet."), "{one}");
+    assert!(one.contains("may be down"), "{one}");
+}
+
+#[test]
+fn closing_the_panel_leaves_the_work_going_and_its_answer_comes_as_a_toast() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("/tmp/feeds.opml");
+    h.key("Escape");
+    assert!(h.picker_loaded());
+    assert_eq!(h.stage(), Some("working"), "it can't be stopped, and isn't forgotten");
+
+    h.key("i");
+    assert_eq!(h.app.overlay(), Overlay::Transfer);
+    assert_eq!(h.stage(), Some("working"), "the same one, rather than a second");
+    h.choose("/tmp/other.opml");
+    assert_eq!(h.calls.iter().filter(|c| matches!(c, Effect::ImportFeeds { .. })).count(), 1);
+    h.key("Escape");
+
+    let asked = h.feed_counts_asked();
+    h.answer_import(Ok(imported(4, &[], Articles::OnTheirWay)));
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.app.transfer_view(), None);
+    assert!(h.app.toast().unwrap().message.starts_with("4 feeds added."));
+    assert_eq!(h.feed_counts_asked(), asked + 1);
+    assert_eq!(h.reloads(), REFRESH_RELOAD_MS.len());
+}
+
+#[test]
+fn a_report_with_something_to_act_on_stays_up_to_be_read() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("/tmp/feeds.opml");
+    h.key("Escape");
+    h.answer_import(Ok(imported(4, &["Quiet"], Articles::Fetched)));
+    let toast = h.app.toast().unwrap();
+    assert!(toast.message.contains("No articles from Quiet yet."), "{}", toast.message);
+    assert_eq!(toast.kind, ToastKind::Error, "the kind of toast that lasts");
+}
+
+#[test]
+fn a_failure_with_the_panel_closed_is_a_toast_too() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("/tmp/feeds.opml");
+    h.key("Escape");
+    h.answer_import(Err("It went wrong".into()));
+    let toast = h.app.toast().unwrap();
+    assert_eq!((toast.message.as_str(), toast.kind), ("It went wrong", ToastKind::Error));
+    assert_eq!(h.app.transfer_view(), None);
+}
+
+#[test]
+fn an_answer_about_a_server_you_left_changes_nothing() {
+    let mut h = empty_account();
+    h.key("i");
+    h.choose("/tmp/feeds.opml");
+    let job = h.job();
+    h.key("Escape");
+    // Connects to another server meanwhile.
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    h.run(fx);
+    assert_eq!(h.stage(), None);
+    let (toast, asked) = (h.app.toast().map(|t| t.serial), h.feed_counts_asked());
+
+    let fx = h.app.apply(Outcome::FeedsImported { job, result: Ok(imported(4, &[], Articles::OnTheirWay)) });
+    assert!(fx.is_empty());
+    let fx = h.app.apply(Outcome::FeedsImported { job, result: Err("gone".into()) });
+    assert!(fx.is_empty());
+    assert_eq!(h.app.toast().map(|t| t.serial), toast, "nothing said");
+    assert_eq!(h.feed_counts_asked(), asked, "nothing asked of the new server");
+    assert_eq!(h.reloads(), 0);
+
+    // And a new one on the new server isn't mistaken for it.
+    h.key("i");
+    h.choose("/tmp/feeds.opml");
+    let fx = h.app.apply(Outcome::FeedsImported { job, result: Ok(imported(4, &[], Articles::Fetched)) });
+    assert!(fx.is_empty());
+    assert_eq!(h.stage(), Some("working"));
+}
+
+#[test]
+fn leaving_the_samples_makes_an_answer_on_its_way_a_no_op() {
+    let mut h = empty_account();
+    h.key("e");
+    h.choose("/tmp/feeds.opml");
+    let job = h.job();
+    h.key("Escape");
+    h.app.samples = Some(Prefs::default());
+    h.key(",");
+    assert_eq!(h.app.overlay(), Overlay::Onboarding);
+    let exported = Exported { path: "/tmp/feeds.opml".into(), feeds: 1, left_out: 0 };
+    let fx = h.app.apply(Outcome::FeedsExported { job, result: Ok(exported) });
+    assert!(fx.is_empty());
+    assert_eq!(h.app.toast(), None);
+}
+
+#[test]
+fn what_the_server_cant_do_is_left_out_and_said() {
+    // Miniflux through its Google Reader integration, or some other Google Reader server.
+    let mut h = empty_account();
+    let cannot = Capabilities { import_feeds: false, ..Capabilities::EVERYTHING };
+    h.status = Status { configured: true, readeck: false, capabilities: cannot };
+    h.start();
+    assert!(!h.app.offers_import());
+    assert!(h.app.picker_empty_text().contains("add feeds on the server's own page"));
+    assert!(!h.app.help_lines().iter().any(|(keys, _)| keys == "i"));
+
+    h.key("i");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.app.toast().unwrap().message, feeds::IMPORT_REFUSED);
+
+    h.key("e");
+    assert_eq!(h.app.overlay(), Overlay::Transfer, "exporting works from its list");
+}
+
+#[test]
+fn the_samples_say_theres_nothing_to_import_into() {
+    let mut h = Harness::new(vec![entry(1, "Entry 1")]);
+    h.status = Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
+    h.start();
+    for key in ["i", "e"] {
+        h.key(key);
+        assert_eq!(h.app.overlay(), Overlay::Picker);
+        assert_eq!(h.app.toast().unwrap().message, feeds::SAMPLES_HAVE_NO_FEED_LIST);
+        assert_eq!(h.stage(), None);
+    }
+    assert!(!h.app.help_lines().iter().any(|(keys, _)| keys == "i" || keys == "e"));
+}
+
+#[test]
+fn an_export_says_where_it_went_and_what_it_left_out() {
+    let mut h = empty_account();
+    h.key("e");
+    assert_eq!(h.app.transfer_view().unwrap().suggested, "onward-feeds.opml");
+    h.key("Enter");
+    assert!(h.calls.contains(&Effect::ChooseFeedFile(FeedFile::Export)));
+    h.choose("/tmp/feeds.opml");
+    assert!(h.calls.iter().any(|c| matches!(c, Effect::ExportFeeds { replace: false, .. })));
+    h.answer_export(Ok(Exported { path: "/tmp/feeds.opml".into(), feeds: 12, left_out: 1 }));
+    let view = h.app.transfer_view().unwrap();
+    assert_eq!(view.stage, "done");
+    assert_eq!(
+        view.text,
+        "Saved 12 feeds to /tmp/feeds.opml. 1 feed left out, as the server gave no address for them."
+    );
+    h.key("Escape");
+    assert_eq!(h.reloads(), 0, "nothing on the server changed");
+}
+
+#[test]
+fn a_file_thats_there_is_replaced_only_after_asking() {
+    let mut h = empty_account();
+    h.key("e");
+    h.choose("/tmp/feeds.opml");
+    h.answer_export(Err(ExportFailed::Exists("/tmp/feeds.opml".into())));
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert_eq!(h.app.confirm_text(), "/tmp/feeds.opml is already there. Replace it?");
+
+    h.key("n");
+    assert_eq!(h.app.overlay(), Overlay::Transfer);
+    assert_eq!(h.stage(), Some("asking"), "another name, then");
+    assert_eq!(h.calls.iter().filter(|c| matches!(c, Effect::ExportFeeds { .. })).count(), 1);
+
+    h.choose("/tmp/feeds.opml");
+    h.answer_export(Err(ExportFailed::Exists("/tmp/feeds.opml".into())));
+    h.key("y");
+    assert_eq!(h.app.overlay(), Overlay::Transfer);
+    assert_eq!(h.stage(), Some("working"));
+    assert!(
+        h.calls
+            .iter()
+            .any(|c| matches!(c, Effect::ExportFeeds { replace: true, path, .. } if path == "/tmp/feeds.opml"))
+    );
+}
+
+#[test]
+fn a_dialog_that_asked_already_replaces_without_asking_again() {
+    let mut h = empty_account();
+    h.key("e");
+    let fx = h.app.feed_file("/tmp/feeds.opml", true);
+    assert!(matches!(fx.as_slice(), [Effect::ExportFeeds { replace: true, .. }]));
+}
+
+#[test]
+fn with_the_panel_closed_a_file_thats_there_is_no_question() {
+    let mut h = empty_account();
+    h.key("e");
+    h.choose("/tmp/feeds.opml");
+    h.key("Escape");
+    h.answer_export(Err(ExportFailed::Exists("/tmp/feeds.opml".into())));
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.app.toast().unwrap().message, "/tmp/feeds.opml is already there.");
+}
+
+#[test]
+fn the_panel_opened_from_the_reader_goes_back_to_the_reader() {
+    let mut h = Harness::new(vec![entry(1, "Entry 1")]);
+    h.open(false);
+    let fx = h.app.action(Action::ExportFeeds);
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Transfer);
+    assert!(h.app.current().is_some());
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert_eq!(h.title(), Some("Entry 1"));
+}
+
+#[test]
+fn nothing_else_happens_behind_the_panel() {
+    let mut h = empty_account();
+    h.key("i");
+    let calls = h.calls.len();
+    for key in ["j", "A", "q", "h", ","] {
+        h.key(key);
+        assert_eq!(h.app.overlay(), Overlay::Transfer, "{key}");
+    }
+    assert_eq!(h.calls.len(), calls);
 }

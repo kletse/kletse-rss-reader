@@ -46,6 +46,9 @@ pub enum Action {
     PickerChoose,
     PickerRefresh,
     PickerClose,
+    /// `i` and `e`: a feed list, into the server or out of it.
+    ImportFeeds,
+    ExportFeeds,
     BiggerFont,
     SmallerFont,
     ResetSize,
@@ -81,6 +84,8 @@ pub const PICKER_KEYS: Keymap = &[
     (&["k", "ArrowUp"], Action::PickerMove(-1)),
     (&["Enter", "ArrowRight", "o"], Action::PickerChoose),
     (&["r"], Action::PickerRefresh),
+    (&["i"], Action::ImportFeeds),
+    (&["e"], Action::ExportFeeds),
     (&["A"], Action::MarkAllRead),
     (&["/"], Action::Search),
     (&["s"], Action::FlipOrder),
@@ -111,6 +116,8 @@ pub fn button_action(button: &str) -> Option<Action> {
         "help" => Action::Help,
         "search" => Action::Search,
         "order" => Action::FlipOrder,
+        "import" => Action::ImportFeeds,
+        "export" => Action::ExportFeeds,
         _ => return None,
     })
 }
@@ -162,6 +169,8 @@ pub enum Needs {
     FetchFull,
     Refresh,
     Search,
+    ImportFeeds,
+    ExportFeeds,
 }
 
 impl Needs {
@@ -172,6 +181,8 @@ impl Needs {
             Needs::FetchFull => can.fetch_full,
             Needs::Refresh => can.refresh,
             Needs::Search => can.search != Some(false),
+            Needs::ImportFeeds => can.import_feeds,
+            Needs::ExportFeeds => can.export_feeds,
         }
     }
 }
@@ -227,6 +238,20 @@ pub const HELP: &[HelpRow] = &[
         place: Where::Picker,
         picker_note: None,
         needs: Needs::Refresh,
+    },
+    HelpRow {
+        keys: &[Plain("i")],
+        action: "import feeds from an OPML file",
+        place: Where::Picker,
+        picker_note: None,
+        needs: Needs::ImportFeeds,
+    },
+    HelpRow {
+        keys: &[Plain("e")],
+        action: "export feeds to an OPML file",
+        place: Where::Picker,
+        picker_note: None,
+        needs: Needs::ExportFeeds,
     },
     HelpRow {
         keys: &[Plain("h")],
@@ -377,6 +402,11 @@ mod tests {
         assert!(has(no_refresh, "f") && !has(no_refresh, "r"));
         assert!(has(Capabilities { search: None, ..everything }, "/"), "only trying will tell");
         assert!(!has(Capabilities { search: Some(false), ..everything }, "/"));
+
+        assert!(has(everything, "i") && has(everything, "e"));
+        let export_only = Capabilities { import_feeds: false, ..everything };
+        assert!(!has(export_only, "i") && has(export_only, "e"), "each by itself");
+        assert!(!has(Capabilities::SAMPLES, "i") && !has(Capabilities::SAMPLES, "e"), "there's no server to do it on");
     }
 
     #[test]

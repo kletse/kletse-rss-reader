@@ -10,6 +10,8 @@ ApplicationWindow {
     id: win
 
     readonly property alias model: model
+    /// Readeck's way in, while Settings is open: for the snapshot's grant:n.
+    property var grantPanel: null
     readonly property int articleSize: model.articleSize
     /// The column scales with the font size, as in CSS: `--article-size * --width-factor`.
     readonly property real measure: model.articleSize * model.widthFactor
@@ -240,7 +242,8 @@ ApplicationWindow {
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
     // loads and draws. Besides keys: type:text goes into the field with the focus, accept is Enter in that field, tab
     // moves to the next one, row:n presses a row of first run, find is Settings' way to the address box, file:path is
-    // what the file dialog would hand over, and manage:n is a click on a row of the feeds panel.
+    // what the file dialog would hand over, manage:n is a click on a row of the feeds panel, and grant:n is a click on a
+    // row of Readeck's way in.
     Timer {
         id: snapshotKeys
         property var pending: null
@@ -270,6 +273,8 @@ ApplicationWindow {
                 model.feedFile(name.slice(5))
             else if (name?.startsWith("manage:"))
                 model.manageRow(Number(name.slice(7)))
+            else if (name?.startsWith("grant:"))
+                win.grantPanel?.press(Number(name.slice(6)))
             else if (name !== undefined)
                 model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
             if (pending.length === 0) {

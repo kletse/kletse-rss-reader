@@ -94,6 +94,17 @@ Item {
                 fields: JSON.parse(s.model.readeckFields)
                 values: s.values
                 onAccepted: s.submit()
+                onEdited: (key, text) => {
+                    if (key === "readeck_url") {
+                        readeckGrant.address = text
+                        s.model.readeckEdited(text)
+                    }
+                }
+            }
+            ReadeckGrant {
+                id: readeckGrant
+                ui: s.ui
+                width: parent.width
             }
         }
         Fieldset {

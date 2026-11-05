@@ -121,6 +121,8 @@ pub mod qobject {
         #[qproperty(QString, readeck_fields)]
         // Every field's value by its key, as JSON. It changes when the settings serial does.
         #[qproperty(QString, form_values)]
+        // Readeck's browser way in, as JSON: `grant::GrantView`.
+        #[qproperty(QString, readeck_grant)]
         // First run: "welcome", "connect" or "no_server", the row the arrows are on, and its words as JSON.
         #[qproperty(QString, onboarding_step)]
         #[qproperty(i32, onboarding_cursor)]
@@ -199,6 +201,11 @@ pub mod qobject {
         /// The address box changed.
         #[qinvokable]
         fn address_edited(self: Pin<&mut Model>, text: &QString);
+        // A row of `readeckGrant`, with what's in the Readeck URL field.
+        #[qinvokable]
+        fn readeck_row(self: Pin<&mut Model>, row: i32, address: &QString);
+        #[qinvokable]
+        fn readeck_edited(self: Pin<&mut Model>, text: &QString);
         /// Settings' way to the address box.
         #[qinvokable]
         fn find_server(self: Pin<&mut Model>);
@@ -342,6 +349,7 @@ pub struct ModelRust {
     providers: QString,
     readeck_fields: QString,
     form_values: QString,
+    readeck_grant: QString,
     onboarding_step: QString,
     onboarding_cursor: i32,
     first_run: QString,
@@ -461,6 +469,7 @@ impl Default for ModelRust {
             providers: QString::from(&json(&providers::PROVIDERS)),
             readeck_fields: QString::from(&json(&providers::READECK)),
             form_values: QString::from("{}"),
+            readeck_grant: QString::from(&json(&crate::grant::GrantView::default())),
             onboarding_step: QString::from("welcome"),
             onboarding_cursor: 0,
             first_run: QString::from(&json(&providers::FIRST_RUN)),
@@ -645,6 +654,17 @@ impl qobject::Model {
 
     pub fn address_edited(mut self: Pin<&mut Self>, text: &QString) {
         self.as_mut().state().app.address_edited(&text.to_string());
+        self.sync();
+    }
+
+    pub fn readeck_row(mut self: Pin<&mut Self>, row: i32, address: &QString) {
+        let row = usize::try_from(row).unwrap_or(usize::MAX);
+        let fx = self.as_mut().state().app.readeck_row(row, &address.to_string());
+        self.run(fx);
+    }
+
+    pub fn readeck_edited(mut self: Pin<&mut Self>, text: &QString) {
+        self.as_mut().state().app.readeck_edited(&text.to_string());
         self.sync();
     }
 
@@ -953,6 +973,7 @@ impl qobject::Model {
             return;
         };
         let (problem, error, checking) = (form.problem.clone().unwrap_or_default(), form.error.clone(), form.checking);
+        let grant = json(&s.app.readeck_view());
         // The form starts from the loaded values once; after that the window keeps what is typed, until the core has
         // something to take back.
         let fill = (!s.settings_shown || s.settings_refill != form.refill).then(|| form.values.clone());
@@ -968,6 +989,7 @@ impl qobject::Model {
         self.as_mut().set_settings_problem(qs(&problem));
         self.as_mut().set_settings_error(qs(&error));
         self.as_mut().set_settings_checking(checking);
+        self.as_mut().set_readeck_grant(qs(&grant));
         self.set_settings_ready(true);
     }
 }

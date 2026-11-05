@@ -40,7 +40,7 @@ jobs:
           cargo build --locked
           for keys in "Enter" "Enter n n" "Enter ?" "Enter ," "h Enter" "Enter A" "Enter n n n n n n n n" \
               "Enter /" "Enter v" "Enter n p A" "j j j Enter j" "Enter *" "j Enter" "Enter , find" \
-              "Enter , find Escape"; do
+              "Enter , find Escape" "i" "e"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
@@ -83,6 +83,46 @@ jobs:
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
             test -s /tmp/shot.png
           done
+          # An empty account, on each kind of server, and the way from it through importing and exporting. Each config
+          # says who's there, and these never leave this machine either.
+          good=/tmp/onward-feeds.opml
+          printf '<opml version="2.0"><body><outline text="A" xmlUrl="https://a.example/feed"/></body></opml>' > "$good"
+          echo '<rss version="2.0"></rss>' > /tmp/onward-not-opml.xml
+          mkdir "$empty/config/onward"
+          walk() {
+            for keys in "$@"; do
+              echo "== $(head -c 60 "$empty/config/onward/config.toml" | tr '\n' ' '): $keys"
+              rm -f /tmp/shot.png
+              ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
+              test -s /tmp/shot.png
+            done
+          }
+          cat > "$empty/config/onward/config.toml" <<EOF
+          [miniflux]
+          url = "http://127.0.0.1:18399/empty-miniflux"
+          api_key = "key"
+          EOF
+          walk x i "i Enter" "i file:$good x x" "i file:$good x x Enter" "i file:/nothing/here.opml x" \
+              "i file:/tmp/onward-not-opml.xml x" e "e file:/tmp/onward-out.opml x x" "e file:$good x x" \
+              "e file:$good x x n" "e file:$good x x y x x"
+          cat > "$empty/config/onward/config.toml" <<EOF
+          server = "greader"
+          [greader]
+          url = "http://127.0.0.1:18399/empty-freshrss/api/greader.php"
+          username = "me"
+          password = "password"
+          EOF
+          walk x i "i file:$good x x" "i file:$good Escape x x" e
+          cat > "$empty/config/onward/config.toml" <<EOF
+          server = "greader"
+          [greader]
+          url = "http://127.0.0.1:18399/integration"
+          username = "me"
+          password = "password"
+          EOF
+          walk x i e "e file:/tmp/onward-out-2.opml x x"
+          rm "$empty/config/onward/config.toml"
+          rmdir "$empty/config/onward"
           # A broken config file still says so.
           mkdir "$empty/config/onward"
           echo "server = miniflux" > "$empty/config/onward/config.toml"

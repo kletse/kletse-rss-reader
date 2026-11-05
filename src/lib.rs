@@ -23,6 +23,7 @@ mod moved;
 pub mod paging;
 pub mod picker;
 pub mod prefs;
+pub mod providers;
 pub mod readeck;
 pub mod server;
 pub mod theme;

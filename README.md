@@ -198,7 +198,7 @@ Type the address you open in your browser, and press <kbd>Enter</kbd>. `rss`, `r
 | ------ | ------------ |
 | **Miniflux** | Your username and password, once. Onward gets a key of its own from your server and keeps that; the password isn't stored. |
 | **Miniflux that can't do that** | If you sign in some other way (Google, OpenID Connect, a passkey), or it's older than 2.2.9, you make an API key on its page and paste it. **I don't sign in with a password** is always there, and opens that page. |
-| **FreshRSS** | Your username and its **API password**, which isn't your login password. In FreshRSS: Settings → Profile → External access via API. If its API is off, Onward says so and where to turn it on (Settings → Authentication → Allow API access); keep that page open, as the deeper pages show a 403 until you've signed in at the first one. |
+| **FreshRSS** | Your username and its **API password**, which isn't your login password. In FreshRSS: Settings → Profile → External access via API. If its API is off, Onward says so and where to turn it on (Settings → Authentication → Allow API access), and opens FreshRSS at its sign-in page, as its deeper pages show a 403 until you've signed in. |
 
 Onward tells a sign-in page in front of the server from a wrong server, says so when a proxy removes the `Authorization` header, and names the servers it recognises but can't read yet, such as CommaFeed, yarr, selfoss, Tiny Tiny RSS and Nextcloud. It trusts public certificates only: a private CA or a self-signed certificate gets a message saying so.
 

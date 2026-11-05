@@ -2054,10 +2054,12 @@ impl App {
             Detected::Miniflux { base, sign_in } => {
                 let key = if sign_in { KeyRoute::Password } else { KeyRoute::NoPasswords };
                 self.connect.plain = base.starts_with("http://");
+                self.forget_secret_of_another_server(FieldKey::MinifluxUrl, &base, FieldKey::MinifluxApiKey);
                 self.connect.stage = Stage::Miniflux { base, key };
             }
             Detected::FreshRss { web, api, state: Api::Ready } => {
                 self.connect.plain = api.starts_with("http://");
+                self.forget_secret_of_another_server(FieldKey::GreaderUrl, &api, FieldKey::GreaderPassword);
                 self.connect.stage = Stage::FreshRss { web, api };
             }
             Detected::FreshRss { web, state: Api::Off, .. } => {
@@ -2073,6 +2075,17 @@ impl App {
         }
         if let Some(form) = self.settings.as_mut() {
             form.error = message.unwrap_or_default();
+        }
+    }
+
+    /// The form may hold what was saved for the server before, from Settings. That's not to be sent to this one.
+    fn forget_secret_of_another_server(&mut self, url: FieldKey, here: &str, secret: FieldKey) {
+        if let Some(form) = self.settings.as_mut()
+            && form.values.field(url) != here
+            && !form.values.field(secret).is_empty()
+        {
+            form.values.field_mut(secret).clear();
+            form.refill += 1;
         }
     }
 

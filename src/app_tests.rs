@@ -3103,6 +3103,56 @@ fn a_server_found_from_settings_replaces_the_old_one() {
 }
 
 #[test]
+fn a_secret_saved_for_one_server_isnt_offered_to_another() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let before = h.app.settings().unwrap().refill;
+    let old = SettingsValues {
+        address: "elsewhere.example.com".into(),
+        miniflux_url: "https://old.example.com".into(),
+        miniflux_api_key: "old-key".into(),
+        greader_url: "https://old.example.com/api/greader.php".into(),
+        greader_password: "old-password".into(),
+        ..SettingsValues::default()
+    };
+    h.submit(old.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, miniflux_found());
+    h.row(providers::NO_PASSWORD_ROW);
+    let form = h.app.settings().unwrap();
+    assert_eq!(form.values.miniflux_api_key, "");
+    assert!(form.refill > before, "the window's copy goes too");
+
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    h.submit(old);
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, freshrss_found(Api::Ready));
+    assert_eq!(h.app.settings().unwrap().values.greader_password, "");
+}
+
+#[test]
+fn a_secret_stays_for_the_server_it_was_saved_for() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    h.submit(SettingsValues {
+        address: "rss.example.com".into(),
+        miniflux_url: BASE.into(),
+        miniflux_api_key: "same-key".into(),
+        ..SettingsValues::default()
+    });
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, miniflux_found());
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "same-key");
+}
+
+#[test]
 fn on_the_mac_finding_a_server_leaves_the_settings_window_for_the_main_one() {
     let mut h = first_second();
     h.app.use_settings_window();

@@ -76,9 +76,12 @@ impl Address {
         if text.is_empty() {
             return Err("Type your server's address first.".into());
         }
+        // Only at the start: a pasted page can have `://` further along, in its query.
         let (scheme, rest) = match text.split_once("://") {
-            Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
-            None => (None, text),
+            Some((scheme, rest)) if scheme.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                (Some(scheme.to_ascii_lowercase()), rest)
+            }
+            _ => (None, text),
         };
         if let Some(scheme) = scheme.as_deref().filter(|s| !matches!(*s, "http" | "https")) {
             return Err(format!("{scheme}:// isn't a web address. Try the address you open in your browser."));

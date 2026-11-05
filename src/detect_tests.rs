@@ -135,6 +135,7 @@ fn a_pasted_page_comes_down_to_the_server_and_a_subpath_stays() {
         ("https://user:secret@rss.example.com/unread", "https://rss.example.com"),
         ("https://rss.example.com/reader/api/0/token", "https://rss.example.com"),
         ("https://rss.example.com/rss", "https://rss.example.com/rss"),
+        ("rss.example.com/unread?from=http://a.example", "https://rss.example.com"),
     ] {
         assert_eq!(tries(pasted), [base], "{pasted}");
     }

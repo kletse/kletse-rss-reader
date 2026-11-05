@@ -33,7 +33,7 @@ use crate::config;
 use crate::dates;
 use crate::error::{Error, Service, ok_status};
 use crate::feeds::{
-    Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, FETCH_CONTENT_REFUSED, Feed, FeedCount, GONE,
+    Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, FETCH_CONTENT_REFUSED, Feed, FeedCount, FeedList, GONE,
     NO_CATEGORY_ITEMS, NO_FOLDER, NO_SEARCH, REFRESH_REFUSED, Selection,
 };
 use crate::opml::{self, Listed};
@@ -55,6 +55,15 @@ const MAX_PAGE: usize = 1000;
 /// FreshRSS's 400 says nothing more, and Onward checked the file first, so what's left is that it didn't like something.
 const FILE_REFUSED: &str = "FreshRSS turned the file down without saying why. It looked like OPML to Onward: try \
                             importing it on FreshRSS's own page, which gives a reason.";
+/// FreshRSS's bare 400 on an edit.
+const EDIT_REFUSED: &str = "FreshRSS turned that down without saying why. Reload the list: the feed or category may \
+                            have changed elsewhere.";
+/// What `quickadd` answers when a host is a private one, which FreshRSS only fetches when told it may.
+const PRIVATE_HOST: &str = "URL is not allowed to be resolved";
+const PRIVATE_HOST_HELP: &str = "That's a private address. FreshRSS only fetches those if it's allowed in its System \
+                                 configuration or INTERNAL_HOST_ALLOWLIST.";
+/// The category FreshRSS keeps feeds in that have no other: it can't be deleted, and a feed that leaves one lands here.
+const DEFAULT_CATEGORY: &str = "Uncategorized";
 /// The login worked and the server has items, but none of them in a form this client takes.
 const UNREADABLE_IDS: &str = "The server sent item ids Onward can't read, so it can't show these items";
 /// A wrong API password and one that was never set look the same from here, so this covers both.
@@ -100,6 +109,17 @@ pub fn stream_id(stream: &str) -> i64 {
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     i64::try_from(hash & i64::MAX as u64).unwrap_or(1).max(1)
+}
+
+/// The stream of the category called `title`. FreshRSS names them by title, and that's what makes a rename change the id.
+fn label_stream(title: &str) -> String {
+    format!("user/-/label/{title}")
+}
+
+/// A category as the app knows one, from its stream.
+fn label(stream: &str) -> Category {
+    let title = stream.rsplit_once("/label/").map_or(stream, |(_, name)| name);
+    Category { id: stream_id(stream), title: title.to_string() }
 }
 
 /// An item id as either form gives it: decimal, or `tag:google.com,2005:reader/item/<16 hex digits>`.
@@ -749,6 +769,98 @@ impl Client {
         }
     }
 
+    /// The feeds, and every category: `tag/list` has those no feed is in, which `subscription/list` can't show.
+    pub async fn feed_list(&self) -> Result<FeedList, Error> {
+        #[derive(Deserialize)]
+        struct Tags {
+            #[serde(default, deserialize_with = "null_is_default")]
+            tags: Vec<Tag>,
+        }
+        #[derive(Deserialize)]
+        struct Tag {
+            #[serde(default, deserialize_with = "null_is_default")]
+            id: String,
+            #[serde(default, rename = "type", deserialize_with = "null_is_default")]
+            kind: String,
+        }
+        let query = [("output", "json".to_string())];
+        let (counts, tags) = tokio::try_join!(self.feed_counts(), self.get_json::<Tags>("tag/list", &query))?;
+        let categories: Vec<Category> =
+            tags.tags.iter().filter(|tag| tag.kind == "folder").map(|tag| label(&tag.id)).collect();
+        let fixed = stream_id(&label_stream(DEFAULT_CATEGORY));
+        Ok(FeedList::new(counts, categories, Some(fixed)))
+    }
+
+    /// `subscription/edit`, which is `OK` to anything it can read: that says nothing about what it did.
+    async fn edit(&self, form: &[(&str, String)]) -> Result<(), Error> {
+        self.send(reqwest::Method::POST, "subscription/edit", &[], Body::Form(form)).await.map_err(edit_refused)?;
+        Ok(())
+    }
+
+    /// Subscribes with `quickadd`, whose answer gives FreshRSS's reason in a 200: `subscription/edit` would give a bare
+    /// 400 for any of them. Returns the new feed's id.
+    pub async fn add_feed(&self, url: &str, category: Option<&str>) -> Result<i64, Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Added {
+            #[serde(default)]
+            num_results: i64,
+            #[serde(default, deserialize_with = "null_is_default")]
+            stream_id: String,
+            #[serde(default, deserialize_with = "null_is_default")]
+            error: String,
+        }
+        let query = [("quickadd", url.to_string())];
+        let response = self
+            .send(reqwest::Method::POST, "subscription/quickadd", &query, Body::Form(&[]))
+            .await
+            .map_err(edit_refused)?;
+        let added: Added = response.json().await.map_err(|e| Error::reading(Service::GReader, &self.base, e))?;
+        if added.num_results == 0 || added.stream_id.is_empty() {
+            let help =
+                if added.error.starts_with(PRIVATE_HOST) { format!(" {PRIVATE_HOST_HELP}") } else { String::new() };
+            return Err(Error::Refused(format!("FreshRSS says: {}{help}", added.error)));
+        }
+        let id = stream_id(&added.stream_id);
+        lock(&self.streams).insert(id, added.stream_id.clone());
+        if let Some(title) = category {
+            let form = [("ac", "edit".to_string()), ("s", added.stream_id), ("a", label_stream(title))];
+            self.edit(&form).await?;
+        }
+        Ok(id)
+    }
+
+    pub async fn rename_feed(&self, id: i64, title: &str) -> Result<(), Error> {
+        let stream = self.stream(Selection::Feed { id }).await?;
+        self.edit(&[("ac", "edit".into()), ("s", stream), ("t", title.to_string())]).await
+    }
+
+    /// Puts a feed in the category called `title`, which comes to be if there's none.
+    pub async fn move_feed(&self, id: i64, title: &str) -> Result<(), Error> {
+        let stream = self.stream(Selection::Feed { id }).await?;
+        self.edit(&[("ac", "edit".into()), ("s", stream), ("a", label_stream(title))]).await
+    }
+
+    pub async fn remove_feed(&self, id: i64) -> Result<(), Error> {
+        let stream = self.stream(Selection::Feed { id }).await?;
+        self.edit(&[("ac", "unsubscribe".into()), ("s", stream)]).await
+    }
+
+    /// Returns the category as it is now, with its new id.
+    pub async fn rename_category(&self, title: &str, new: &str) -> Result<Category, Error> {
+        let stream = label_stream(new);
+        let form = [("s", label_stream(title)), ("dest", stream.clone())];
+        self.send(reqwest::Method::POST, "rename-tag", &[], Body::Form(&form)).await.map_err(edit_refused)?;
+        Ok(label(&stream))
+    }
+
+    /// FreshRSS keeps the feeds, in its default category.
+    pub async fn delete_category(&self, title: &str) -> Result<(), Error> {
+        let form = [("s", label_stream(title))];
+        self.send(reqwest::Method::POST, "disable-tag", &[], Body::Form(&form)).await.map_err(edit_refused)?;
+        Ok(())
+    }
+
     /// The feeds as OPML, made from the list, and how many couldn't go in as the server gave no address for them.
     pub async fn list_as_opml(&self) -> Result<(Vec<u8>, usize), Error> {
         let subscriptions = self.subscriptions().await?;
@@ -764,6 +876,14 @@ impl Client {
             .collect();
         let left_out = total - feeds.len();
         Ok((opml::build(&feeds).into_bytes(), left_out))
+    }
+}
+
+/// FreshRSS's 400 on an edit is `Bad Request!` and no more.
+fn edit_refused(e: Error) -> Error {
+    match e {
+        Error::Http { status, .. } if status == reqwest::StatusCode::BAD_REQUEST => Error::Refused(EDIT_REFUSED.into()),
+        e => e,
     }
 }
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::error::Error;
-use crate::feeds::Capabilities;
+use crate::feeds::{Capabilities, FeedOps};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -217,7 +217,9 @@ impl Config {
     pub fn capabilities(&self) -> Capabilities {
         let server = self.server();
         let freshrss = server == Server::GReader && self.greader.as_ref().is_some_and(GReader::is_freshrss);
-        Capabilities { import_feeds: freshrss || server.capabilities().import_feeds, ..server.capabilities() }
+        let kind = server.capabilities();
+        let feeds = if freshrss { FeedOps::FRESHRSS } else { kind.feeds };
+        Capabilities { import_feeds: freshrss || kind.import_feeds, feeds, ..kind }
     }
 
     /// True when the chosen server's settings are all there.
@@ -722,6 +724,22 @@ mod tests {
         assert!(!with.capabilities().fetch_full && !with.capabilities().refresh, "the rest stays the protocol's");
         let chose_miniflux = Config { server: Some(Server::Miniflux), ..with };
         assert!(chose_miniflux.capabilities().fetch_full);
+    }
+
+    #[test]
+    fn what_can_change_about_the_feeds_goes_by_the_server_and_says_what_a_category_takes_with_it() {
+        let greader = |url: &str| Config {
+            server: Some(Server::GReader),
+            greader: Some(GReader { url: url.into(), ..GReader::default() }),
+            ..Config::default()
+        };
+        assert_eq!(full().capabilities().feeds, FeedOps::MINIFLUX);
+        assert_eq!(FeedOps::MINIFLUX.delete_category, crate::feeds::DeleteCategory::TakesFeeds);
+        assert_eq!(greader("https://a.example/api/greader.php").capabilities().feeds, FeedOps::FRESHRSS);
+        assert_eq!(FeedOps::FRESHRSS.delete_category, crate::feeds::DeleteCategory::KeepsFeeds);
+        // Miniflux's integration, and whatever else speaks the protocol: which of them it is can't be told from here.
+        assert_eq!(greader("https://a.example").capabilities().feeds, FeedOps::NONE);
+        assert!(!Capabilities::SAMPLES.feeds.any());
     }
 
     #[test]

@@ -668,6 +668,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connecting_after_the_samples_checks_and_saves_for_real() {
+        let dir = std::env::temp_dir().join(format!("onward-after-samples-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let server = servers(200).await;
+        let backend = Backend::with_config_dir(false, &dir);
+        backend.run(Effect::UseSamples(true)).await;
+        backend.run(Effect::UseSamples(false)).await;
+
+        let values =
+            SettingsValues { miniflux_url: server.uri(), miniflux_api_key: "key".into(), ..SettingsValues::default() };
+        let Some(Outcome::SettingsSaved(Ok(saved))) =
+            backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await
+        else {
+            panic!("it didn't save")
+        };
+        assert_eq!(saved.username.as_deref(), Some("ward"), "the server was asked, as the demo never does");
+        assert!(saved.status.configured);
+        assert!(std::fs::read_to_string(dir.join("config.toml")).unwrap().contains(&server.uri()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn a_demo_isnt_remembered() {
         let dir = std::env::temp_dir().join(format!("onward-samples-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

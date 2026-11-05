@@ -7,7 +7,8 @@ use super::article::{self, Header, Row, Slice, Target};
 use super::editor::Editor;
 use super::images::{self, Answer, Job};
 use crate::app::{
-    App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, Step, display_title, status_name,
+    App, ConnectView, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, Step, display_title,
+    status_name,
 };
 use crate::config::Server;
 use crate::content::{convert, native};
@@ -64,28 +65,55 @@ pub enum Inline {
     },
 }
 
+/// What has the keyboard on a form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// The kind of server.
+    Choice,
+    Field(FieldKey),
+    /// A row of Connect, or Settings' way there.
+    Row(usize),
+}
+
 /// The settings form, with an editor for every field the core has. The form starts from the saved values once, then
-/// keeps what is typed.
+/// keeps what is typed, until the core has something to take back (`SettingsForm::refill`).
 pub struct Form {
     pub server: Server,
     pub fields: HashMap<FieldKey, Editor>,
-    /// A field, or `None` on the server choice.
-    pub focus: Option<FieldKey>,
+    pub focus: Focus,
     /// Readeck's fields are on screen: Settings has them, first run doesn't.
     pub readeck: bool,
+    /// The refill these values came from.
+    refill: u64,
+    /// What Connect had on screen when the focus was last placed.
+    connect: (&'static str, Vec<FieldKey>),
 }
 
 impl Form {
-    /// What's on screen, top to bottom: the server choice, its fields, then Readeck's.
-    pub fn shown(&self) -> Vec<Option<FieldKey>> {
+    /// The whole form as Settings and filling in by hand have it, top to bottom: the server choice, its fields, then
+    /// Readeck's.
+    fn whole(&self) -> impl Iterator<Item = Focus> + use<> {
         let own = providers::provider(self.server).fields.iter();
-        let readeck = providers::READECK.iter().filter(|_| self.readeck);
-        std::iter::once(None).chain(own.chain(readeck).map(|f| Some(f.key))).collect()
+        let readeck = providers::READECK.iter().filter(|_| self.readeck).collect::<Vec<_>>();
+        own.chain(readeck).map(|f| Focus::Field(f.key))
     }
 
-    /// Tab and Shift+Tab, round the fields on screen.
-    fn step(&mut self, by: isize) {
-        let shown = self.shown();
+    /// What's on screen, top to bottom.
+    pub fn shown(&self, connect: Option<&ConnectView>) -> Vec<Focus> {
+        let rows = |view: &ConnectView| (0..view.rows.len()).map(Focus::Row).collect::<Vec<_>>();
+        match connect {
+            Some(view) if view.stage == "address" => {
+                let fields = view.fields.iter().map(|f| Focus::Field(f.key));
+                std::iter::once(Focus::Field(FieldKey::Address)).chain(fields).chain(rows(view)).collect()
+            }
+            Some(view) => std::iter::once(Focus::Choice).chain(self.whole()).chain(rows(view)).collect(),
+            None => [Focus::Choice, Focus::Row(0)].into_iter().chain(self.whole()).collect(),
+        }
+    }
+
+    /// Tab and Shift+Tab, round what's on screen.
+    fn step(&mut self, by: isize, connect: Option<&ConnectView>) {
+        let shown = self.shown(connect);
         let at = shown.iter().position(|&f| f == self.focus).unwrap_or(0);
         let n = isize::try_from(shown.len()).unwrap_or(1);
         let next = (isize::try_from(at).unwrap_or(0) + by).rem_euclid(n);
@@ -96,12 +124,32 @@ impl Form {
         self.fields.get(&key).map_or("", Editor::text)
     }
 
+    fn editor(&mut self) -> Option<&mut Editor> {
+        match self.focus {
+            Focus::Field(key) => self.fields.get_mut(&key),
+            _ => None,
+        }
+    }
+
     fn values(&self) -> SettingsValues {
         let mut values = SettingsValues { server: self.server, ..SettingsValues::default() };
         for key in FieldKey::ALL {
             self.text(key).clone_into(values.field_mut(key));
         }
         values
+    }
+
+    fn load(&mut self, values: &SettingsValues) {
+        self.server = values.server;
+        self.fields = FieldKey::ALL.map(|key| (key, Editor::new(values.field(key)))).into_iter().collect();
+    }
+
+    /// The first empty field of those on screen, or the last, or the address box.
+    fn place_focus(&mut self, view: &ConnectView) {
+        let by_hand = view.stage == "by_hand";
+        let fields = if by_hand { providers::provider(self.server).fields } else { view.fields.as_slice() };
+        let empty = fields.iter().find(|f| self.text(f.key).is_empty());
+        self.focus = empty.or(fields.last()).map_or(Focus::Field(FieldKey::Address), |f| Focus::Field(f.key));
     }
 }
 
@@ -358,42 +406,76 @@ impl Ui {
         }
     }
 
+    /// Connect as it stands, on that step.
+    fn connect(&self) -> Option<ConnectView> {
+        (self.app.overlay() == Overlay::Onboarding && self.app.step() == Step::Connect).then(|| self.app.connect_view())
+    }
+
+    /// Enter: on a row, that row, and anywhere else the form's main button.
+    fn form_enter(&mut self) {
+        let Some(form) = &self.form else { return };
+        let fx = match form.focus {
+            Focus::Row(_) if self.app.overlay() == Overlay::Settings => self.app.find_server(),
+            Focus::Row(row) => self.app.choose_onboarding(row),
+            _ => {
+                let values = form.values();
+                self.app.submit_settings(values)
+            }
+        };
+        self.run(fx);
+    }
+
+    /// Tells the core what's in the address box. That's what makes an answer about the old address out of date.
+    fn address_changed(&mut self) {
+        if let Some(form) = &self.form
+            && form.focus == Focus::Field(FieldKey::Address)
+        {
+            let address = form.text(FieldKey::Address).to_string();
+            self.app.address_edited(&address);
+        }
+    }
+
     fn form_key(&mut self, event: KeyEvent) {
+        let connect = self.connect();
+        let checking = self.app.settings().is_some_and(|f| f.checking);
         let Some(form) = &mut self.form else {
             return self.forward(event); // Esc, while the values are on their way
         };
         match event.code {
             KeyCode::Esc => self.forward(event),
-            KeyCode::Tab | KeyCode::Down => form.step(1),
-            KeyCode::BackTab | KeyCode::Up => form.step(-1),
-            KeyCode::Enter => {
-                let fx = self.app.submit_settings(form.values());
-                self.run(fx);
-            }
+            KeyCode::Tab | KeyCode::Down => form.step(1, connect.as_ref()),
+            KeyCode::BackTab | KeyCode::Up => form.step(-1, connect.as_ref()),
+            KeyCode::Enter => self.form_enter(),
+            // A save or a key on its way is for what's in the fields now.
+            _ if checking => {}
             // The server choice: either arrow, or Space, switches.
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus.is_none() => {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus == Focus::Choice => {
                 let kinds = Server::ALL.len();
                 let at = Server::ALL.iter().position(|&kind| kind == form.server).unwrap_or(0);
                 let by = if event.code == KeyCode::Left { kinds - 1 } else { 1 };
                 form.server = Server::ALL[(at + by) % kinds];
             }
             _ => {
-                if let Some(editor) = form.focus.and_then(|key| form.fields.get_mut(&key)) {
+                if let Some(editor) = form.editor() {
                     editor.key(event);
                 }
+                self.address_changed();
             }
         }
     }
 
     /// Pasted text goes to the field with the cursor, in one piece: API keys are pasted.
     pub fn paste(&mut self, text: &str) {
+        let checking = self.app.settings().is_some_and(|f| f.checking);
         if let Some(editor) = &mut self.search {
             editor.paste(text);
         } else if let Some(form) = &mut self.form
+            && !checking
             && (self.app.overlay() == Overlay::Settings || self.app.step() == Step::Connect)
-            && let Some(editor) = form.focus.and_then(|key| form.fields.get_mut(&key))
+            && let Some(editor) = form.editor()
         {
             editor.paste(text);
+            self.address_changed();
         }
     }
 
@@ -546,17 +628,38 @@ impl Ui {
         if self.app.overlay() != Overlay::Help {
             self.help_scroll = 0;
         }
+        let connect = self.connect();
+        let readeck = self.app.overlay() == Overlay::Settings;
         match self.app.settings() {
-            Some(form) if self.app.in_settings() => {
-                if self.form.is_none() {
-                    let v = &form.values;
+            Some(state) if self.app.in_settings() => {
+                let v = &state.values;
+                let form = self.form.get_or_insert_with(|| {
                     // The first empty field of the chosen server, or its last.
                     let own = providers::provider(v.server).fields;
                     let empty = own.iter().find(|f| v.field(f.key).is_empty());
-                    let focus = empty.or(own.last()).map(|f| f.key);
-                    let fields = FieldKey::ALL.map(|key| (key, Editor::new(v.field(key)))).into_iter().collect();
-                    let readeck = self.app.overlay() == Overlay::Settings;
-                    self.form = Some(Form { server: v.server, fields, focus, readeck });
+                    let focus = empty.or(own.last()).map_or(Focus::Choice, |f| Focus::Field(f.key));
+                    let mut form = Form {
+                        server: v.server,
+                        fields: HashMap::new(),
+                        focus,
+                        readeck,
+                        refill: state.refill,
+                        connect: ("", Vec::new()),
+                    };
+                    form.load(v);
+                    form
+                });
+                form.readeck = readeck;
+                if form.refill != state.refill {
+                    form.refill = state.refill;
+                    form.load(v);
+                }
+                if let Some(view) = connect {
+                    let shown = (view.stage, view.fields.iter().map(|f| f.key).collect());
+                    if form.connect != shown {
+                        form.connect = shown;
+                        form.place_focus(&view);
+                    }
                 }
             }
             _ => self.form = None,

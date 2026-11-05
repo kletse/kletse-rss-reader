@@ -241,8 +241,8 @@ pub const MINIFLUX_NO_PASSWORDS: &str = "This Miniflux doesn't sign in with pass
 pub const MINIFLUX_NO_MINTING: &str = "This Miniflux can't make a key for Onward: that came with version 2.2.9. Make \
                                        one on its page, then paste it here.";
 pub const FRESHRSS_FOUND: &str = "This is FreshRSS. It needs your username and its API password.";
-pub const PLAIN_HTTP: &str = "This connection uses plain http://, unencrypted. That's normal at home or on a tailnet, \
-                              and Onward only does it on addresses like those.";
+pub const PLAIN_HTTP: &str = "This uses plain http://, unencrypted. That's normal at home or on a tailnet, and Onward \
+                              does it only on addresses like those.";
 pub const MINT_REFUSED: &str = "Miniflux didn't accept that. Either the username or password is wrong, or this \
                                 account doesn't sign in with a password (Google, OpenID Connect, a passkey), or a \
                                 proxy in front of Miniflux removes the login. For the last two, use the button below.";

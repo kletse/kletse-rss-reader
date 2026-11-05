@@ -188,7 +188,11 @@ pub struct Ui {
     pub picker_top: usize,
     pub picker_rows: Rect,
     pub picker_panel: Rect,
+    /// The import and export panel, for clicks beside it.
+    pub transfer_panel: Rect,
     pub search: Option<Editor>,
+    /// The path in the import and export panel, which takes the place of a window's file dialog.
+    pub transfer_path: Option<Editor>,
     pub form: Option<Form>,
     pub shot: Option<Shot>,
     /// The room the viewer has for a picture.
@@ -247,7 +251,9 @@ impl Ui {
             picker_top: 0,
             picker_rows: Rect::default(),
             picker_panel: Rect::default(),
+            transfer_panel: Rect::default(),
             search: None,
+            transfer_path: None,
             form: None,
             shot: None,
             viewer_size: Size::default(),
@@ -335,6 +341,7 @@ impl Ui {
             (KeyCode::Char('c'), _) if ctrl => self.quit = true,
             (KeyCode::Char('l'), _) if ctrl => self.repaint = true,
             (_, Overlay::Search) => self.search_key(event),
+            (_, Overlay::Transfer) => self.transfer_key(event),
             (_, Overlay::Settings) => self.form_key(event),
             (_, Overlay::Onboarding) if self.app.step() == Step::Connect => self.form_key(event),
             (KeyCode::Char('j') | KeyCode::Down, Overlay::Help) => self.help_scroll += 1,
@@ -406,6 +413,21 @@ impl Ui {
         }
     }
 
+    /// The panel's field takes what a window's file dialog would; everything else is the core's.
+    fn transfer_key(&mut self, event: KeyEvent) {
+        let asking = self.app.transfer_view().is_some_and(|view| view.stage == "asking");
+        match (event.code, &mut self.transfer_path) {
+            (KeyCode::Esc, _) => self.forward(event),
+            (KeyCode::Enter, Some(editor)) if asking => {
+                let path = editor.text().to_string();
+                let fx = self.app.feed_file(&path, false);
+                self.run(fx);
+            }
+            (_, Some(editor)) if asking => editor.key(event),
+            _ => self.forward(event),
+        }
+    }
+
     /// Connect as it stands, on that step.
     fn connect(&self) -> Option<ConnectView> {
         (self.app.overlay() == Overlay::Onboarding && self.app.step() == Step::Connect).then(|| self.app.connect_view())
@@ -469,6 +491,8 @@ impl Ui {
         let checking = self.app.settings().is_some_and(|f| f.checking);
         if let Some(editor) = &mut self.search {
             editor.paste(text);
+        } else if let Some(editor) = self.transfer_path.as_mut().filter(|_| self.app.overlay() == Overlay::Transfer) {
+            editor.paste(text);
         } else if let Some(form) = &mut self.form
             && !checking
             && (self.app.overlay() == Overlay::Settings || self.app.step() == Step::Connect)
@@ -524,6 +548,10 @@ impl Ui {
             }
             Overlay::Help => self.app.close_help_overlay(),
             Overlay::Image => self.app.close_viewer(),
+            Overlay::Transfer if !self.transfer_panel.contains(ratatui::layout::Position::new(column, row)) => {
+                let fx = self.app.cancel_transfer();
+                self.run(fx);
+            }
             _ => {}
         }
     }
@@ -624,6 +652,15 @@ impl Ui {
             self.search = Some(Editor::selected(self.app.search_query()));
         } else if !searching {
             self.search = None;
+        }
+        // It stays behind the question about a file that's there, and goes with the panel.
+        match self.app.transfer_view() {
+            None => self.transfer_path = None,
+            Some(view) if self.transfer_path.is_none() => {
+                let start = if view.kind == "export" { format!("~/{}", view.suggested) } else { String::new() };
+                self.transfer_path = Some(Editor::new(&start));
+            }
+            Some(_) => {}
         }
         if self.app.overlay() != Overlay::Help {
             self.help_scroll = 0;

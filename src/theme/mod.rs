@@ -17,6 +17,14 @@ mod omarchy;
 #[cfg(not(target_os = "macos"))]
 use omarchy as provider;
 
+/// Whether this machine runs Omarchy, whose keyring needs a word of its own: see `secrets::Place`.
+pub fn on_omarchy() -> bool {
+    #[cfg(target_os = "macos")]
+    return false;
+    #[cfg(not(target_os = "macos"))]
+    omarchy::installed()
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Theme {
     /// Omarchy `colors.toml` keys: `background`, `foreground`, `accent`, `mode`, …

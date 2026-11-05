@@ -11,6 +11,11 @@ fn current_dir() -> Option<PathBuf> {
         .map(|dir| dir.join("omarchy").join("current"))
 }
 
+/// Whether this machine runs Omarchy: the same folder the theme comes from.
+pub fn installed() -> bool {
+    current_dir().is_some_and(|dir| dir.exists())
+}
+
 pub fn load() -> Theme {
     let colors = current_dir()
         .and_then(|dir| std::fs::read_to_string(dir.join("theme").join("colors.toml")).ok())

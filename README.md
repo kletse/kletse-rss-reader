@@ -94,7 +94,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
-The picker lists **All unread**, then **Starred**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, import, export, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
+The picker lists **All unread**, then **Starred**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, manage, import, export, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
 Press <kbd>Shift</kbd>+<kbd>A</kbd> in the picker to mark the selected feed or category read without opening it. It asks first, and, as in the reader, leaves alone what arrives after it counted.
 
@@ -226,12 +226,39 @@ Onward checks that the file is OPML, and says what's wrong if it isn't, before a
 | ------ | --------- | --------- |
 | **Miniflux** | Onward also tells it to fetch, or there'd be no articles for up to an hour. They arrive in the list over the next moments. | Yes |
 | **FreshRSS** | It fetches every feed before it answers, so a long list can take minutes. You can close the panel and keep reading: Onward says when it's done. | Yes |
-| **Miniflux's Google Reader integration** | No: connect to it with its address instead, or add feeds on its page. | Yes, made from its list of feeds |
+| **Miniflux's Google Reader integration** | No: connect to it with its address instead. | Yes, made from its list of feeds |
 | **Sample articles** | No: they have no server behind them, and Onward says so. | No |
 
 Both servers refuse to fetch a feed on a private address (`localhost`, your own network, a `.lan` name) until they're told they may, and both take the file regardless: FreshRSS says OK and the feed stays empty, and Miniflux lists it with an error only its own page shows. On FreshRSS, allow it in its System configuration or with `INTERNAL_HOST_ALLOWLIST`. On Miniflux, set `FETCHER_ALLOW_PRIVATE_NETWORKS`. Onward names what it can see: on FreshRSS the feeds that came in empty, and on Miniflux the private hosts in the file. Importing a file twice adds nothing twice, on either server.
 
 <kbd>e</kbd> saves the server's feeds to an OPML file. If there's a file by that name already, Onward asks before replacing it. The file is readable by you alone, as a feed's address can carry a private token.
+
+### Manage your feeds
+
+An account with no feeds offers **Add a feed**, or press <kbd>a</kbd> in the picker: give it a feed's address and your server fetches it, so nothing goes anywhere but your server. <kbd>m</kbd>, or the button at the top of the picker, opens every feed and category, also those the picker hides for having nothing unread:
+
+| Key | On a feed | On a category |
+| --- | --------- | ------------- |
+| <kbd>a</kbd> | Add a feed to this category | The same |
+| <kbd>r</kbd> | Rename it | Rename it |
+| <kbd>m</kbd> | Move it to another category, or to a new one, which is how a category comes to be | |
+| <kbd>d</kbd> | Remove it, with its articles | Delete it; see below |
+| <kbd>f</kbd> | Have the server fetch its feeds now, on Miniflux | The same |
+
+A feed's articles usually arrive with it, and Onward says how many. If there are none yet it says so too, and on Miniflux <kbd>f</kbd> asks for them. FreshRSS fetches on its own schedule. When a server won't take a feed, you get its own words: *This feed already exists.* or *Already subscribed!*, say.
+
+**Removing a feed loses its articles**, read, unread and starred, and **deleting a category depends on the server**. On Miniflux it deletes every feed in the category and all their articles, for good. On FreshRSS the feeds and articles stay, in its default category. Onward first asks your server what's in the category, then says which of these it is and how many feeds that means. Where it can't be undone only <kbd>y</kbd> says yes, not <kbd>Enter</kbd>. To keep a Miniflux category's feeds, move them first.
+
+Afterwards Onward looks at the list, as FreshRSS says OK to changes it didn't make, so what you read is what really happened. What's open in the reader follows: a renamed category carries on where you were, and a removed feed's articles leave the list.
+
+| Server | What you can change |
+| ------ | ------------------- |
+| **Miniflux** | Everything above |
+| **FreshRSS** | Everything above, except its default category, which it won't rename or delete |
+| **Miniflux's Google Reader integration** | Nothing: Onward can't tell this connection from other Google Reader servers, which do different things. Connect to Miniflux with its address instead. |
+| **Sample articles** | Nothing: they have no server behind them, and Onward says so. |
+
+Both servers refuse a feed on a private address until they're told they may; see above.
 
 Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
@@ -336,7 +363,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 
 ## Not (yet) in scope
 
-Managing feeds (use your server's web UI), offline reading, notifications and a bar widget.
+Offline reading, notifications and a bar widget.
 
 ## License
 

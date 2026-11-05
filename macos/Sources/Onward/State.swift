@@ -47,6 +47,8 @@ struct AppState: Decodable {
     let confirmHint: String
     let confirmAction: String
     let confirmLasting: Bool
+    /// Something to read rather than a question: one button.
+    let confirmTold: Bool
     /// Importing or exporting a feed list.
     let transfer: TransferInfo?
     /// The feeds panel, while it's open or a change from it is under way.

@@ -176,7 +176,9 @@ struct ConfirmAlert: ViewModifier {
                 Button(model.state?.confirmAction ?? "OK", role: model.state?.confirmLasting == true ? .destructive : nil) {
                     model.key("y")
                 }
-                Button("Cancel", role: .cancel) { model.key("n") }
+                if model.state?.confirmTold != true {
+                    Button("Cancel", role: .cancel) { model.key("n") }
+                }
             },
             message: { Text(model.state?.confirmHint ?? "") }
         )

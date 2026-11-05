@@ -1058,7 +1058,7 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
 
 impl Harness {
     /// From the first screen to the address box.
-    fn to_connect(&mut self) {
+    fn go_to_connect(&mut self) {
         self.key("ArrowDown");
         self.key("Enter");
         assert_eq!(self.app.step(), Step::Connect);
@@ -1097,7 +1097,7 @@ impl Harness {
     }
 
     fn connect_to(&mut self, found: Detected) {
-        self.to_connect();
+        self.go_to_connect();
         let probe = self.look_at("rss.example.com");
         self.found(probe, found);
     }
@@ -1269,7 +1269,7 @@ fn the_macs_menus_do_nothing_on_first_run() {
 #[test]
 fn connect_saves_and_goes_on_to_the_picker() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     h.save_result = Ok(saved(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }));
     let fx = h.app.submit_settings(SettingsValues::default());
@@ -1283,7 +1283,7 @@ fn connect_saves_and_goes_on_to_the_picker() {
 #[test]
 fn a_failed_connect_stays_put_and_says_why() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     h.save_result = Err("Miniflux rejected the API key".into());
     let typed = SettingsValues { miniflux_url: "https://m.example.com".into(), ..SettingsValues::default() };
@@ -1299,7 +1299,7 @@ fn a_failed_connect_stays_put_and_says_why() {
 #[test]
 fn esc_waits_for_a_save_being_checked() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     let _still_going = h.app.submit_settings(SettingsValues::default());
     let (used, _) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
@@ -1310,7 +1310,7 @@ fn esc_waits_for_a_save_being_checked() {
 #[test]
 fn a_form_is_handed_in_by_field_name_and_keeps_what_isnt_on_screen() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     let fields = [("greader_url", "https://f.example.com"), ("readeck_token", "tok"), ("nonsense", "x")];
     let fields = fields.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
@@ -1519,7 +1519,7 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: None, readeck_problem: problem });
     h.start();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
@@ -1543,7 +1543,7 @@ fn saving_says_who_you_are_signed_in_as() {
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
     h.start();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
@@ -2702,7 +2702,7 @@ fn all_unread_marked_read_from_the_picker_shows_read_in_the_starred_list_behind_
 #[test]
 fn connect_opens_on_the_address_box_alone() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     let view = h.app.connect_view();
     assert_eq!((view.stage, view.action, view.probing), ("address", "Continue", false));
     assert!(view.fields.is_empty());
@@ -2712,7 +2712,7 @@ fn connect_opens_on_the_address_box_alone() {
 #[test]
 fn typing_looks_at_nothing_and_enter_looks_once() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     for typed in ["r", "rs", "rss", "rss.example.com"] {
         h.app.address_edited(typed);
     }
@@ -2728,7 +2728,7 @@ fn typing_looks_at_nothing_and_enter_looks_once() {
 #[test]
 fn an_answer_about_an_address_since_changed_is_a_no_op() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     let stale = h.look_at("old.example.com");
     h.app.address_edited("new.example.com");
     assert!(!h.app.connect_view().probing);
@@ -2746,7 +2746,7 @@ fn an_answer_about_an_address_since_changed_is_a_no_op() {
 #[test]
 fn an_answer_after_stepping_back_is_a_no_op() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     let stale = h.look_at("rss.example.com");
     h.key("Escape");
     assert_eq!(h.app.step(), Step::Welcome);
@@ -2776,7 +2776,7 @@ fn changing_the_address_after_a_server_was_found_starts_over() {
 #[test]
 fn an_address_that_isnt_one_is_said_at_once_with_no_request() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.submit(SettingsValues { address: "  ".into(), ..SettingsValues::default() });
     assert!(h.looked_at.is_empty());
     assert!(h.form_error().contains("Type your server's address"));
@@ -3043,7 +3043,7 @@ fn what_onward_cant_use_is_said_with_nothing_to_fill_in() {
 #[test]
 fn filling_in_by_hand_is_the_form_as_it_was_and_esc_comes_back_from_it() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.by_hand();
     h.key("Escape");
     assert_eq!((h.app.step(), h.app.connect_view().stage), (Step::Connect, "address"));
@@ -3064,7 +3064,7 @@ fn a_hosted_row_is_one_row_of_the_table_and_goes_to_the_same_probe() {
     };
     assert!(hosted_rows(&[*providers::provider(Server::Miniflux)]).is_empty(), "no fixed address, no row");
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     h.app.connect.found_rows = hosted_rows(&[hosted]);
     h.row("Hosted Miniflux");
     assert_eq!(h.looked_at.len(), 1);
@@ -3131,7 +3131,7 @@ fn outside_settings_there_is_no_finding_a_server() {
 #[test]
 fn a_look_from_before_the_samples_is_out_of_date_after_them() {
     let mut h = first_run();
-    h.to_connect();
+    h.go_to_connect();
     let stale = h.look_at("rss.example.com");
     h.key("Escape");
     h.key("ArrowUp");

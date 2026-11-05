@@ -1928,12 +1928,12 @@ impl App {
                 Vec::new()
             }
             RowDoes::ByHand => {
-                self.to_address();
+                self.back_to_address();
                 self.connect.stage = Stage::ByHand;
                 Vec::new()
             }
             RowDoes::ToAddress => {
-                self.to_address();
+                self.back_to_address();
                 Vec::new()
             }
         }
@@ -1963,7 +1963,7 @@ impl App {
     }
 
     /// Back to the box. What's still being looked at is forgotten, as is what was found.
-    fn to_address(&mut self) {
+    fn back_to_address(&mut self) {
         self.latest_probe += 1;
         let password = matches!(self.connect.stage, Stage::Miniflux { key: KeyRoute::Password, .. });
         let Connect { address, from_settings, .. } = std::mem::take(&mut self.connect);
@@ -1981,7 +1981,7 @@ impl App {
         let checking = self.settings.as_ref().is_some_and(|f| f.checking);
         if self.overlay == Overlay::Onboarding && self.connect.address != text && !checking {
             text.clone_into(&mut self.connect.address);
-            self.to_address();
+            self.back_to_address();
         }
     }
 
@@ -2164,10 +2164,10 @@ impl App {
         match self.step {
             Step::Welcome => return false,
             Step::Connect if checking => return true,
-            Step::Connect if self.connect.stage != Stage::Address => self.to_address(),
+            Step::Connect if self.connect.stage != Stage::Address => self.back_to_address(),
             Step::Connect => {
                 let from_settings = self.connect.from_settings;
-                self.to_address();
+                self.back_to_address();
                 self.connect.from_settings = false;
                 self.go_to_step(Step::Welcome, row(Choice::Connect));
                 if from_settings {

@@ -1859,6 +1859,7 @@ dependencies = [
  "image",
  "notify",
  "percent-encoding",
+ "quick-xml",
  "ratatui",
  "ratatui-image",
  "reqwest",

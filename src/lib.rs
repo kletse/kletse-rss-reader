@@ -21,6 +21,7 @@ pub mod greader;
 pub mod keys;
 pub mod miniflux;
 mod moved;
+pub mod opml;
 pub mod paging;
 pub mod picker;
 pub mod prefs;

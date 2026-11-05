@@ -9,6 +9,10 @@ T.Button {
 
     required property var ui
     property bool primary: false
+    /// Offered rather than pushed: no border until it's pointed at.
+    property bool quiet: false
+    /// Where the arrow keys are, on a screen that has them.
+    property bool current: false
     property string glyph: ""
     property string iconPath: ""
     property bool logo: false
@@ -79,7 +83,8 @@ T.Button {
                 text: b.text
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                color: b.primary ? b.ui.model.bg : (b.hovered ? b.ui.model.fgBright : b.ui.model.fg)
+                color: b.primary ? b.ui.model.bg : (b.hovered ? b.ui.model.fgBright
+                                                              : b.quiet ? b.ui.model.fgDim : b.ui.model.fg)
                 font: b.font
             }
         }
@@ -88,8 +93,8 @@ T.Button {
     background: Rectangle {
         radius: b.ui.radius
         color: b.primary ? b.ui.model.accent : "transparent"
-        border.width: 1
-        border.color: b.primary || b.hovered ? b.ui.model.accent : b.ui.model.bgLight
+        border.width: b.quiet && !b.current && !b.hovered ? 0 : 1
+        border.color: b.primary || b.hovered || b.current ? b.ui.model.accent : b.ui.model.bgLight
         opacity: b.primary && b.hovered ? 0.9 : 1
     }
 

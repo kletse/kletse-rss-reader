@@ -72,7 +72,7 @@ struct PickerView: View {
             Button { model.press("help") } label: { Image(systemName: "keyboard") }
                 .help("Keys (?)")
             Button { model.press("settings") } label: { Image(systemName: "gearshape") }
-                .help("Settings (,)")
+                .help(model.state?.samples == true ? "Connect (,)" : "Settings (,)")
         }
         .labelStyle(.titleAndIcon)
         .buttonStyle(.borderless)

@@ -105,9 +105,18 @@ struct ContentView: View {
                     : state?.starredList == true ? "Starred · \(position)" : position)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                if state?.samples == true {
+                    Text("Sample articles").foregroundStyle(.tint)
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            // The samples aren't your feeds, and this is the way out of them.
+            if state?.samples == true {
+                Button("Connect") { model.press("settings") }
+                    .help("Connect your server (,)")
+                    .disabled(floating)
+            }
             if state?.readeck == true {
                 Button { model.press("readeck") } label: { Label("Readeck", systemImage: "bookmark") }
                     .help("Save to Readeck (b)")

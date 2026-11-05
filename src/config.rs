@@ -41,33 +41,13 @@ impl Server {
     /// Every kind, in the order the settings form offers them.
     pub const ALL: [Server; 2] = [Server::Miniflux, Server::GReader];
 
-    /// As the settings form offers it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Server::Miniflux => "Miniflux",
-            Server::GReader => "Google Reader API (FreshRSS, …)",
-        }
-    }
-
-    /// As the Mac's settings offer it, where the help below the picker names the servers.
-    pub fn short_label(self) -> &'static str {
-        match self {
-            Server::Miniflux => "Miniflux",
-            Server::GReader => "Google Reader API",
-        }
-    }
-
     /// What this kind of server can do.
     pub fn capabilities(self) -> Capabilities {
-        match self {
-            Server::Miniflux => Capabilities::EVERYTHING,
-            // The protocol has no call for the first two.
-            Server::GReader => Capabilities { fetch_full: false, refresh: false, search: None },
-        }
+        crate::providers::provider(self).capabilities
     }
 
-    /// Where the kind stands in `ALL`. A new kind stops the build here, and belongs in `ALL` as well.
-    const fn place(self) -> usize {
+    /// Where the kind stands in `ALL` and `providers::PROVIDERS`. A new kind stops the build here, and belongs in both.
+    pub(crate) const fn place(self) -> usize {
         match self {
             Server::Miniflux => 0,
             Server::GReader => 1,

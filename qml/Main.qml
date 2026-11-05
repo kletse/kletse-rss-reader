@@ -43,6 +43,8 @@ ApplicationWindow {
         onQuitRequested: Qt.quit()
         // The search box takes the keyboard itself (SearchPanel.qml).
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
+        // A step's fields go with it (Onboarding.qml), and Connect's take the keyboard themselves.
+        onOnboardingStepChanged: if (onboardingStep !== "connect") keys.forceActiveFocus()
     }
 
     // macOS: follow the system appearance.
@@ -168,6 +170,13 @@ ApplicationWindow {
         }
         Help { ui: win; anchors.fill: parent; visible: model.overlay === "help" }
         Confirm { ui: win; anchors.fill: parent; visible: model.overlay === "confirm" }
+        // Over everything while it's there: nothing is behind it yet. Made when it opens, so a field that's gone
+        // keeps no focus.
+        Loader {
+            anchors.fill: parent
+            active: model.overlay === "onboarding"
+            sourceComponent: Onboarding { ui: win }
+        }
         Toast { ui: win; anchors.fill: parent }
     }
 
@@ -211,10 +220,12 @@ ApplicationWindow {
     Timer {
         id: snapshotKeys
         property var pending: null
+        property bool done: false
         interval: 400
         repeat: true
-        running: model.snapshotPath !== "" && (model.pickerState === "ready" || model.overlay === "onboarding")
-                 && pending === null
+        // First run's keys open the picker and leave it, so what started this can stop being true on the way.
+        running: model.snapshotPath !== "" && !done
+                 && (pending !== null || model.pickerState === "ready" || model.overlay === "onboarding")
         onTriggered: {
             // One key per tick, so what a key starts (opening a selection) is done before the next one.
             if (pending === null)
@@ -223,10 +234,8 @@ ApplicationWindow {
             if (name !== undefined)
                 model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
             if (pending.length === 0) {
-                stop()
+                done = true
                 snapshotShot.start()
-            } else if (!running) {
-                start()
             }
         }
     }

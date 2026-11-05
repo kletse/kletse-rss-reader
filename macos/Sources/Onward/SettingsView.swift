@@ -1,5 +1,6 @@
 // The server details, in two places. `SettingsWindow` is the app's Settings window, beside the reader; `OnboardingView`
-// is the same fields in the main window on first run, when there is nothing to read until they're filled in.
+// is first run in the main window: what it offers, and the same fields at Connect. The fields, their help and all of
+// first run's words come from the table in src/providers.rs.
 // A feed server is required (Miniflux, or a Google Reader API server such as FreshRSS), Readeck optional. Saving
 // checks both servers before anything is written, which is why these have a Save button where most Mac settings
 // apply as you go.
@@ -7,22 +8,9 @@ import AppKit
 import SwiftUI
 
 /// The field to start in: the chosen server's first empty one, or its last.
-private enum Field {
-    case minifluxUrl, minifluxApiKey, greaderUrl, greaderUsername, greaderPassword
-
-    static func first(_ values: SettingsValues) -> Field? {
-        let fields: [(Field, String)]
-        switch values.server {
-        case "greader":
-            fields = [(.greaderUrl, values.greaderUrl), (.greaderUsername, values.greaderUsername),
-                      (.greaderPassword, values.greaderPassword)]
-        case "miniflux":
-            fields = [(.minifluxUrl, values.minifluxUrl), (.minifluxApiKey, values.minifluxApiKey)]
-        default:
-            return nil
-        }
-        return (fields.first { $0.1.isEmpty } ?? fields[fields.count - 1]).0
-    }
+private func firstField(_ values: SettingsValues, _ providers: [ProviderInfo]) -> String? {
+    guard let fields = providers.first(where: { $0.id == values.server })?.fields else { return nil }
+    return (fields.first { values[field: $0.key].isEmpty } ?? fields.last)?.key
 }
 
 /// Applies at once, unlike the servers: there's nothing to check.
@@ -57,16 +45,20 @@ struct SettingsWindow: View {
     @State private var values = SettingsValues.empty
     /// As loaded, for Revert and to tell whether there is anything to save.
     @State private var saved = SettingsValues.empty
-    @FocusState private var focus: Field?
+    @FocusState private var focus: String?
 
     var body: some View {
         let settings = model.state?.settings
         TabView {
             Tab("Feed Server", systemImage: "antenna.radiowaves.left.and.right") {
-                pane(settings) { FeedServerSections(kinds: settings?.kinds ?? [], values: $values, focus: $focus) }
+                pane(settings) {
+                    FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
+                }
             }
             Tab("Readeck", systemImage: "bookmark") {
-                pane(settings) { ReadeckSection(values: $values) }
+                pane(settings) {
+                    ReadeckSection(fields: settings?.readeckFields ?? [], values: $values, focus: $focus)
+                }
             }
             Tab("Appearance", systemImage: "paintpalette") {
                 AppearancePane()
@@ -80,7 +72,7 @@ struct SettingsWindow: View {
             guard settings != nil, let loaded = model.settingsValues else { return }
             values = loaded
             saved = loaded
-            focus = Field.first(loaded)
+            focus = firstField(loaded, settings?.providers ?? [])
         }
         // What's left unsaved when the window closes is dropped. A save closes it from `Model`.
         .onDisappear { model.cancelSettings() }
@@ -127,36 +119,27 @@ private struct WindowNote: NSViewRepresentable {
     func updateNSView(_ view: Note, context: Context) {}
 }
 
-/// First run. It can't be cancelled.
+/// First run: what the first screen offers, the server form, and what to do with no server. The core keeps the step, a
+/// click goes there and Esc steps back. What's typed stays here while the step changes.
 struct OnboardingView: View {
     let model: Model
 
     @State private var values = SettingsValues.empty
-    @FocusState private var focus: Field?
+    @FocusState private var focus: String?
 
     var body: some View {
         let settings = model.state?.settings
-        let checking = settings?.checking == true
+        let onboarding = model.state?.onboarding
         Form {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    LogoMark(width: 72).padding(.bottom, 6)
-                    Text("Welcome to Onward").font(.largeTitle.bold())
-                    Text("Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b.")
-                        .foregroundStyle(.secondary)
+            if let onboarding {
+                switch onboarding.step {
+                case "connect":
+                    connect(onboarding.words, settings)
+                case "no_server":
+                    noServer(onboarding.words.noServer, cursor: onboarding.cursor, settings)
+                default:
+                    welcome(onboarding.words, cursor: onboarding.cursor, settings)
                 }
-                .padding(.vertical, 4)
-            }
-            // What was wrong with the config file, above the fields it is about.
-            MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
-            FeedServerSections(kinds: settings?.kinds ?? [], values: $values, focus: $focus)
-            ReadeckSection(values: $values)
-            MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
-            HStack {
-                Spacer()
-                Button(checking ? "Checking…" : "Connect") { model.submitSettings(values) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(checking)
             }
         }
         .formStyle(.grouped)
@@ -165,44 +148,163 @@ struct OnboardingView: View {
         .onChange(of: settings?.serial, initial: true) {
             guard settings != nil, let loaded = model.settingsValues else { return }
             values = loaded
-            focus = Field.first(loaded)
+            focusFields()
+        }
+        .onChange(of: onboarding?.step) { focusFields() }
+    }
+
+    /// Connect's first field, once it's there. Anywhere else no field may keep the keyboard.
+    private func focusFields() {
+        let connecting = model.state?.onboarding?.step == "connect"
+        focus = connecting ? firstField(values, model.state?.settings?.providers ?? []) : nil
+    }
+
+    private func heading(_ title: String, _ text: String, logo: Bool = false) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                if logo { LogoMark(width: 72).padding(.bottom, 6) }
+                Text(title).font(.largeTitle.bold())
+                Text(text).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func welcome(_ words: FirstRunWords, cursor: Int, _ settings: SettingsInfo?) -> some View {
+        heading(words.welcomeTitle, words.welcomeText, logo: true)
+        // What was wrong with the config file, on whichever step you're at.
+        MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+        Section {
+            ForEach(Array(words.welcome.enumerated()), id: \.offset) { index, row in
+                RowButton(label: row.label, quiet: row.quiet, current: index == cursor) {
+                    model.chooseOnboarding(index)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func noServer(_ words: NoServerInfo, cursor: Int, _ settings: SettingsInfo?) -> some View {
+        heading(words.title, words.text)
+        MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+        ForEach(Array(words.offers.enumerated()), id: \.offset) { index, offer in
+            Section(offer.name) {
+                Text(offer.price).bold()
+                Text(offer.text)
+                RowButton(label: offer.link.label, quiet: false, current: index == cursor) {
+                    model.chooseOnboarding(index)
+                }
+            }
+        }
+        Section {
+            Text(words.note).foregroundStyle(.secondary)
+            RowButton(label: words.more.label, quiet: false, current: cursor == words.offers.count) {
+                model.chooseOnboarding(words.offers.count)
+            }
+            ShownLink(model: model)
+            HStack {
+                Spacer()
+                Button("Back") { model.key("Escape") }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func connect(_ words: FirstRunWords, _ settings: SettingsInfo?) -> some View {
+        let checking = settings?.checking == true
+        heading(words.connectTitle, words.connectText)
+        MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+        FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
+        MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
+        HStack {
+            Spacer()
+            Button("Back") { model.key("Escape") }
+                .disabled(checking)
+            Button(checking ? "Checking…" : "Connect") { model.submitSettings(values) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(checking)
+        }
+    }
+}
+
+/// A row of a first-run step. `current` is where the arrow keys are.
+private struct RowButton: View {
+    let label: String
+    let quiet: Bool
+    let current: Bool
+    let action: () -> Void
+
+    var body: some View {
+        if quiet && !current {
+            Button(action: action) { Text(label).foregroundStyle(.secondary) }
+                .buttonStyle(.plain)
+        } else if current {
+            Button(action: action) { Text(label) }
+                .buttonStyle(.borderedProminent)
+        } else {
+            Button(action: action) { Text(label) }
+                .buttonStyle(.bordered)
+        }
+    }
+}
+
+/// The link just opened, as text to take by hand. `open` is reliable here, but a browser that's asked isn't one that
+/// came up.
+private struct ShownLink: View {
+    let model: Model
+
+    var body: some View {
+        if let link = model.state?.shownLink {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("If your browser didn't open, here's the address:").foregroundStyle(.secondary)
+                Text(verbatim: link).textSelection(.enabled)
+            }
+        }
+    }
+}
+
+private struct FieldRow: View {
+    let field: FieldInfo
+    @Binding var values: SettingsValues
+    var focus: FocusState<String?>.Binding
+
+    var body: some View {
+        if field.secret {
+            SecureField(field.label, text: $values[field: field.key])
+                .focused(focus, equals: field.key)
+        } else {
+            TextField(field.label, text: $values[field: field.key],
+                      prompt: field.placeholder.isEmpty ? nil : Text(verbatim: field.placeholder))
+                .focused(focus, equals: field.key)
         }
     }
 }
 
 private struct FeedServerSections: View {
-    let kinds: [ServerKind]
+    let model: Model
+    let providers: [ProviderInfo]
     @Binding var values: SettingsValues
-    var focus: FocusState<Field?>.Binding
+    var focus: FocusState<String?>.Binding
+
+    private var provider: ProviderInfo? { providers.first { $0.id == values.server } }
 
     var body: some View {
         Section {
             Picker("Server type", selection: $values.server) {
-                ForEach(kinds) { Text($0.label).tag($0.name) }
+                ForEach(providers) { Text($0.shortLabel).tag($0.id) }
             }
-            .onChange(of: values.server) { focus.wrappedValue = Field.first(values) }
-            if values.server == "greader" {
-                TextField("Server URL", text: $values.greaderUrl,
-                          prompt: Text(verbatim: "https://freshrss.example.com/api/greader.php"))
-                    .focused(focus, equals: .greaderUrl)
-                TextField("Username", text: $values.greaderUsername)
-                    .focused(focus, equals: .greaderUsername)
-                SecureField("Password", text: $values.greaderPassword)
-                    .focused(focus, equals: .greaderPassword)
-            } else if values.server == "miniflux" {
-                TextField("Server URL", text: $values.minifluxUrl,
-                          prompt: Text(verbatim: "https://miniflux.example.com"))
-                    .focused(focus, equals: .minifluxUrl)
-                SecureField("API key", text: $values.minifluxApiKey)
-                    .focused(focus, equals: .minifluxApiKey)
-            }
+            .onChange(of: values.server) { focus.wrappedValue = firstField(values, providers) }
+            ForEach(provider?.fields ?? []) { FieldRow(field: $0, values: $values, focus: focus) }
         } footer: {
-            Group {
-                if values.server == "greader" {
-                    Text(verbatim: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.\nFreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations.")
-                } else if values.server == "miniflux" {
-                    Text("In Miniflux: Settings → API Keys → Create a new API key.")
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach((provider?.fields ?? []).filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
+                ForEach(provider?.links ?? []) { link in
+                    Button(link.label) { model.openLink(link.url) }
+                        .buttonStyle(.link)
+                        .help(link.url)
                 }
+                ShownLink(model: model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -210,16 +312,19 @@ private struct FeedServerSections: View {
 }
 
 private struct ReadeckSection: View {
+    let fields: [FieldInfo]
     @Binding var values: SettingsValues
+    var focus: FocusState<String?>.Binding
 
     var body: some View {
         Section {
-            TextField("Readeck URL", text: $values.readeckUrl,
-                      prompt: Text(verbatim: "https://readeck.example.com"))
-            SecureField("API token", text: $values.readeckToken)
+            ForEach(fields) { FieldRow(field: $0, values: $values, focus: focus) }
         } footer: {
-            Text("Optional: leave empty to hide the bookmark button. In Readeck: Profile → API Tokens (needs “Bookmarks: write”).")
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Optional: leave empty to hide the bookmark button.")
+                ForEach(fields.filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

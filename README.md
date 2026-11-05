@@ -47,7 +47,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | <img src="docs/screenshots/omarchy/article.png" alt="Reading an article on Omarchy">     | <img src="docs/screenshots/omarchy/picker.png" alt="Feeds and categories picker on Omarchy">                                 | <img src="docs/screenshots/omarchy/code.png" alt="Article with a syntax-highlighted code block on Omarchy"> |
 | **Keys (<kbd>?</kbd>)**                                                                  | **First-run setup**                                                                                                          |                                                                                                             |
-| <img src="docs/screenshots/omarchy/help.png" alt="Keyboard shortcut overlay on Omarchy"> | <img src="docs/screenshots/omarchy/onboarding.png" alt="Welcome screen asking for Miniflux and Readeck details, on Omarchy"> |                                                                                                             |
+| <img src="docs/screenshots/omarchy/help.png" alt="Keyboard shortcut overlay on Omarchy"> | <img src="docs/screenshots/omarchy/onboarding.png" alt="The first-run form on Omarchy"> |                                                                                                             |
 
 ### In a terminal
 
@@ -182,15 +182,22 @@ Font size is your terminal's business, so the app has no keys for it. <kbd>[</kb
 
 ## Set up
 
-The first time you start Onward, a welcome screen asks for:
+The first time you start Onward, it offers three things:
+
+- **Try it with sample articles.** Built-in feeds, no account and no network. Nothing is marked read or saved, and the next start is a fresh one. The top bar says these are samples, with a way to Connect.
+- **Connect**, for the details below.
+- **I don't have a server.** Two ways to get one, with what they cost and [the catch](https://onward.kletse.dev/no-server/).
+
+Arrows and <kbd>Enter</kbd> choose, as does the mouse in a window, and <kbd>Esc</kbd> steps back. To connect:
 
 |                                                     |                                                                                                                                                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Miniflux URL + API key**                          | _Required, or the next row._ In Miniflux: Settings → API Keys → Create a new API key.                                                                                                                                                            |
 | **Google Reader API: URL + username + password**    | _Or this._ Choose **Google Reader API** at the top of the form. FreshRSS: `https://your-freshrss/api/greader.php`, your username and the **API password** from your profile (allow API access in its settings). Miniflux: the server URL, with the Google Reader integration enabled, and the username and password you set for it (Settings → Integrations). |
-| **Readeck URL + API token**                         | _Optional._ In Readeck: Profile → API Tokens, with the **Bookmarks: write** permission. Leave both empty and the bookmark button is hidden.                                                                                                      |
 
-**Connect** checks the details against your servers before saving anything, so a wrong key or address shows up right there. Readeck is optional, so it never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays. You can change them later with **Settings** in the feeds picker, or by pressing <kbd>,</kbd>.
+**Connect** checks the details against your server before saving anything, so a wrong key or address shows up right there.
+
+Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
 The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`), which you can also edit by hand:
 
@@ -241,11 +248,11 @@ You need Rust and Qt 6 (see [Install](#install)); `qmake6` (or `qmake`) must be 
 
 **Agents and contributors:** [AGENTS.md](AGENTS.md) has the practical side: how to see the QML's errors, take screenshots without a window, and the traps found so far.
 
-CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and a smoke test that renders several screens of the demo offscreen with every QML warning made fatal.
+CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and a smoke test that renders several screens of the demo and of first run offscreen with every QML warning made fatal.
 
 **Releasing:** bump the version in `Cargo.toml` (then `cargo build`, to update `Cargo.lock`) and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
 
-**Demo mode:** start with `ONWARD_DEMO=1` to use built-in sample feeds and articles (`src/demo.rs`) instead of Miniflux. Nothing is marked read or saved, not even the font size. It's handy for UI work and screenshots.
+**Demo mode:** start with `ONWARD_DEMO=1` to go straight to the built-in sample feeds and articles (`src/demo.rs`), the ones the first screen offers. Nothing is marked read or saved, not even the font size, and unlike the first screen's choice it has no way out to Connect. It's handy for UI work and screenshots.
 
 ```text
 src/
@@ -271,8 +278,9 @@ src/
   readeck.rs         Readeck "save bookmark"
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
   moved.rs           moves the kletse-rss folders to onward on first use
-  demo.rs            sample data for ONWARD_DEMO=1
-qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings
+  demo.rs            sample data, for the first screen and ONWARD_DEMO=1
+  providers.rs       the kinds of server, their fields and first run's words, which the windows draw from
+qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings, Onboarding, ServerForm
 macos/               the Mac app: SwiftUI over the same core
 assets/fonts/        Literata and Inter (SIL Open Font License), compiled into the binary
 packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, release scripts

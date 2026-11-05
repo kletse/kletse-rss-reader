@@ -20,6 +20,7 @@ use crate::keys::{self, Action};
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
+use crate::providers::{self, Choice, FieldKey};
 use std::collections::HashMap;
 
 pub const APP_NAME: &str = "Onward";
@@ -58,6 +59,25 @@ impl Overlay {
             Overlay::Onboarding => "onboarding",
             Overlay::Search => "search",
             Overlay::Image => "image",
+        }
+    }
+}
+
+/// Where first run is. It opens on `Welcome`, and Esc comes back there from the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Welcome,
+    Connect,
+    NoServer,
+}
+
+impl Step {
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Step::Welcome => "welcome",
+            Step::Connect => "connect",
+            Step::NoServer => "no_server",
         }
     }
 }
@@ -117,6 +137,32 @@ pub struct SettingsValues {
     pub greader_password: String,
     pub readeck_url: String,
     pub readeck_token: String,
+}
+
+impl SettingsValues {
+    pub fn field(&self, key: FieldKey) -> &str {
+        match key {
+            FieldKey::MinifluxUrl => &self.miniflux_url,
+            FieldKey::MinifluxApiKey => &self.miniflux_api_key,
+            FieldKey::GreaderUrl => &self.greader_url,
+            FieldKey::GreaderUsername => &self.greader_username,
+            FieldKey::GreaderPassword => &self.greader_password,
+            FieldKey::ReadeckUrl => &self.readeck_url,
+            FieldKey::ReadeckToken => &self.readeck_token,
+        }
+    }
+
+    pub fn field_mut(&mut self, key: FieldKey) -> &mut String {
+        match key {
+            FieldKey::MinifluxUrl => &mut self.miniflux_url,
+            FieldKey::MinifluxApiKey => &mut self.miniflux_api_key,
+            FieldKey::GreaderUrl => &mut self.greader_url,
+            FieldKey::GreaderUsername => &mut self.greader_username,
+            FieldKey::GreaderPassword => &mut self.greader_password,
+            FieldKey::ReadeckUrl => &mut self.readeck_url,
+            FieldKey::ReadeckToken => &mut self.readeck_token,
+        }
+    }
 }
 
 impl std::fmt::Debug for SettingsValues {
@@ -262,6 +308,9 @@ pub enum Effect {
     },
     /// Bring up the settings window (`App::use_settings_window`), or to the front if it's up.
     ShowSettings,
+    /// Serves the sample articles, or stops. It's an answered effect so that nothing is asked of the backend before
+    /// it has switched: the backend's answer is what opens the picker.
+    UseSamples(bool),
     LoadSettings,
     SaveSettings(SettingsValuesBox),
     SavePrefs(Prefs),
@@ -349,6 +398,11 @@ pub enum Outcome {
         problem: Option<String>,
     },
     SettingsSaved(Result<Saved, String>),
+    /// The backend switched, and this is what it has now.
+    SamplesSwitched {
+        on: bool,
+        status: Status,
+    },
 }
 
 impl std::fmt::Debug for Outcome {
@@ -438,6 +492,16 @@ pub struct App {
     /// The form lives in a window of its own: it takes no keys and doesn't replace the article.
     settings_in_window: bool,
     settings_window_open: bool,
+    /// See `Step`; means nothing outside `Overlay::Onboarding`.
+    step: Step,
+    /// The row the arrows are on, in `Welcome` and `NoServer`.
+    step_cursor: usize,
+    /// The last link opened from first run or the form. Whether a browser really opened is more than `xdg-open`
+    /// can say, so the window shows the address to take by hand.
+    shown_link: Option<String>,
+    /// Trying the sample articles from first run, and the prefs from before, which nothing of it may change.
+    /// `ONWARD_DEMO=1` is not this: it's there from the start, for UI work, and never connects anywhere.
+    samples: Option<Prefs>,
 
     prefs: Prefs,
     /// Whether the help says ⌘ or Ctrl.
@@ -487,6 +551,10 @@ impl App {
             settings: None,
             settings_in_window: false,
             settings_window_open: false,
+            step: Step::Welcome,
+            step_cursor: 0,
+            shown_link: None,
+            samples: None,
             prefs,
             mac,
         }
@@ -571,6 +639,26 @@ impl App {
         self.settings.as_ref()
     }
 
+    /// Where first run is.
+    pub fn step(&self) -> Step {
+        self.step
+    }
+
+    /// The row the arrows are on, on the first-run steps that have rows.
+    pub fn step_cursor(&self) -> usize {
+        self.step_cursor
+    }
+
+    /// See the field.
+    pub fn shown_link(&self) -> Option<&str> {
+        self.shown_link.as_deref()
+    }
+
+    /// Reading the sample articles, chosen on the first screen: the top bar says so, and offers to connect.
+    pub fn samples(&self) -> bool {
+        self.samples.is_some()
+    }
+
     pub fn picker_list(&self) -> &PickerList {
         &self.picker_list
     }
@@ -606,7 +694,11 @@ impl App {
     }
 
     pub fn help_lines(&self) -> Vec<(String, String)> {
-        keys::help_lines(self.mac, self.capabilities)
+        let mut lines = keys::help_lines(self.mac, self.capabilities);
+        if self.samples() {
+            lines.iter_mut().filter(|(keys, _)| keys == ",").for_each(|(_, action)| *action = "connect".into());
+        }
+        lines
     }
 
     /// "3 / 120" while reading, counting the pages not loaded yet.
@@ -1005,8 +1097,11 @@ impl App {
         }
     }
 
-    /// A link in an article or its title: always the browser.
+    /// A link in an article or its title, or on a form: always the browser.
     pub fn open_link(&mut self, url: &str) -> Vec<Effect> {
+        if self.in_settings() || self.settings_window_open {
+            self.shown_link = Some(url.to_string());
+        }
         vec![Effect::OpenInBrowser { url: url.to_string(), then: AfterOpen::Nothing }]
     }
 
@@ -1480,7 +1575,7 @@ impl App {
 
     // ---- Settings ------------------------------------------------------
 
-    /// Opens the settings form. On first run (onboarding) it can't be cancelled.
+    /// Opens the settings form, or on first run the steps that lead up to it.
     fn open_settings(&mut self, first_run: bool, fx: &mut Vec<Effect>) {
         if self.in_settings() {
             return;
@@ -1502,6 +1597,7 @@ impl App {
     fn close_settings(&mut self, saved: Option<Saved>, fx: &mut Vec<Effect>) {
         let first_run = self.overlay == Overlay::Onboarding;
         let in_window = std::mem::take(&mut self.settings_window_open);
+        self.shown_link = None;
         if let Some(saved) = saved {
             self.readeck = saved.status.readeck;
             self.capabilities = saved.status.capabilities;
@@ -1536,7 +1632,7 @@ impl App {
 
     /// The kind of server a window's form names. One the core doesn't know stops the save, and the form says so:
     /// it would otherwise be saved as some other kind.
-    pub fn server_named(&mut self, name: &str) -> Option<Server> {
+    fn server_named(&mut self, name: &str) -> Option<Server> {
         let server = Server::from_name(name);
         if server.is_none()
             && let Some(form) = self.settings.as_mut()
@@ -1544,6 +1640,18 @@ impl App {
             form.error = format!("Onward doesn't know a server of the kind \"{name}\"");
         }
         server
+    }
+
+    /// A window's form, which knows its fields by the names in `providers.rs`.
+    pub fn submit_fields(&mut self, server: &str, fields: &HashMap<String, String>) -> Vec<Effect> {
+        let Some(server) = self.server_named(server) else { return Vec::new() };
+        let mut values = SettingsValues { server, ..SettingsValues::default() };
+        for key in FieldKey::ALL {
+            if let Some(text) = fields.get(key.name()) {
+                values.field_mut(key).clone_from(text);
+            }
+        }
+        self.submit_settings(values)
     }
 
     /// The form's Save / Connect: the backend checks both servers before anything is written.
@@ -1567,6 +1675,112 @@ impl App {
         fx
     }
 
+    // ---- First run -------------------------------------------------------
+
+    fn go_to_step(&mut self, step: Step, cursor: usize) {
+        self.step = step;
+        self.step_cursor = cursor;
+        self.shown_link = None;
+    }
+
+    /// The rows of the step on screen, if it has rows.
+    fn step_rows(&self) -> usize {
+        match self.step {
+            Step::Welcome => providers::WELCOME.len(),
+            Step::NoServer => providers::NO_SERVER.links().len(),
+            Step::Connect => 0,
+        }
+    }
+
+    /// Onboarding has no reader behind it to fall back on, so what isn't for this step goes on to the window: a
+    /// field, or the system (⌘Q).
+    fn onboarding_key(&mut self, press: &KeyPress, fx: &mut Vec<Effect>) -> bool {
+        if press.ctrl || press.alt || press.meta {
+            return false;
+        }
+        let rows = self.step_rows();
+        match press.key.as_str() {
+            "Escape" => return self.step_back(),
+            "ArrowDown" | "j" if rows > 0 && !press.typing => self.step_cursor = (self.step_cursor + 1) % rows,
+            "ArrowUp" | "k" if rows > 0 && !press.typing => self.step_cursor = (self.step_cursor + rows - 1) % rows,
+            "Enter" if rows > 0 && !press.typing => {
+                fx.extend(self.choose_onboarding(self.step_cursor));
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Esc: to the first screen, on the row you came from. A save that's being checked is seen through.
+    fn step_back(&mut self) -> bool {
+        let row = |wanted| providers::WELCOME.iter().position(|r| r.choice == wanted).unwrap_or(0);
+        let checking = self.settings.as_ref().is_some_and(|f| f.checking);
+        match self.step {
+            Step::Welcome => return false,
+            Step::Connect if checking => return true,
+            Step::Connect => self.go_to_step(Step::Welcome, row(Choice::Connect)),
+            Step::NoServer => self.go_to_step(Step::Welcome, row(Choice::NoServer)),
+        }
+        true
+    }
+
+    /// A row of the step on screen: Enter on it, or a click.
+    pub fn choose_onboarding(&mut self, row: usize) -> Vec<Effect> {
+        if self.overlay != Overlay::Onboarding {
+            return Vec::new();
+        }
+        match self.step {
+            Step::Welcome => match providers::WELCOME.get(row).map(|r| r.choice) {
+                Some(Choice::Samples) => vec![Effect::UseSamples(true)],
+                Some(Choice::Connect) => {
+                    self.go_to_step(Step::Connect, 0);
+                    Vec::new()
+                }
+                Some(Choice::NoServer) => {
+                    self.go_to_step(Step::NoServer, 0);
+                    Vec::new()
+                }
+                None => Vec::new(),
+            },
+            Step::NoServer => match providers::NO_SERVER.links().get(row) {
+                Some(link) => {
+                    self.step_cursor = row;
+                    self.open_link(link.url)
+                }
+                None => Vec::new(),
+            },
+            Step::Connect => Vec::new(),
+        }
+    }
+
+    /// The backend serves the samples now, so they can be asked for.
+    fn samples_on(&mut self, status: Status, fx: &mut Vec<Effect>) {
+        if self.overlay != Overlay::Onboarding {
+            return;
+        }
+        self.samples = Some(self.prefs);
+        self.readeck = status.readeck;
+        self.capabilities = status.capabilities;
+        // Connecting later loads the form afresh, with what's really in the config.
+        self.settings = None;
+        self.shown_link = None;
+        self.open_picker(Some(Mode::Unread), fx);
+    }
+
+    /// The way out of the samples, into Connect. It starts from a new `App`, so that what the next person adds to
+    /// this struct is left behind too. Only what answers in flight are matched against carries over.
+    fn leave_samples(&mut self, fx: &mut Vec<Effect>) {
+        let Some(prefs) = self.samples else { return };
+        let mut fresh = App::new(prefs, self.mac);
+        fresh.settings_in_window = self.settings_in_window;
+        fresh.latest_load = self.latest_load + 1;
+        fresh.toast_serial = self.toast_serial;
+        *self = fresh;
+        self.overlay = Overlay::Onboarding;
+        self.go_to_step(Step::Connect, 0);
+        fx.extend([Effect::UseSamples(false), Effect::LoadSettings]);
+    }
+
     // ---- Prefs -----------------------------------------------------------
 
     /// The window's colours, from Settings. Unlike the servers there's nothing to check, so it applies at once.
@@ -1579,7 +1793,7 @@ impl App {
     fn change_prefs(&mut self, change: impl FnOnce(&mut Prefs), fx: &mut Vec<Effect>) {
         let before = self.prefs;
         change(&mut self.prefs);
-        if self.prefs != before {
+        if self.prefs != before && !self.samples() {
             fx.push(Effect::SavePrefs(self.prefs));
         }
     }
@@ -1605,7 +1819,7 @@ impl App {
                 }
                 return yes || no;
             }
-            Overlay::Onboarding => return false, // can't be cancelled; all keys go to the form
+            Overlay::Onboarding => return self.onboarding_key(press, fx),
             Overlay::Settings => {
                 if key == "Escape" {
                     self.close_settings(None, fx);
@@ -1682,6 +1896,10 @@ impl App {
     /// An action from a key or a button.
     pub fn action(&mut self, action: Action) -> Vec<Effect> {
         let mut fx = Vec::new();
+        // The Mac's menus are there on first run too, with nothing behind it for them to work on.
+        if self.overlay == Overlay::Onboarding {
+            return fx;
+        }
         // The Mac's toolbar and menus stay at hand while the viewer is up; they're about the article.
         self.close_viewer();
         match action {
@@ -1721,6 +1939,8 @@ impl App {
             Action::ResetSize => self.change_prefs(Prefs::reset, fx),
             Action::Help => self.open_help(),
             Action::Quit => fx.push(Effect::Quit),
+            // The form's saves would go nowhere in the samples, and its other half isn't kept: Connect is what's left.
+            Action::Settings if self.samples() => self.leave_samples(fx),
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
@@ -1801,6 +2021,11 @@ impl App {
                     }
                 }
             },
+            Outcome::SamplesSwitched { on, status } => {
+                if on && !self.samples() {
+                    self.samples_on(status, &mut fx);
+                }
+            }
         }
         fx
     }

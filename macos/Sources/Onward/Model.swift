@@ -72,6 +72,7 @@ final class Model {
     func pickerBackdrop() { send(["cmd": "picker_backdrop"]) }
     func closeHelp() { send(["cmd": "close_help"]) }
     func openLink(_ url: String) { send(["cmd": "open_link", "url": url]) }
+    func chooseOnboarding(_ row: Int) { send(["cmd": "choose_onboarding", "row": row]) }
     func cancelSettings() { send(["cmd": "cancel_settings"]) }
     func search(_ query: String) { send(["cmd": "search", "query": query]) }
     func cancelSearch() { send(["cmd": "cancel_search"]) }
@@ -80,12 +81,7 @@ final class Model {
     func dismissToast(_ serial: Int) { send(["cmd": "dismiss_toast", "serial": serial]) }
 
     func submitSettings(_ values: SettingsValues) {
-        send([
-            "cmd": "submit_settings", "server": values.server, "miniflux_url": values.minifluxUrl,
-            "miniflux_api_key": values.minifluxApiKey, "greader_url": values.greaderUrl,
-            "greader_username": values.greaderUsername, "greader_password": values.greaderPassword,
-            "readeck_url": values.readeckUrl, "readeck_token": values.readeckToken,
-        ])
+        send(["cmd": "submit_settings", "server": values.server, "fields": values.fields])
     }
 
     /// AppKit won't quit while a sheet is up, as a confirm alert is, so they go first.

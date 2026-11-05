@@ -6,12 +6,15 @@
 use super::article::{self, Header, Row, Slice, Target};
 use super::editor::Editor;
 use super::images::{self, Answer, Job};
-use crate::app::{App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, display_title, status_name};
+use crate::app::{
+    App, Effect, KeyPress, Outcome, Overlay, Screen, SettingsValues, Status, Step, display_title, status_name,
+};
 use crate::config::Server;
 use crate::content::{convert, native};
 use crate::feeds::EntryStatus;
 use crate::keys::Action;
 use crate::prefs::{self, Prefs};
+use crate::providers::{self, FieldKey};
 use crate::theme::Palette;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -33,17 +36,6 @@ const WHEEL: isize = 3;
 const LINE: isize = 2;
 /// A column's worth of cells per unit of `Prefs::width_factor`, which counts font sizes: the same `[` and `]`.
 const CELLS_PER_FONT_SIZE: u16 = 2;
-
-/// The settings form's text fields: Miniflux URL and API key, Google Reader URL, username and password, Readeck URL
-/// and token. Only the chosen server's are on screen.
-pub const FIELDS: usize = 7;
-/// Which are secrets.
-pub const SECRET: [bool; FIELDS] = [false, true, false, false, true, false, true];
-/// `Form::focus` on the server choice rather than a field.
-pub const CHOICE: usize = FIELDS;
-const MINIFLUX_FIELDS: [usize; 2] = [0, 1];
-const GREADER_FIELDS: [usize; 3] = [2, 3, 4];
-const READECK_FIELDS: [usize; 2] = [5, 6];
 
 /// The article on screen.
 pub struct Shown {
@@ -72,26 +64,23 @@ pub enum Inline {
     },
 }
 
-/// The fields of a kind of server.
-fn own_fields(server: Server) -> &'static [usize] {
-    match server {
-        Server::Miniflux => &MINIFLUX_FIELDS,
-        Server::GReader => &GREADER_FIELDS,
-    }
-}
-
-/// The settings form's fields. The form starts from the saved values once, then keeps what is typed.
+/// The settings form, with an editor for every field the core has. The form starts from the saved values once, then
+/// keeps what is typed.
 pub struct Form {
     pub server: Server,
-    pub fields: [Editor; FIELDS],
-    /// A field's index, or `CHOICE`.
-    pub focus: usize,
+    pub fields: HashMap<FieldKey, Editor>,
+    /// A field, or `None` on the server choice.
+    pub focus: Option<FieldKey>,
+    /// Readeck's fields are on screen: Settings has them, first run doesn't.
+    pub readeck: bool,
 }
 
 impl Form {
     /// What's on screen, top to bottom: the server choice, its fields, then Readeck's.
-    pub fn shown(&self) -> Vec<usize> {
-        std::iter::once(CHOICE).chain(own_fields(self.server).iter().copied()).chain(READECK_FIELDS).collect()
+    pub fn shown(&self) -> Vec<Option<FieldKey>> {
+        let own = providers::provider(self.server).fields.iter();
+        let readeck = providers::READECK.iter().filter(|_| self.readeck);
+        std::iter::once(None).chain(own.chain(readeck).map(|f| Some(f.key))).collect()
     }
 
     /// Tab and Shift+Tab, round the fields on screen.
@@ -103,26 +92,16 @@ impl Form {
         self.focus = shown[usize::try_from(next).unwrap_or(0)];
     }
 
+    pub fn text(&self, key: FieldKey) -> &str {
+        self.fields.get(&key).map_or("", Editor::text)
+    }
+
     fn values(&self) -> SettingsValues {
-        let [
-            miniflux_url,
-            miniflux_api_key,
-            greader_url,
-            greader_username,
-            greader_password,
-            readeck_url,
-            readeck_token,
-        ] = self.fields.clone().map(|e| e.text().to_string());
-        SettingsValues {
-            server: self.server,
-            miniflux_url,
-            miniflux_api_key,
-            greader_url,
-            greader_username,
-            greader_password,
-            readeck_url,
-            readeck_token,
+        let mut values = SettingsValues { server: self.server, ..SettingsValues::default() };
+        for key in FieldKey::ALL {
+            self.text(key).clone_into(values.field_mut(key));
         }
+        values
     }
 }
 
@@ -308,7 +287,8 @@ impl Ui {
             (KeyCode::Char('c'), _) if ctrl => self.quit = true,
             (KeyCode::Char('l'), _) if ctrl => self.repaint = true,
             (_, Overlay::Search) => self.search_key(event),
-            (_, Overlay::Settings | Overlay::Onboarding) => self.form_key(event),
+            (_, Overlay::Settings) => self.form_key(event),
+            (_, Overlay::Onboarding) if self.app.step() == Step::Connect => self.form_key(event),
             (KeyCode::Char('j') | KeyCode::Down, Overlay::Help) => self.help_scroll += 1,
             (KeyCode::Char('k') | KeyCode::Up, Overlay::Help) => self.help_scroll = self.help_scroll.saturating_sub(1),
             (_, Overlay::None) if self.app.screen() == Screen::Article && self.scroll_key(event) => {}
@@ -391,14 +371,17 @@ impl Ui {
                 self.run(fx);
             }
             // The server choice: either arrow, or Space, switches.
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus == CHOICE => {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.focus.is_none() => {
                 let kinds = Server::ALL.len();
                 let at = Server::ALL.iter().position(|&kind| kind == form.server).unwrap_or(0);
                 let by = if event.code == KeyCode::Left { kinds - 1 } else { 1 };
                 form.server = Server::ALL[(at + by) % kinds];
             }
-            _ if form.focus == CHOICE => {}
-            _ => form.fields[form.focus].key(event),
+            _ => {
+                if let Some(editor) = form.focus.and_then(|key| form.fields.get_mut(&key)) {
+                    editor.key(event);
+                }
+            }
         }
     }
 
@@ -407,9 +390,10 @@ impl Ui {
         if let Some(editor) = &mut self.search {
             editor.paste(text);
         } else if let Some(form) = &mut self.form
-            && form.focus != CHOICE
+            && (self.app.overlay() == Overlay::Settings || self.app.step() == Step::Connect)
+            && let Some(editor) = form.focus.and_then(|key| form.fields.get_mut(&key))
         {
-            form.fields[form.focus].paste(text);
+            editor.paste(text);
         }
     }
 
@@ -566,19 +550,13 @@ impl Ui {
             Some(form) if self.app.in_settings() => {
                 if self.form.is_none() {
                     let v = &form.values;
-                    let fields = [
-                        &v.miniflux_url,
-                        &v.miniflux_api_key,
-                        &v.greader_url,
-                        &v.greader_username,
-                        &v.greader_password,
-                        &v.readeck_url,
-                        &v.readeck_token,
-                    ];
                     // The first empty field of the chosen server, or its last.
-                    let own = own_fields(v.server);
-                    let focus = own.iter().copied().find(|&i| fields[i].is_empty()).unwrap_or(own[own.len() - 1]);
-                    self.form = Some(Form { server: v.server, fields: fields.map(|text| Editor::new(text)), focus });
+                    let own = providers::provider(v.server).fields;
+                    let empty = own.iter().find(|f| v.field(f.key).is_empty());
+                    let focus = empty.or(own.last()).map(|f| f.key);
+                    let fields = FieldKey::ALL.map(|key| (key, Editor::new(v.field(key)))).into_iter().collect();
+                    let readeck = self.app.overlay() == Overlay::Settings;
+                    self.form = Some(Form { server: v.server, fields, focus, readeck });
                 }
             }
             _ => self.form = None,

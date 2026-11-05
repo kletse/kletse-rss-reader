@@ -1,5 +1,6 @@
-// Onboarding (first run) and Settings: a feed server is required (Miniflux, or a Google Reader API server such as
-// FreshRSS), Readeck optional. Saving checks both servers before anything is written. Shown in place of the article; Esc cancels (src/app.rs), except on first run.
+// Settings: a feed server is required (Miniflux, or a Google Reader API server such as FreshRSS), Readeck optional.
+// Saving checks both servers before anything is written. Shown in place of the article; Esc cancels (src/app.rs). First
+// run has a screen of its own (Onboarding.qml), around the same `ServerForm`.
 import QtQuick
 
 Item {
@@ -7,38 +8,21 @@ Item {
 
     required property var ui
     readonly property var model: ui.model
-    readonly property bool firstRun: model.overlay === "onboarding"
-    // The kinds of server on offer (src/config.rs), and which one's fields show. The others' are kept, for switching
-    // back.
-    readonly property var kinds: JSON.parse(s.model.serverKinds)
+    // Every field's value by its key (src/providers.rs), whichever are on screen, for switching back.
+    property var values: ({})
     property string server: "miniflux"
 
     height: form.visible ? form.height : 0
 
     function submit() {
-        s.model.submitSettings(s.server, minifluxUrl.text, minifluxKey.text, greaderUrl.text, greaderUser.text,
-                               greaderPassword.text, readeckUrl.text, readeckToken.text)
+        s.model.submitSettings(s.server, JSON.stringify(s.values))
     }
 
     // The form starts from the saved values once (the serial says when they are in); after that it keeps what
     // is typed, also when a check fails.
     function fill() {
         s.server = s.model.server
-        minifluxUrl.text = s.model.minifluxUrl
-        minifluxKey.text = s.model.minifluxApiKey
-        greaderUrl.text = s.model.greaderUrl
-        greaderUser.text = s.model.greaderUsername
-        greaderPassword.text = s.model.greaderPassword
-        readeckUrl.text = s.model.readeckUrl
-        readeckToken.text = s.model.readeckToken
-        s.focusFirst()
-    }
-    // The chosen server's first empty field, or its last.
-    function focusFirst() {
-        const fields = ({ miniflux: [minifluxUrl, minifluxKey],
-                          greader: [greaderUrl, greaderUser, greaderPassword] })[s.server]
-        const first = fields.find(f => f.text === "") ?? fields[fields.length - 1]
-        first.input.forceActiveFocus()
+        s.values = JSON.parse(s.model.formValues)
     }
     Connections {
         target: s.model
@@ -57,7 +41,7 @@ Item {
         Text {
             width: parent.width
             bottomPadding: 8
-            text: s.firstRun ? "Welcome to Onward" : "Settings"
+            text: "Settings"
             color: s.model.fgBright
             font.family: s.ui.headingFont
             font.pixelSize: 28
@@ -67,9 +51,7 @@ Item {
         Text {
             width: parent.width
             bottomPadding: 28
-            text: s.firstRun
-                ? "Connect your Miniflux or Google Reader API server to start reading. Readeck is optional: add it to save articles for later with b."
-                : "Changes are checked against your servers before they are saved."
+            text: "Changes are checked against your servers before they are saved."
             color: s.model.fgDim
             lineHeight: 1.4
             wrapMode: Text.Wrap
@@ -78,138 +60,33 @@ Item {
         }
 
         // What was wrong with the config file, above the fields it is about.
-        Item {
-            visible: s.model.settingsProblem !== ""
+        Notice {
+            ui: s.ui
             width: parent.width
-            height: visible ? notice.height + 22 : 0
-            Rectangle {
-                width: 3
-                height: notice.height
-                color: s.model.yellow
-            }
-            Text {
-                id: notice
-                x: 15
-                width: parent.width - 15
-                topPadding: 2
-                bottomPadding: 2
-                text: s.model.settingsProblem
-                color: s.model.fg
-                lineHeight: 1.4
-                wrapMode: Text.WrapAnywhere
-                font.family: s.ui.uiFont
-                font.pixelSize: 14
-            }
         }
 
-        Fieldset {
-            title: "Server"
-            note: "where your feeds are"
-            Row {
-                spacing: 8
-                Repeater {
-                    model: s.kinds
-                    delegate: Button {
-                        required property var modelData
-                        ui: s.ui
-                        primary: s.server === modelData.name
-                        text: modelData.label
-                        onClicked: { s.server = modelData.name; s.focusFirst() }
-                    }
-                }
-            }
+        ServerForm {
+            ui: s.ui
+            width: parent.width
+            values: s.values
+            server: s.server
+            onChosen: name => s.server = name
+            onAccepted: s.submit()
         }
         Fieldset {
-            visible: s.server === "miniflux"
-            title: "Miniflux"
-            note: "required"
-            Field {
-                id: minifluxUrl
-                ui: s.ui
-                width: parent.width
-                label: "Miniflux URL"
-                placeholder: "https://miniflux.example.com"
-                onAccepted: s.submit()
-            }
-            Field {
-                id: minifluxKey
-                ui: s.ui
-                width: parent.width
-                label: "API key"
-                placeholder: "Settings → API Keys → Create a new API key"
-                secret: true
-                onAccepted: s.submit()
-            }
-        }
-        Fieldset {
-            visible: s.server === "greader"
-            title: "Google Reader API"
-            note: "required"
-            Field {
-                id: greaderUrl
-                ui: s.ui
-                width: parent.width
-                label: "Server URL"
-                placeholder: "https://freshrss.example.com/api/greader.php"
-                onAccepted: s.submit()
-            }
-            Text {
-                width: parent.width
-                text: "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled."
-                color: s.model.fgDim
-                lineHeight: 1.3
-                wrapMode: Text.Wrap
-                font.family: s.ui.uiFont
-                font.pixelSize: 12
-            }
-            Field {
-                id: greaderUser
-                ui: s.ui
-                width: parent.width
-                label: "Username"
-                onAccepted: s.submit()
-            }
-            Field {
-                id: greaderPassword
-                ui: s.ui
-                width: parent.width
-                label: "Password"
-                secret: true
-                onAccepted: s.submit()
-            }
-            Text {
-                width: parent.width
-                text: "FreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations."
-                color: s.model.fgDim
-                lineHeight: 1.3
-                wrapMode: Text.Wrap
-                font.family: s.ui.uiFont
-                font.pixelSize: 12
-            }
-        }
-        Fieldset {
+            ui: s.ui
             title: "Readeck"
             note: "optional: leave empty to hide the bookmark button"
-            Field {
-                id: readeckUrl
+            FieldList {
                 ui: s.ui
                 width: parent.width
-                label: "Readeck URL"
-                placeholder: "https://readeck.example.com"
-                onAccepted: s.submit()
-            }
-            Field {
-                id: readeckToken
-                ui: s.ui
-                width: parent.width
-                label: "API token"
-                placeholder: "Profile → API Tokens (needs “Bookmarks: write”)"
-                secret: true
+                fields: JSON.parse(s.model.readeckFields)
+                values: s.values
                 onAccepted: s.submit()
             }
         }
         Fieldset {
-            visible: !s.firstRun
+            ui: s.ui
             title: "Colours"
             note: "applied at once"
             Row {
@@ -235,6 +112,11 @@ Item {
             }
         }
 
+        LinkLine {
+            ui: s.ui
+            width: parent.width
+        }
+
         Text {
             width: parent.width
             height: Math.max(implicitHeight, 20)
@@ -251,7 +133,6 @@ Item {
             spacing: 8
             Button {
                 ui: s.ui
-                visible: !s.firstRun
                 text: "Cancel"
                 onClicked: s.model.cancelSettings()
             }
@@ -259,52 +140,9 @@ Item {
                 ui: s.ui
                 primary: true
                 enabled: !s.model.settingsChecking
-                text: s.model.settingsChecking ? "Checking…" : (s.firstRun ? "Connect" : "Save")
+                text: s.model.settingsChecking ? "Checking…" : "Save"
                 onClicked: s.submit()
             }
-        }
-    }
-
-    component Fieldset: Item {
-        id: fs
-        property string title
-        property string note
-        default property alias fields: fieldColumn.data
-
-        width: form.width
-        height: box.height + legend.height / 2 + 18
-
-        Rectangle {
-            id: box
-            y: legend.height / 2
-            width: parent.width
-            height: fieldColumn.height + legend.height / 2 + 18
-            color: "transparent"
-            border.color: s.model.bgLight
-            radius: s.ui.radius
-        }
-        // The legend sits on the border, as a fieldset's does.
-        Rectangle {
-            x: 10
-            width: legend.width + 12
-            height: legend.height
-            color: s.model.bg
-            Text {
-                id: legend
-                x: 6
-                text: fs.title + "<font color='" + s.model.fgDim + "'> · " + fs.note + "</font>"
-                textFormat: Text.StyledText
-                color: s.model.accent
-                font.family: s.ui.uiFont
-                font.pixelSize: 14
-            }
-        }
-        Column {
-            id: fieldColumn
-            x: 16
-            y: legend.height + 4
-            width: parent.width - 32
-            spacing: 10
         }
     }
 }

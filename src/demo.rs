@@ -113,6 +113,11 @@ impl Default for Stars {
 }
 
 impl Stars {
+    /// As they were at the start.
+    pub fn reset(&self) {
+        *self.ids() = STARRED_AT_START.into_iter().collect();
+    }
+
     pub fn set(&self, id: i64, starred: bool) {
         let mut ids = self.ids();
         if starred {

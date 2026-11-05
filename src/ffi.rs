@@ -9,16 +9,17 @@
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
-use crate::app::{App, Effect, KeyPress, Outcome, PickerList, SettingsValues, ToastKind};
+use crate::app::{App, Effect, KeyPress, Outcome, Overlay, PickerList, ToastKind};
 use crate::backend::Backend;
-use crate::config::Server;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
 use crate::keys;
 use crate::paging::Mode;
 use crate::prefs;
+use crate::providers::{FIRST_RUN, Field, FieldKey, FirstRun, PROVIDERS, Provider, READECK};
 use crate::theme::{self, Palette};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -149,25 +150,18 @@ enum Command {
         url: String,
     },
     SubmitSettings {
-        /// A `name` from the form's `kinds`.
+        /// An `id` from the form's `providers`.
         #[serde(default)]
         server: String,
+        /// Every field's value, by its `key`.
         #[serde(default)]
-        miniflux_url: String,
-        #[serde(default)]
-        miniflux_api_key: String,
-        #[serde(default)]
-        greader_url: String,
-        #[serde(default)]
-        greader_username: String,
-        #[serde(default)]
-        greader_password: String,
-        #[serde(default)]
-        readeck_url: String,
-        #[serde(default)]
-        readeck_token: String,
+        fields: HashMap<String, String>,
     },
     CancelSettings,
+    /// A row of the first-run step on screen.
+    ChooseOnboarding {
+        row: usize,
+    },
     /// The search box's Enter.
     Search {
         query: String,
@@ -214,6 +208,12 @@ struct State {
     position: String,
     readeck: bool,
     capabilities: Capabilities,
+    /// Reading the sample articles, chosen on the first screen.
+    samples: bool,
+    /// The last link opened from a form: a browser may not have opened.
+    shown_link: Option<String>,
+    /// First run, while it's on.
+    onboarding: Option<Onboarding>,
     article: Option<Article>,
     picker: Picker,
     /// The search box starts from the last search.
@@ -284,9 +284,19 @@ struct ToastState {
 }
 
 #[derive(Serialize)]
+struct Onboarding {
+    /// "welcome", "connect" or "no_server".
+    step: &'static str,
+    /// The row the arrows are on.
+    cursor: usize,
+    words: FirstRun,
+}
+
+#[derive(Serialize)]
 struct Settings {
     /// What the form offers.
-    kinds: Vec<ServerKind>,
+    providers: &'static [Provider],
+    readeck_fields: &'static [Field],
     problem: String,
     error: String,
     checking: bool,
@@ -297,21 +307,16 @@ struct Settings {
 }
 
 #[derive(Serialize)]
-struct ServerKind {
-    name: &'static str,
-    label: &'static str,
+struct Values {
+    server: &'static str,
+    /// A list and not an object: Swift's decoder would rewrite an object's keys as camelCase.
+    fields: Vec<Value>,
 }
 
 #[derive(Serialize)]
-struct Values {
-    server: &'static str,
-    miniflux_url: String,
-    miniflux_api_key: String,
-    greader_url: String,
-    greader_username: String,
-    greader_password: String,
-    readeck_url: String,
-    readeck_token: String,
+struct Value {
+    key: FieldKey,
+    value: String,
 }
 
 fn hash(value: &impl Hash) -> u64 {
@@ -379,29 +384,9 @@ impl Core {
                 Vec::new()
             }
             Command::OpenLink { url } => self.app.open_link(&url),
-            Command::SubmitSettings {
-                server,
-                miniflux_url,
-                miniflux_api_key,
-                greader_url,
-                greader_username,
-                greader_password,
-                readeck_url,
-                readeck_token,
-            } => match self.app.server_named(&server) {
-                Some(server) => self.app.submit_settings(SettingsValues {
-                    server,
-                    miniflux_url,
-                    miniflux_api_key,
-                    greader_url,
-                    greader_username,
-                    greader_password,
-                    readeck_url,
-                    readeck_token,
-                }),
-                None => Vec::new(),
-            },
+            Command::SubmitSettings { server, fields } => self.app.submit_fields(&server, &fields),
             Command::CancelSettings => self.app.cancel_settings(),
+            Command::ChooseOnboarding { row } => self.app.choose_onboarding(row),
             Command::Search { query } => self.app.search(&query),
             Command::CancelSearch => {
                 self.app.cancel_search();
@@ -533,6 +518,13 @@ impl Core {
             position: app.position(),
             readeck: app.readeck(),
             capabilities: app.capabilities(),
+            samples: app.samples(),
+            shown_link: app.shown_link().map(str::to_string),
+            onboarding: (app.overlay() == Overlay::Onboarding).then(|| Onboarding {
+                step: app.step().name(),
+                cursor: app.step_cursor(),
+                words: FIRST_RUN,
+            }),
             article,
             picker: Picker {
                 state: picker_state,
@@ -613,16 +605,11 @@ impl Core {
         // The form starts from the loaded values once; after that the window keeps what is typed.
         let values = (!self.settings_shown).then(|| Values {
             server: form.values.server.name(),
-            miniflux_url: form.values.miniflux_url.clone(),
-            miniflux_api_key: form.values.miniflux_api_key.clone(),
-            greader_url: form.values.greader_url.clone(),
-            greader_username: form.values.greader_username.clone(),
-            greader_password: form.values.greader_password.clone(),
-            readeck_url: form.values.readeck_url.clone(),
-            readeck_token: form.values.readeck_token.clone(),
+            fields: FieldKey::ALL.map(|key| Value { key, value: form.values.field(key).to_string() }).into(),
         });
         let settings = Settings {
-            kinds: Server::ALL.map(|k| ServerKind { name: k.name(), label: k.short_label() }).into(),
+            providers: &PROVIDERS,
+            readeck_fields: &READECK,
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
             checking: form.checking,
@@ -693,6 +680,49 @@ mod tests {
             kr_free_string(reply);
             value
         }
+    }
+
+    /// What Swift reads of first run and the form, in the names `State.swift` takes them in after its decoder turns
+    /// them into camelCase. An object's keys would be turned as well, hence the list of values.
+    #[test]
+    fn first_run_reaches_swift_as_it_expects() {
+        let onboarding = Onboarding { step: "welcome", cursor: 0, words: FIRST_RUN };
+        let json = serde_json::to_value(&onboarding).unwrap();
+        for path in [
+            "/step",
+            "/words/welcome_title",
+            "/words/welcome_text",
+            "/words/welcome/0/label",
+            "/words/welcome/2/quiet",
+            "/words/connect_title",
+            "/words/connect_text",
+            "/words/no_server/title",
+            "/words/no_server/text",
+            "/words/no_server/offers/0/price",
+            "/words/no_server/offers/1/link/url",
+            "/words/no_server/note",
+            "/words/no_server/more/label",
+        ] {
+            assert!(json.pointer(path).is_some(), "{path}");
+        }
+        let provider = serde_json::to_value(PROVIDERS[1]).unwrap();
+        for path in ["/id", "/short_label", "/fields/0/key", "/fields/2/secret", "/fields/2/help", "/links/0/url"] {
+            assert!(provider.pointer(path).is_some(), "{path}");
+        }
+        let values = Values { server: "greader", fields: vec![Value { key: FieldKey::GreaderUrl, value: "u".into() }] };
+        assert_eq!(
+            serde_json::to_value(values).unwrap(),
+            serde_json::json!({ "server": "greader", "fields": [{ "key": "greader_url", "value": "u" }] })
+        );
+    }
+
+    #[test]
+    fn the_commands_swift_sends_for_first_run_parse() {
+        let submit = r#"{"cmd":"submit_settings","server":"greader","fields":{"greader_url":"u"}}"#;
+        let Ok(Command::SubmitSettings { server, fields }) = serde_json::from_str(submit) else { panic!("{submit}") };
+        assert_eq!((server.as_str(), fields["greader_url"].as_str()), ("greader", "u"));
+        let choose = r#"{"cmd":"choose_onboarding","row":2}"#;
+        assert!(matches!(serde_json::from_str(choose), Ok(Command::ChooseOnboarding { row: 2 })));
     }
 
     /// The demo, through the C interface: it starts, the answers come back through `pump`, and the article's

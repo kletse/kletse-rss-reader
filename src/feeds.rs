@@ -314,6 +314,10 @@ pub const SAMPLES_HAVE_NO_FEED_LIST: &str =
 pub const MANAGE_REFUSED: &str = "Onward can only change feeds on Miniflux, connected to directly, and on FreshRSS. \
                                   This connection goes through a Google Reader API, where Onward can't tell which \
                                   server it is or check what it did.";
+/// The picker of an empty account where neither importing nor adding works.
+pub const NOTHING_CAN_BE_ADDED: &str = "This connection can't add feeds or take a feed list. That works with FreshRSS, \
+                                        and with Miniflux when you connect to it by its address rather than through \
+                                        its Google Reader integration.";
 /// What `m` and `a` say in the sample articles. Nothing is pretended: a change here would be to nothing.
 pub const SAMPLES_HAVE_NO_FEEDS: &str =
     "These are sample articles, with no server behind them, so their feeds can't be changed. Connect a server first.";

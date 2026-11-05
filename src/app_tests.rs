@@ -3475,7 +3475,7 @@ fn what_the_server_cant_do_is_left_out_and_said() {
     h.status = Status { configured: true, readeck: false, capabilities: cannot };
     h.start();
     assert!(!h.app.offers_import() && !h.app.offers_add());
-    assert!(h.app.picker_empty_text().contains("Onward can only change feeds"));
+    assert!(h.app.picker_empty_text().contains(feeds::NOTHING_CAN_BE_ADDED));
     assert!(!h.app.help_lines().iter().any(|(keys, _)| keys == "i"));
 
     h.key("i");
@@ -3769,6 +3769,23 @@ fn on_freshrss_the_same_key_says_the_feeds_stay_and_an_empty_category_says_so_to
 }
 
 #[test]
+fn a_panel_closed_while_the_server_counts_asks_nothing_afterwards() {
+    let mut h = managing(Capabilities::EVERYTHING);
+    h.cursor_on("News");
+    let job = h.app.latest_manage;
+    let mut fx = Vec::new();
+    h.app.manage_delete(&mut fx);
+    assert_eq!(h.manage_stage(), "working");
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    let answer = Outcome::CategoryCounted { job, category: cat(1, "News"), result: Ok(feed_list()) };
+    assert!(h.app.apply(answer).is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert_eq!(h.manage_stage(), "closed");
+    assert_eq!(h.app.confirm_text(), "");
+}
+
+#[test]
 fn a_category_someone_else_deleted_isnt_asked_about() {
     let mut h = managing(Capabilities::EVERYTHING);
     h.cursor_on("Empty");
@@ -4014,8 +4031,11 @@ fn a_list_asked_for_before_a_change_doesnt_overwrite_what_came_after() {
     h.run(fx);
     let mut after = feed_list();
     after.counts.feeds[0].feed.title = "Renamed".into();
+    let during = h.app.latest_list;
     h.changed(Applied::default(), Some(after), None);
-    h.app.apply(Outcome::FeedList { serial: old_serial, result: Ok(feed_list()) });
+    for serial in [old_serial, during] {
+        h.app.apply(Outcome::FeedList { serial, result: Ok(feed_list()) });
+    }
     assert!(h.app.manage_view().unwrap().rows.iter().any(|r| r.label == "Renamed"));
 }
 

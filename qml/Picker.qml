@@ -172,11 +172,12 @@ Panel {
         // An empty account's ways forward.
         Row {
             id: offers
-            visible: picker.model.pickerState === "ready" && (addOffer.visible || importOffer.visible)
+            // From the model: a child isn't visible while this isn't, so asking them would never turn it on.
+            visible: picker.model.pickerState === "ready"
+                     && (picker.model.pickerOffersAdd || picker.model.pickerOffersImport)
             x: 14
             spacing: 8
             Button {
-                id: addOffer
                 ui: picker.ui
                 visible: picker.model.pickerOffersAdd
                 primary: true
@@ -184,10 +185,9 @@ Panel {
                 onClicked: picker.model.press("add_feed")
             }
             Button {
-                id: importOffer
                 ui: picker.ui
                 visible: picker.model.pickerOffersImport
-                primary: !addOffer.visible
+                primary: !picker.model.pickerOffersAdd
                 text: "Import feeds…"
                 onClicked: picker.model.press("import")
             }

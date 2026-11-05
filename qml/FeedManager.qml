@@ -19,7 +19,7 @@ Panel {
     readonly property real rowHeight: Math.ceil(metrics.height) + 10
 
     title: view?.title ?? ""
-    panelWidth: Math.min(560, width - 32)
+    panelWidth: Math.min(640, width - 32)
     onBackdrop: m.model.cancelManage()
 
     FontMetrics {
@@ -66,9 +66,10 @@ Panel {
             id: fieldLoader
             x: 14
             width: parent.width - 28
+            // Nothing once it's gone: a Loader keeps the height it was given.
+            height: item ? item.implicitHeight : 0
             active: m.stage === "field"
             sourceComponent: fieldComponent
-            onLoaded: item.width = width
         }
         Text {
             visible: text !== ""

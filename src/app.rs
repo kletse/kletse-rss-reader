@@ -1122,7 +1122,7 @@ impl App {
         } else if self.offers_import() {
             "No feeds here yet. Leaving another reader? Export an OPML file from it, and press i to import that.".into()
         } else if self.no_feeds() {
-            format!("No feeds here yet. {} {}", feeds::IMPORT_REFUSED, feeds::MANAGE_REFUSED)
+            format!("No feeds here yet. {}", feeds::NOTHING_CAN_BE_ADDED)
         } else if self.picker_mode == Mode::History {
             "Nothing read yet. Press h for unread items.".into()
         } else if self.capabilities.refresh {
@@ -2286,17 +2286,17 @@ impl App {
         let count = list.in_category(category.id).count();
         let there = list.categories.iter().any(|c| c.id == category.id);
         manage.take_list(list);
+        // It may have been closed meanwhile, and a question about nothing on screen isn't one.
+        if !shown {
+            self.manage = None;
+            return;
+        }
         if !there {
             return self.manage_notice(feeds::GONE, true);
         }
-        // It may have been closed meanwhile, and a question about nothing on screen isn't one.
-        if shown {
-            let lasting = ops.delete_category == DeleteCategory::TakesFeeds && count > 0;
-            let question = manage::deleting(&category, count, ops);
-            self.confirm(question, Pending::Change { change: FeedChange::DeleteCategory { category }, lasting });
-        } else if self.overlay == Overlay::Picker {
-            self.manage = None;
-        }
+        let lasting = ops.delete_category == DeleteCategory::TakesFeeds && count > 0;
+        let question = manage::deleting(&category, count, ops);
+        self.confirm(question, Pending::Change { change: FeedChange::DeleteCategory { category }, lasting });
     }
 
     /// A row of the list or of the categories to move to: a click picks it, and on the second it's what Enter is there.
@@ -2418,6 +2418,8 @@ impl App {
     fn feeds_changed(&mut self, change: &FeedChange, result: Result<Changed, String>, fx: &mut Vec<Effect>) {
         let shown = self.manage_shown();
         let can = self.capabilities;
+        // Whatever list is on its way was asked for before this.
+        self.latest_list += 1;
         let Some(manage) = self.manage.as_mut() else { return };
         let changed = match result {
             Ok(changed) => changed,

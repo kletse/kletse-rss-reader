@@ -320,6 +320,8 @@ pub struct FirstRun {
     pub connect_text: &'static str,
     pub by_hand_text: &'static str,
     pub address: Field,
+    /// Settings' way to the address box.
+    pub find_server: &'static str,
     pub no_server: NoServer,
 }
 
@@ -331,6 +333,7 @@ pub const FIRST_RUN: FirstRun = FirstRun {
     connect_text: CONNECT_TEXT,
     by_hand_text: BY_HAND_TEXT,
     address: ADDRESS,
+    find_server: TO_ADDRESS_ROW,
     no_server: NO_SERVER,
 };
 

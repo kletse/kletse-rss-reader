@@ -9,7 +9,11 @@ Column {
     /// `[{ key, label, placeholder, secret, help }, …]`
     property var fields: []
     property var values: ({})
+    /// A save or a key on its way is for what's in the fields now.
+    property bool readOnly: false
     signal accepted()
+    /// Any change to a field, typed or filled in.
+    signal edited(string key, string text)
 
     spacing: 10
 
@@ -50,8 +54,12 @@ Column {
                 label: row.modelData.label
                 placeholder: row.modelData.placeholder
                 secret: row.modelData.secret
+                readOnly: list.readOnly
                 onAccepted: list.accepted()
-                onTextChanged: list.values[row.modelData.key] = text
+                onTextChanged: {
+                    list.values[row.modelData.key] = text
+                    list.edited(row.modelData.key, text)
+                }
             }
             Text {
                 visible: text !== ""

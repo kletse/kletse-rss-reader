@@ -185,17 +185,28 @@ Font size is your terminal's business, so the app has no keys for it. <kbd>[</kb
 The first time you start Onward, it offers three things:
 
 - **Try it with sample articles.** Built-in feeds, no account and no network. Nothing is marked read or saved, and the next start is a fresh one. The top bar says these are samples, with a way to Connect.
-- **Connect**, for the details below.
+- **Connect**, which starts from your server's address.
 - **I don't have a server.** Two ways to get one, with what they cost and [the catch](https://onward.kletse.dev/no-server/).
 
-Arrows and <kbd>Enter</kbd> choose, as does the mouse in a window, and <kbd>Esc</kbd> steps back. To connect:
+Arrows and <kbd>Enter</kbd> choose, as does the mouse in a window, and <kbd>Esc</kbd> steps back.
 
-|                                                     |                                                                                                                                                                                                                                                  |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Miniflux URL + API key**                          | _Required, or the next row._ In Miniflux: Settings → API Keys → Create a new API key.                                                                                                                                                            |
-| **Google Reader API: URL + username + password**    | _Or this._ Choose **Google Reader API** at the top of the form. FreshRSS: `https://your-freshrss/api/greader.php`, your username and the **API password** from your profile (allow API access in its settings). Miniflux: the server URL, with the Google Reader integration enabled, and the username and password you set for it (Settings → Integrations). |
+### Connect
 
-**Connect** checks the details against your server before saving anything, so a wrong key or address shows up right there.
+Type the address you open in your browser, and press <kbd>Enter</kbd>. `rss`, `rss.example.com`, `host:8080`, a path such as `rss.example.com/miniflux`, or a page copied from the address bar will all do, and so will a Tailscale short name. Onward tries `https://` first, and plain `http://` only on local and tailnet addresses, where it says so. It works out what's there, with no sign-in, and asks only for what that server needs:
+
+| Server | What it asks |
+| ------ | ------------ |
+| **Miniflux** | Your username and password, once. Onward gets a key of its own from your server and keeps that; the password isn't stored. |
+| **Miniflux that can't do that** | If you sign in some other way (Google, OpenID Connect, a passkey), or it's older than 2.2.9, you make an API key on its page and paste it. **I don't sign in with a password** is always there, and opens that page. |
+| **FreshRSS** | Your username and its **API password**, which isn't your login password. In FreshRSS: Settings → Profile → External access via API. If its API is off, Onward says so and where to turn it on (Settings → Authentication → Allow API access); keep that page open, as the deeper pages show a 403 until you've signed in at the first one. |
+
+Onward tells a sign-in page in front of the server from a wrong server, says so when a proxy removes the `Authorization` header, and names the servers it recognises but can't read yet, such as CommaFeed, yarr, selfoss, Tiny Tiny RSS and Nextcloud. It trusts public certificates only: a private CA or a self-signed certificate gets a message saying so.
+
+**Enter the details yourself** has the whole form, for anything detection can't reach. It's how to use Miniflux's Google Reader integration: the server URL, and the username and password you set for it under Settings → Integrations. For FreshRSS the URL ends in `/api/greader.php`.
+
+Connecting checks everything against your server before saving, so nothing wrong is ever written down.
+
+Later, **Settings** has the same form, to edit directly, and **Find my server by its address** to go through this again.
 
 Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
@@ -279,6 +290,7 @@ src/
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
   moved.rs           moves the kletse-rss folders to onward on first use
   demo.rs            sample data, for the first screen and ONWARD_DEMO=1
+  detect.rs          the forgiving address box, and what's at that address
   providers.rs       the kinds of server, their fields and first run's words, which the windows draw from
 qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings, Onboarding, ServerForm
 macos/               the Mac app: SwiftUI over the same core

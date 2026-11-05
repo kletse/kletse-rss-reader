@@ -178,7 +178,7 @@ impl Grant {
             return None;
         }
         match answer {
-            Asked::Code(code) => return Some(self.waiting(code)),
+            Asked::Code(code) => return Some(self.waiting(*code)),
             Asked::NoGrant => {
                 self.stage = Stage::TokenOnly {
                     why: "This server doesn't offer connecting in the browser, which Readeck has from version 0.21.",

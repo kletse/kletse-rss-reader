@@ -74,7 +74,7 @@ pub struct Code {
 /// What became of asking for a code.
 #[derive(Debug)]
 pub enum Asked {
-    Code(Code),
+    Code(Box<Code>),
     /// No `oauth` in `/api/info`, or no such thing: this is a server to paste a token for.
     NoGrant,
     /// It wouldn't have Onward as a client as it can't look up `CLIENT_URI`.
@@ -197,14 +197,14 @@ pub async fn ask(http: &reqwest::Client, url: &str) -> Asked {
     if device.device_code.is_empty() || user_code.is_empty() || address.is_empty() {
         return Asked::Failed("Readeck's answer had no code in it.".into());
     }
-    Asked::Code(Code {
+    Asked::Code(Box::new(Code {
         ticket: Ticket { client_id, device_code: device.device_code },
         user_code,
         address,
         address_with_code: device.verification_uri_complete.as_deref().map(shown),
         expires_in_secs: device.expires_in.unwrap_or(DEFAULT_EXPIRY).clamp(EXPIRIES.0, EXPIRIES.1),
         interval_secs: device.interval.unwrap_or(DEFAULT_INTERVAL).clamp(INTERVALS.0, INTERVALS.1),
-    })
+    }))
 }
 
 /// One go at getting the token. An error's body is read for its one word and no further.
@@ -535,7 +535,8 @@ pub(crate) mod tests {
             "client_id": CLIENT,
             "device_code": "the-device-code",
         });
-        let cases: [(u16, &str, fn(&Poll) -> bool); 8] = [
+        type Expected = fn(&Poll) -> bool;
+        let cases: [(u16, &str, Expected); 8] = [
             (400, r#"{"error":"authorization_pending"}"#, |p| matches!(p, Poll::Pending)),
             (400, r#"{"error":"slow_down"}"#, |p| matches!(p, Poll::SlowDown)),
             (400, r#"{"error":"access_denied"}"#, |p| matches!(p, Poll::Denied)),

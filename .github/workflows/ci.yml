@@ -46,7 +46,7 @@ jobs:
             test -s /tmp/shot.png
           done
       # The demo skips first run, so the runs above never reach its QML. With no config and no demo, the window opens
-      # on onboarding, which needs no keys; any QML warning is fatal here as well.
+      # on the first screen, and these keys walk each of its screens; any QML warning is fatal here as well.
       - name: Smoke test first run
         env:
           QT_QPA_PLATFORM: offscreen
@@ -56,10 +56,23 @@ jobs:
         run: |
           empty=$(mktemp -d)
           mkdir "$empty/config" "$empty/state"
-          rm -f /tmp/shot.png
-          XDG_CONFIG_HOME="$empty/config" XDG_STATE_HOME="$empty/state" \
-            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS=" " timeout 60 target/debug/onward
-          test -s /tmp/shot.png
+          export XDG_CONFIG_HOME="$empty/config" XDG_STATE_HOME="$empty/state"
+          for keys in " " "ArrowDown ArrowDown" "ArrowDown Enter" "ArrowDown Enter Escape" "ArrowUp Enter" \
+              "ArrowUp Enter ArrowDown Enter" "Enter" "Enter Enter" "Enter Enter ," "Enter Enter , Escape"; do
+            echo "== $keys"
+            rm -f /tmp/shot.png
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
+            test -s /tmp/shot.png
+          done
+          # A broken config file still says so.
+          mkdir "$empty/config/onward"
+          echo "server = miniflux" > "$empty/config/onward/config.toml"
+          for keys in " " "ArrowDown Enter"; do
+            echo "== broken config: $keys"
+            rm -f /tmp/shot.png
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
+            test -s /tmp/shot.png
+          done
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

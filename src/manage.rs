@@ -436,8 +436,11 @@ impl Manage {
                 let count = before.map_or(0, |l| l.in_category(category.id).count());
                 match (ops.delete_category, count) {
                     (_, 0) => format!("Deleted “{}”.", category.title),
+                    (DeleteCategory::TakesFeeds, 1) => {
+                        format!("Deleted “{}”, with its 1 feed and its articles.", category.title)
+                    }
                     (DeleteCategory::TakesFeeds, _) => {
-                        format!("Deleted “{}”, with its {} and their articles.", category.title, feeds_word(count))
+                        format!("Deleted “{}”, with its {count} feeds and their articles.", category.title)
                     }
                     _ => format!("Deleted “{}”. Its {} kept.", category.title, kept(count)),
                 }
@@ -457,11 +460,18 @@ pub fn deleting(category: &Category, count: usize, ops: FeedOps) -> String {
     let title = &category.title;
     match (ops.delete_category, count) {
         (_, 0) => format!("Delete “{title}”? There are no feeds in it."),
+        (DeleteCategory::TakesFeeds, 1) => format!(
+            "Delete “{title}” and the 1 feed in it? Miniflux deletes the feed with the category, and all its articles, \
+             read and unread, starred or not. That can't be undone. To keep it, say no and move it to another category \
+             first."
+        ),
         (DeleteCategory::TakesFeeds, _) => format!(
-            "Delete “{title}” and the {} in it? Miniflux deletes the feeds with the category, and all their articles, \
-             read and unread, starred or not. That can't be undone. To keep them, say no and move them to another \
-             category first.",
-            feeds_word(count)
+            "Delete “{title}” and the {count} feeds in it? Miniflux deletes the feeds with the category, and all their \
+             articles, read and unread, starred or not. That can't be undone. To keep them, say no and move them to \
+             another category first."
+        ),
+        (_, 1) => format!(
+            "Delete the category “{title}”? Its 1 feed and its articles stay: FreshRSS moves it to its default category."
         ),
         _ => format!(
             "Delete the category “{title}”? Its {} and their articles stay: FreshRSS moves them to its default category.",

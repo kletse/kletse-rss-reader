@@ -3698,6 +3698,10 @@ fn nothing_is_removed_before_the_answer_and_enter_isnt_one() {
     h.key("Enter");
     assert_eq!(h.app.overlay(), Overlay::Confirm, "a key pressed once too often doesn't lose anything");
     assert!(h.changes().is_empty());
+    let (used, fx) = h.app.key(&KeyPress { key: "Enter".into(), ..KeyPress::default() });
+    assert!(used && fx.is_empty(), "used, or the Mac's alert would take it for its default button");
+    assert_eq!(h.app.confirm_action(), "Remove");
+    assert!(h.app.confirm_lasting());
     assert!(h.app.confirm_hint().starts_with("y to go ahead"));
 
     h.key("n");
@@ -4072,6 +4076,19 @@ fn a_category_thats_open_goes_on_under_its_new_id_with_its_place_kept() {
     assert_eq!(h.app.opened, Some(Opened::Feeds(Selection::Category { id: 77 })));
     assert_eq!(h.app.current().map(|e| e.id), Some(2), "you're where you were");
     assert_eq!(h.app.queue().len(), 5);
+}
+
+#[test]
+fn a_rename_the_list_doesnt_bear_out_leaves_the_open_list_as_it_was() {
+    let mut h = reading(Selection::Category { id: 2 }, "Tech", FRESHRSS);
+    h.cursor_on("Tech");
+    h.key("r");
+    let fx = h.app.submit_manage("Science");
+    h.run(fx);
+    let said = "The server said yes, but “Tech” kept its name. Nothing changed.";
+    h.changed(Applied { feed: None, category: Some(cat(77, "Science")) }, Some(feed_list()), Some(said));
+    assert_eq!(h.app.opened, Some(Opened::Feeds(Selection::Category { id: 2 })));
+    assert_eq!(h.app.selection_label(), "Tech");
 }
 
 #[test]

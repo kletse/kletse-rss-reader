@@ -1013,6 +1013,16 @@ impl App {
     }
 
     #[cfg(test)]
+    pub fn latest_list(&self) -> u64 {
+        self.latest_list
+    }
+
+    #[cfg(test)]
+    pub fn latest_manage(&self) -> u64 {
+        self.latest_manage
+    }
+
+    #[cfg(test)]
     pub fn has_more(&self) -> bool {
         self.has_more
     }
@@ -1242,10 +1252,26 @@ impl App {
 
     /// How to answer the question on screen. Where the answer can't be taken back, Enter isn't one.
     pub fn confirm_hint(&self) -> &'static str {
-        match self.pending {
-            Some(Pending::Change { lasting: true, .. }) => "y to go ahead · Esc / n to cancel",
-            _ => "Enter / y to confirm · Esc / n to cancel",
+        if self.confirm_lasting() {
+            "y to go ahead · Esc / n to cancel"
+        } else {
+            "Enter / y to confirm · Esc / n to cancel"
         }
+    }
+
+    /// What the button that says yes says, in a window that has one.
+    pub fn confirm_action(&self) -> &'static str {
+        match &self.pending {
+            Some(Pending::Change { change: FeedChange::RemoveFeed { .. }, .. }) => "Remove",
+            Some(Pending::Change { .. }) => "Delete",
+            Some(Pending::ReplaceFile { .. }) => "Replace",
+            _ => "Mark Read",
+        }
+    }
+
+    /// The answer can't be taken back, and the windows make its button look it.
+    pub fn confirm_lasting(&self) -> bool {
+        matches!(self.pending, Some(Pending::Change { lasting: true, .. }))
     }
 
     /// The picker is on screen: open, or behind the question Shift+A on a row asks.
@@ -2430,7 +2456,10 @@ impl App {
         if let Some(list) = &changed.list {
             self.picker_list = PickerList::Ready(list.counts.clone());
         }
-        self.reconcile(change, &changed, before.as_ref(), fx);
+        // A yes the list doesn't bear out: what's open is as it was, and the new id leads nowhere.
+        if changed.problem.is_none() {
+            self.reconcile(change, &changed, before.as_ref(), fx);
+        }
         if changed.list.is_none() {
             self.load_feed_list(fx);
         }
@@ -3312,13 +3341,13 @@ impl App {
         // Overlays that take every key.
         match self.overlay {
             Overlay::Confirm => {
-                let lasting = matches!(self.pending, Some(Pending::Change { lasting: true, .. }));
-                let yes = key == "y" || (key == "Enter" && !lasting);
+                let yes = key == "y" || (key == "Enter" && !self.confirm_lasting());
                 let no = key == "Escape" || key == "n";
                 if yes || no {
                     self.answer_confirm(yes, fx);
                 }
-                return yes || no;
+                // Enter is used even where it's no answer: on the Mac it would go on to the alert's default button.
+                return yes || no || key == "Enter";
             }
             Overlay::Onboarding => return self.onboarding_key(press, fx),
             Overlay::Settings => {

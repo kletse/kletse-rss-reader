@@ -14,6 +14,7 @@ use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
 use crate::keys;
+use crate::manage::ManageView;
 use crate::paging::Mode;
 use crate::prefs;
 use crate::providers::{FIRST_RUN, Field, FieldKey, FirstRun, PROVIDERS, Provider, READECK};
@@ -185,6 +186,16 @@ enum Command {
     TransferAction,
     /// Its Cancel or Close, or a click beside it.
     CancelTransfer,
+    /// A row of the feeds panel.
+    ManageRow {
+        row: usize,
+    },
+    /// Its field's Enter, or its button.
+    SubmitManage {
+        text: String,
+    },
+    /// A step back, or a click beside it.
+    CancelManage,
     /// What an open or save panel came up with. A save panel has asked about a file that's there, so it says `replace`.
     FeedFile {
         path: String,
@@ -241,8 +252,18 @@ struct State {
     prefetch_images: Vec<String>,
     help: Vec<(String, String)>,
     confirm_text: String,
+    /// How to answer it, what its button says, and whether what it does can be taken back.
+    confirm_hint: &'static str,
+    confirm_action: &'static str,
+    confirm_lasting: bool,
     /// Importing or exporting a feed list.
     transfer: Option<TransferView>,
+    /// The feeds panel, while it's open or a change from it is under way.
+    manage: Option<ManageView>,
+    /// It's on screen: open, or behind the question before a loss.
+    manage_shown: bool,
+    /// Anything about the feeds can be changed here.
+    manages: bool,
     toast: Option<ToastState>,
     settings: Option<Settings>,
     font_size: i32,
@@ -279,6 +300,7 @@ struct Picker {
     /// What it says with no rows, and whether it then offers to import.
     empty_text: String,
     offers_import: bool,
+    offers_add: bool,
 }
 
 #[derive(Serialize)]
@@ -435,6 +457,9 @@ impl Core {
             }
             Command::TransferAction => self.app.transfer_action(),
             Command::CancelTransfer => self.app.cancel_transfer(),
+            Command::ManageRow { row } => self.app.manage_row(row),
+            Command::SubmitManage { text } => self.app.submit_manage(&text),
+            Command::CancelManage => self.app.cancel_manage(),
             Command::FeedFile { path, replace } => self.app.feed_file(&path, replace),
             Command::DismissToast { serial } => {
                 self.app.dismiss_toast(serial);
@@ -574,6 +599,7 @@ impl Core {
                 newest_first: app.newest_first(),
                 empty_text: app.picker_empty_text(),
                 offers_import: app.offers_import(),
+                offers_add: app.offers_add(),
             },
             search_query: app.search_query().to_string(),
             viewer: app.viewer().map(|v| {
@@ -589,7 +615,13 @@ impl Core {
             prefetch_images: self.prefetch_images.clone(),
             help: app.help_lines(),
             confirm_text: app.confirm_text().to_string(),
+            confirm_hint: app.confirm_hint(),
+            confirm_action: app.confirm_action(),
+            confirm_lasting: app.confirm_lasting(),
             transfer: app.transfer_view(),
+            manage: app.manage_view(),
+            manage_shown: app.manage_shown(),
+            manages: app.capabilities().feeds.any(),
             toast: app.toast().map(|t| ToastState {
                 message: t.message.clone(),
                 error: t.kind == ToastKind::Error,

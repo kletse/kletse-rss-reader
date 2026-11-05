@@ -66,7 +66,7 @@ final class Model {
     }
 
     /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
-    /// "search", "order", "import", "export".
+    /// "search", "order", "import", "export", "manage", "add_feed", and the feeds panel's own (`ManageKeyInfo.button`).
     func press(_ button: String) { send(["cmd": "press", "button": button]) }
     func chooseRow(_ row: Int) { send(["cmd": "choose_row", "row": row]) }
     func pickerBackdrop() { send(["cmd": "picker_backdrop"]) }
@@ -82,6 +82,9 @@ final class Model {
     func closeViewer() { send(["cmd": "close_viewer"]) }
     func transferAction() { send(["cmd": "transfer_action"]) }
     func cancelTransfer() { send(["cmd": "cancel_transfer"]) }
+    func manageRow(_ row: Int) { send(["cmd": "manage_row", "row": row]) }
+    func submitManage(_ text: String) { send(["cmd": "submit_manage", "text": text]) }
+    func cancelManage() { send(["cmd": "cancel_manage"]) }
     /// `replace`: a save panel has asked about a file that's there already.
     func feedFile(_ path: String, replace: Bool = false) {
         send(["cmd": "feed_file", "path": path, "replace": replace])

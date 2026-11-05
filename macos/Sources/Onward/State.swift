@@ -43,8 +43,18 @@ struct AppState: Decodable {
     /// `[keys, action]` pairs.
     let help: [[String]]
     let confirmText: String
+    /// How to answer it, what its button says, and whether what it does can be taken back.
+    let confirmHint: String
+    let confirmAction: String
+    let confirmLasting: Bool
     /// Importing or exporting a feed list.
     let transfer: TransferInfo?
+    /// The feeds panel, while it's open or a change from it is under way.
+    let manage: ManageInfo?
+    /// It's on screen: open, or behind the question before a loss.
+    let manageShown: Bool
+    /// Anything about the feeds can be changed here.
+    let manages: Bool
     let toast: ToastInfo?
     let settings: SettingsInfo?
     let fontSize: Int
@@ -93,6 +103,44 @@ struct TransferInfo: Decodable {
     let suggested: String
 }
 
+/// The feeds panel (`manage::ManageView`).
+struct ManageInfo: Decodable {
+    /// "loading", "list", "field", "choose" or "working".
+    let stage: String
+    let title: String
+    let text: String
+    /// What the last change came to, and whether that needs reading.
+    let notice: String
+    let worrying: Bool
+    let error: String
+    let rows: [ManageRowInfo]
+    let cursor: Int
+    let keys: [ManageKeyInfo]
+    let field: ManageFieldInfo?
+}
+
+struct ManageRowInfo: Decodable {
+    let label: String
+    /// Beside it: a feed's unread items, a category's feeds.
+    let note: String
+    /// 0 for a category, 1 for a feed.
+    let depth: Int
+}
+
+/// Something that can be done here: the key, and what a button calls it and sends to `press`.
+struct ManageKeyInfo: Decodable {
+    let key: String
+    let label: String
+    let button: String
+}
+
+/// The text field, on the stages that have one. `value` is where it starts: what was typed, after a failure.
+struct ManageFieldInfo: Decodable {
+    let label: String
+    let value: String
+    let action: String
+}
+
 struct PickerInfo: Decodable {
     /// "loading", "error" or "ready".
     let state: String
@@ -102,9 +150,10 @@ struct PickerInfo: Decodable {
     let history: Bool
     /// Unread items come newest first.
     let newestFirst: Bool
-    /// What it says with no rows, and whether it then offers to import.
+    /// What it says with no rows, and whether it then offers to import, or to add a feed.
     let emptyText: String
     let offersImport: Bool
+    let offersAdd: Bool
 }
 
 /// The image viewer: the image on screen, the link it's in, and where it is among the article's images.

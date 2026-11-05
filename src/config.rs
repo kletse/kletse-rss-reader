@@ -113,6 +113,15 @@ pub struct GReader {
 }
 
 impl GReader {
+    /// Whether this is FreshRSS, whose API lives in `greader.php`: no other server has that in its address, and every
+    /// config has it, however old, as FreshRSS answers nowhere else. Asking the server would be a request that can
+    /// only answer for itself: Miniflux's `subscription/export` gives 200 and `[]`, so a route that answers proves
+    /// nothing. An address that hides it behind a rewrite reads as "not FreshRSS", which offers less, and never
+    /// claims more than happened.
+    pub fn is_freshrss(&self) -> bool {
+        is_freshrss(&self.url)
+    }
+
     fn filled(&self) -> usize {
         [&self.url, &self.username, &self.password].iter().filter(|s| !s.is_empty()).count()
     }
@@ -120,6 +129,11 @@ impl GReader {
     pub fn is_complete(&self) -> bool {
         self.filled() == 3
     }
+}
+
+/// See `GReader::is_freshrss`.
+pub(crate) fn is_freshrss(url: &str) -> bool {
+    url.trim_end_matches('/').to_ascii_lowercase().ends_with("/greader.php")
 }
 
 /// `Debug` leaves out the token.
@@ -197,6 +211,13 @@ impl Config {
             }
             None => Server::Miniflux,
         }
+    }
+
+    /// What the chosen server can do: what its kind can, and what's particular to the one at this address.
+    pub fn capabilities(&self) -> Capabilities {
+        let server = self.server();
+        let freshrss = server == Server::GReader && self.greader.as_ref().is_some_and(GReader::is_freshrss);
+        Capabilities { import_feeds: freshrss || server.capabilities().import_feeds, ..server.capabilities() }
     }
 
     /// True when the chosen server's settings are all there.
@@ -665,6 +686,42 @@ mod tests {
         assert_eq!(named.server(), Server::GReader);
         assert!(!named.is_complete(), "the named server has no settings");
         assert!(named.validate().unwrap_err().message().contains("Google Reader"));
+    }
+
+    #[test]
+    fn freshrss_is_known_by_its_address_also_in_a_config_from_before_detection() {
+        let at = |url: &str| {
+            let file =
+                format!("server = \"greader\"\n[greader]\nurl = \"{url}\"\nusername = \"u\"\npassword = \"p\"\n");
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            fs::write(&path, file).unwrap();
+            read(Some(&path)).unwrap().capabilities()
+        };
+        for url in [
+            "https://rss.example.com/api/greader.php",
+            "https://rss.example.com/api/greader.php/",
+            "https://example.com/freshrss/p/api/GReader.php",
+        ] {
+            assert!(at(url).import_feeds, "{url}");
+        }
+        // Miniflux's integration, and whatever else speaks the protocol.
+        for url in ["https://rss.example.com", "https://rss.example.com/miniflux", "https://x.example/greader.php.bak"]
+        {
+            assert!(!at(url).import_feeds, "{url}");
+            assert!(at(url).export_feeds, "{url}");
+        }
+    }
+
+    #[test]
+    fn miniflux_does_both_and_each_operation_stands_alone() {
+        assert!(full().capabilities().import_feeds && full().capabilities().export_feeds);
+        let freshrss = GReader { url: "https://a.example/api/greader.php".into(), ..GReader::default() };
+        let with = Config { server: Some(Server::GReader), greader: Some(freshrss), ..Config::default() };
+        assert!(with.capabilities().import_feeds);
+        assert!(!with.capabilities().fetch_full && !with.capabilities().refresh, "the rest stays the protocol's");
+        let chose_miniflux = Config { server: Some(Server::Miniflux), ..with };
+        assert!(chose_miniflux.capabilities().fetch_full);
     }
 
     #[test]

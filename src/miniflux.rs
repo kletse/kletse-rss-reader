@@ -4,6 +4,7 @@
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::config;
 use crate::error::{Error, Service, ok_status};
@@ -309,6 +310,25 @@ impl Client {
 
     pub async fn refresh_all(&self) -> Result<(), Error> {
         self.send(self.req(reqwest::Method::PUT, "/feeds/refresh")).await?;
+        Ok(())
+    }
+
+    /// Every feed, as OPML.
+    pub async fn export_opml(&self) -> Result<Vec<u8>, Error> {
+        let response = self.send(self.req(reqwest::Method::GET, "/export")).await?;
+        let body = response.bytes().await.map_err(|e| Error::reading(Service::Miniflux, &self.base, e))?;
+        Ok(body.to_vec())
+    }
+
+    /// Subscribes to the feeds in an OPML file. They're listed when this returns, with no entries yet: those come
+    /// with `refresh_all`, or an hour or so later.
+    pub async fn import_opml(&self, opml: &[u8], timeout: Duration) -> Result<(), Error> {
+        let request = self
+            .req(reqwest::Method::POST, "/import")
+            .header(reqwest::header::CONTENT_TYPE, "text/xml")
+            .timeout(timeout)
+            .body(opml.to_vec());
+        self.send(request).await?;
         Ok(())
     }
 }

@@ -167,8 +167,16 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
             label: "Turn on FreshRSS's API",
             url: "https://freshrss.github.io/FreshRSS/en/users/06_Mobile_access.html",
         }],
-        // The protocol has no call for the first two.
-        capabilities: Capabilities { fetch_full: false, refresh: false, search: None },
+        // The protocol has no call for the first two. Importing is an extension of FreshRSS's, and exporting works
+        // from any server's list: see `Config::capabilities`.
+        capabilities: Capabilities {
+            fetch_full: false,
+            refresh: false,
+            search: None,
+            import_feeds: false,
+            export_feeds: true,
+            samples: false,
+        },
     },
 ];
 
@@ -306,9 +314,29 @@ pub const NO_SERVER: NoServer = NoServer {
             link: Link { label: "PikaPods", url: "https://www.pikapods.com/apps" },
         },
     ],
-    note: "Either way you add your feeds on its web page, then come back here to Connect.",
+    note: "Either way, Connect comes next. If you're leaving another reader, export an OPML file from it, and Onward \
+           imports that once you're connected. Otherwise you add feeds on the server's web page.",
     more: Link { label: "More on choosing", url: "https://onward.kletse.dev/no-server/" },
 };
+
+// Importing and exporting a feed list, the same on all three.
+pub const IMPORT_TITLE: &str = "Import feeds";
+pub const IMPORT_TEXT: &str = "An OPML file is the list of feeds any reader can export. Onward checks the file and gives \
+                               it to your server, which subscribes to what's in it. Feeds you have already stay as \
+                               they are.";
+pub const IMPORT_ACTION: &str = "Choose a file…";
+pub const IMPORT_WORKING: &str = "Your server is going through the list. A long one can take minutes, as a server may \
+                                  fetch every feed before it answers. You can close this: the server carries on, and \
+                                  Onward says when it's done.";
+pub const EXPORT_TITLE: &str = "Export feeds";
+pub const EXPORT_TEXT: &str = "Saves the feeds on your server to an OPML file, which any reader can import.";
+pub const EXPORT_ACTION: &str = "Choose where to save…";
+pub const EXPORT_WORKING: &str = "Asking your server for its list…";
+/// What an export is called until you call it something else.
+pub const EXPORT_NAME: &str = "onward-feeds.opml";
+/// The terminal's field, where a window has its file dialog.
+pub const PATH_LABEL: &str = "Path to the file";
+pub const PATH_HELP: &str = "~ is your home folder. Over SSH, this is a file on that machine.";
 
 /// All the words of first run, for the windows that take them in one piece.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -114,10 +114,36 @@ pub struct Capabilities {
     /// Searches entries (`/`). `None` when only trying will tell: Google Reader API servers differ, and the protocol
     /// has no way to ask.
     pub search: Option<bool>,
+    /// Takes an OPML file and subscribes to what's in it (`i`).
+    pub import_feeds: bool,
+    /// Gives its feeds as an OPML file (`e`).
+    pub export_feeds: bool,
+    /// These are the sample articles, with no server behind them to import into or export from.
+    pub samples: bool,
 }
 
 impl Capabilities {
-    pub const EVERYTHING: Self = Self { fetch_full: true, refresh: true, search: Some(true) };
+    pub const EVERYTHING: Self = Self {
+        fetch_full: true,
+        refresh: true,
+        search: Some(true),
+        import_feeds: true,
+        export_feeds: true,
+        samples: false,
+    };
+    /// The built-in articles: all the keys work, and there's no server to take a feed list.
+    pub const SAMPLES: Self = Self { import_feeds: false, export_feeds: false, samples: true, ..Self::EVERYTHING };
+}
+
+/// What became of the articles of feeds a server just took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Articles {
+    /// The server fetched them before it answered: FreshRSS. What it has now is all there is.
+    Fetched,
+    /// It was told to fetch them, which it does in the background: Miniflux.
+    OnTheirWay,
+    /// Telling it to failed, for this reason: they come when it next refreshes by itself.
+    NotAsked(String),
 }
 
 // What the app says when a server can't do something: `Error::Refused`'s words, and the toasts of keys the app
@@ -130,6 +156,19 @@ pub const REFRESH_REFUSED: &str =
     "Refreshing feeds isn't available with a Google Reader API server; it refreshes them on its own";
 /// What a search says on a server that turns out to have none.
 pub const NO_SEARCH: &str = "This server has no search";
+/// What `i` says where a server can't take an OPML file, and the picker of an empty account there.
+pub const IMPORT_REFUSED: &str = "This server can't take a feed list from Onward. That works with FreshRSS, and with \
+                                  Miniflux when you connect to it directly rather than through its Google Reader \
+                                  integration.";
+/// What `e` says where a server can't give its feeds.
+pub const EXPORT_REFUSED: &str = "This server can't give Onward its feed list";
+/// What `i` and `e` say in the sample articles.
+pub const SAMPLES_HAVE_NO_FEED_LIST: &str =
+    "These are sample articles, with no server behind them: nothing was imported or exported. Connect a server first.";
+/// A server was left working on an import. It may finish, so this mustn't read as a failure of the file.
+pub const IMPORT_STILL_WORKING: &str = "The server took too long to answer, and it may still be working through the \
+                                        list. Have a look at your feeds in a few minutes: whatever it managed will \
+                                        be there, and importing the file again adds no duplicates.";
 /// A category the server can't list on its own.
 pub const NO_CATEGORY_ITEMS: &str = "This server can't list a category's items. Open its feeds one at a time.";
 /// The row for feeds in no category, on a server with no stream for it.

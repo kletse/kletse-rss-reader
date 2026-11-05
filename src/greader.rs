@@ -27,6 +27,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::config;
 use crate::dates;
@@ -35,6 +36,7 @@ use crate::feeds::{
     Category, Counts, Entry, EntryFeed, EntryPage, EntryStatus, FETCH_CONTENT_REFUSED, Feed, FeedCount, GONE,
     NO_CATEGORY_ITEMS, NO_FOLDER, NO_SEARCH, REFRESH_REFUSED, Selection,
 };
+use crate::opml::{self, Listed};
 use crate::paging::Order;
 
 const READING_LIST: &str = "user/-/state/com.google/reading-list";
@@ -50,6 +52,9 @@ const BATCH: usize = 100;
 /// Upper bound on one page requested by the UI.
 const MAX_PAGE: usize = 1000;
 
+/// FreshRSS's 400 says nothing more, and Onward checked the file first, so what's left is that it didn't like something.
+const FILE_REFUSED: &str = "FreshRSS turned the file down without saying why. It looked like OPML to Onward: try \
+                            importing it on FreshRSS's own page, which gives a reason.";
 /// The login worked and the server has items, but none of them in a form this client takes.
 const UNREADABLE_IDS: &str = "The server sent item ids Onward can't read, so it can't show these items";
 /// A wrong API password and one that was never set look the same from here, so this covers both.
@@ -132,6 +137,11 @@ struct Subscription {
     id: String,
     #[serde(default, deserialize_with = "null_is_default")]
     title: String,
+    /// The feed's own address, and its site's: not every server has both.
+    #[serde(default, deserialize_with = "null_is_default")]
+    url: String,
+    #[serde(default, rename = "htmlUrl", deserialize_with = "null_is_default")]
+    html_url: String,
     #[serde(default, deserialize_with = "null_is_default")]
     categories: Vec<SubscriptionCategory>,
 }
@@ -293,6 +303,8 @@ enum Body<'a> {
     None,
     /// A form; every POST also gets the `T` token.
     Form(&'a [(&'a str, String)]),
+    /// An OPML file, sent as it is, and how long to wait for the answer.
+    Opml(&'a [u8], Duration),
 }
 
 impl Client {
@@ -393,6 +405,9 @@ impl Client {
                 let mut fields: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
                 fields.push(("T", &token));
                 rb = rb.form(&fields);
+            }
+            if let Body::Opml(opml, timeout) = body {
+                rb = rb.header(reqwest::header::CONTENT_TYPE, "text/xml").timeout(timeout).body(opml.to_vec());
             }
             let resp = rb.send().await.map_err(|e| self.unreachable(e))?;
             let status = resp.status().as_u16();
@@ -700,6 +715,55 @@ impl Client {
     /// Nor to refresh the feeds now: the server does that on its own schedule.
     pub async fn refresh_all(&self) -> Result<(), Error> {
         Err(Error::Refused(REFRESH_REFUSED.into()))
+    }
+
+    /// Whether this is FreshRSS: see `config::GReader::is_freshrss`.
+    pub fn is_freshrss(&self) -> bool {
+        config::is_freshrss(&self.base)
+    }
+
+    /// FreshRSS's own route, which needs no edit token. Only for FreshRSS: Miniflux answers it with 200 and `[]`.
+    pub async fn export_opml(&self) -> Result<Vec<u8>, Error> {
+        let response = self.send(reqwest::Method::GET, "subscription/export", &[], Body::None).await?;
+        let body = response.bytes().await.map_err(|e| Error::reading(Service::GReader, &self.base, e))?;
+        Ok(body.to_vec())
+    }
+
+    /// FreshRSS's own route, which fetches the feeds before it answers. Only for FreshRSS: on Miniflux it's a 401. It
+    /// answers `OK` even for a feed it won't fetch, so that says the file was read and not that any feed arrived.
+    pub async fn import_opml(&self, opml: &[u8], timeout: Duration) -> Result<(), Error> {
+        let response = self
+            .send(reqwest::Method::POST, "subscription/import", &[], Body::Opml(opml, timeout))
+            .await
+            .map_err(|e| match e {
+                Error::Http { status, .. } if status == reqwest::StatusCode::BAD_REQUEST => {
+                    Error::Refused(FILE_REFUSED.into())
+                }
+                e => e,
+            })?;
+        let body = response.text().await.map_err(|e| Error::reading(Service::GReader, &self.base, e))?;
+        if body.trim() == "OK" {
+            Ok(())
+        } else {
+            Err(Error::unexpected(format!("The server answered the import with something other than OK: {body}")))
+        }
+    }
+
+    /// The feeds as OPML, made from the list, and how many couldn't go in as the server gave no address for them.
+    pub async fn list_as_opml(&self) -> Result<(Vec<u8>, usize), Error> {
+        let subscriptions = self.subscriptions().await?;
+        let total = subscriptions.len();
+        let feeds: Vec<Listed> = subscriptions
+            .into_iter()
+            .filter_map(|sub| {
+                let in_id = sub.id.strip_prefix("feed/").filter(|id| id.contains("://")).unwrap_or_default();
+                let url = if sub.url.is_empty() { in_id.to_string() } else { sub.url };
+                let category = sub.categories.into_iter().next().map(|c| c.label).unwrap_or_default();
+                (!url.is_empty()).then_some(Listed { title: sub.title, url, site: sub.html_url, category })
+            })
+            .collect();
+        let left_out = total - feeds.len();
+        Ok((opml::build(&feeds).into_bytes(), left_out))
     }
 }
 

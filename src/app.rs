@@ -96,6 +96,16 @@ pub struct Status {
     pub fetches: bool,
 }
 
+/// What a save of the settings comes to. The feed server is saved; Readeck may not be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    pub status: Status,
+    /// Who the feed server says you are, when it was asked.
+    pub username: Option<String>,
+    /// Why the Readeck values weren't saved: the Readeck saved before them stays.
+    pub readeck_problem: Option<String>,
+}
+
 /// The settings form, flat: which server, the fields of both kinds (only the chosen one's are used, the other's
 /// are kept for switching back), and Readeck, whose empty fields mean "not set up".
 /// Its `Debug` shows nothing on purpose: it holds the API key, password and token.
@@ -143,6 +153,17 @@ enum Opened {
     Search(String),
     /// The starred items, newest first (`Selection::Starred`).
     Starred,
+}
+
+/// A search whose first answer hasn't come. Whether a server can search shows only in that answer, so the open list
+/// stays until then, and a search that fails leaves it as it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwaitedSearch {
+    query: String,
+    /// Where the box was opened from.
+    from: Overlay,
+    /// The "Searching…" toast, which the results make out of date.
+    toast: u64,
 }
 
 /// The image viewer: the article's images, and the one on screen.
@@ -329,7 +350,7 @@ pub enum Outcome {
         values: SettingsValues,
         problem: Option<String>,
     },
-    SettingsSaved(Result<Status, String>),
+    SettingsSaved(Result<Saved, String>),
 }
 
 impl std::fmt::Debug for Outcome {
@@ -386,6 +407,7 @@ pub struct App {
     /// Opening another selection makes the loads still in flight no-ops: each remembers this and compares.
     latest_load: u64,
     opened: Option<Opened>,
+    awaited_search: Option<AwaitedSearch>,
     /// The newest unread item's id when the selection was opened (0 in history). Shift+A marks up to there.
     newest_at_open: i64,
     /// Saving to Readeck or fetching the full article: one at a time.
@@ -444,6 +466,7 @@ impl App {
             checking: false,
             latest_load: 0,
             opened: None,
+            awaited_search: None,
             newest_at_open: 0,
             busy: false,
             loading_more: false,
@@ -721,6 +744,7 @@ impl App {
         self.latest_load += 1;
         self.loading_more = false;
         self.checking = false;
+        self.awaited_search = None;
         self.latest_load
     }
 
@@ -756,12 +780,25 @@ impl App {
             return;
         }
         self.loading = false;
+        let search = self.awaited_search.take();
         match result {
             Ok((page, newest)) => {
+                if let Some(search) = search {
+                    self.open_results(search);
+                }
                 self.newest_at_open = newest;
                 self.append_page(page);
             }
-            Err(message) => self.toast_error(message),
+            Err(message) => {
+                // The search box went on Enter. Back to the picker it came from, or that has something to open.
+                if let Some(search) = search
+                    && self.overlay == Overlay::None
+                    && (search.from == Overlay::Picker || self.queue.is_empty())
+                {
+                    self.overlay = Overlay::Picker;
+                }
+                self.toast_error(message);
+            }
         }
     }
 
@@ -779,7 +816,8 @@ impl App {
     /// Asks for the page after what's loaded; one at a time. Returns whether it did. New arrivals are always
     /// looked for after the newest item loaded, also when the list runs newest first.
     fn load_page(&mut self, arrivals: bool, fx: &mut Vec<Effect>) -> bool {
-        if self.loading_more {
+        // With a search on its way the list may be about to go, and this page would land in the results.
+        if self.loading_more || self.awaited_search.is_some() {
             return false;
         }
         let load = self.latest_load;
@@ -1076,6 +1114,10 @@ impl App {
     /// `newest_at_open` is 0, so that's just the items marked unread here.) The server counts, so the question
     /// stays true even after reading elsewhere.
     fn mark_all_read(&mut self, fx: &mut Vec<Effect>) {
+        // The dialog would still be up over the search results, and go on to mark the list before them.
+        if self.awaited_search.is_some() {
+            return;
+        }
         let selection = match &self.opened {
             Some(Opened::Feeds(selection)) => *selection,
             Some(Opened::Search(_)) => {
@@ -1312,7 +1354,10 @@ impl App {
         }
     }
 
-    /// The search box's Enter: the results open like any list, best match first. Nothing typed closes the box.
+    /// The search box's Enter: the results open like any list, best match first, once they're in; if none come,
+    /// everything stays as it was (`opened`). Until then an article stays on screen and works as usual: the windows
+    /// scroll to the top on any change of screen, so "Loading…" would lose your place in it. The words stay in the
+    /// box either way, to change or to try again. Nothing typed closes the box.
     pub fn search(&mut self, query: &str) -> Vec<Effect> {
         let mut fx = Vec::new();
         if self.overlay != Overlay::Search {
@@ -1325,13 +1370,23 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.search_query.clone_from(&query);
+        // A search replacing one on its way goes back where that one would have.
+        let from = self.awaited_search.as_ref().map_or(self.before_search, |search| search.from);
         self.new_load();
-        self.opened = Some(Opened::Search(query.clone()));
-        self.newest_at_open = 0;
-        self.reset_queue(format!("“{query}”"));
-        self.loading = true;
+        self.loading = self.current().is_none();
+        self.toast_info("Searching…");
+        let toast = self.toast_serial;
+        self.awaited_search = Some(AwaitedSearch { query: query.clone(), from, toast });
         fx.push(Effect::Search { load: self.latest_load, query, offset: 0, limit: PAGE, first: true });
         fx
+    }
+
+    /// The first answer is in, so the results take over from the open list.
+    fn open_results(&mut self, search: AwaitedSearch) {
+        self.dismiss_toast(search.toast);
+        self.reset_queue(format!("“{}”", search.query));
+        self.opened = Some(Opened::Search(search.query));
+        self.newest_at_open = 0;
     }
 
     /// The search box's Cancel: Esc.
@@ -1444,16 +1499,14 @@ impl App {
         fx.push(Effect::LoadSettings);
     }
 
-    /// Called with the new status after a successful save, or `None` when cancelled.
-    fn close_settings(&mut self, status: Option<Status>, fx: &mut Vec<Effect>) {
+    /// Called with what was saved after a successful save, or `None` when cancelled.
+    fn close_settings(&mut self, saved: Option<Saved>, fx: &mut Vec<Effect>) {
         let first_run = self.overlay == Overlay::Onboarding;
         let in_window = std::mem::take(&mut self.settings_window_open);
-        if let Some(status) = status {
-            self.readeck = status.readeck;
-            self.fetches = status.fetches;
-            if !first_run {
-                self.toast_info("Settings saved");
-            }
+        if let Some(saved) = saved {
+            self.readeck = saved.status.readeck;
+            self.fetches = saved.status.fetches;
+            self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
             self.clear_queue();
@@ -1468,6 +1521,17 @@ impl App {
             if self.queue.is_empty() {
                 self.open_picker(None, fx);
             }
+        }
+    }
+
+    /// A toast, as the form that could have said so is closing, and on the Mac it's a window of its own.
+    fn announce_saved(&mut self, saved: &Saved, first_run: bool) {
+        let name = saved.username.as_deref().map(str::trim).filter(|name| !name.is_empty());
+        let done = name.map_or_else(|| "Settings saved".to_string(), |name| format!("Signed in as {name}"));
+        match &saved.readeck_problem {
+            Some(problem) => self.toast_error(format!("{done}. Readeck wasn't changed: {problem}")),
+            None if name.is_some() || !first_run => self.toast_info(done),
+            None => {}
         }
     }
 
@@ -1718,7 +1782,7 @@ impl App {
                 }
             }
             Outcome::SettingsSaved(result) => match result {
-                Ok(status) => self.close_settings(Some(status), &mut fx),
+                Ok(saved) => self.close_settings(Some(saved), &mut fx),
                 Err(message) => {
                     if let Some(form) = self.settings.as_mut() {
                         form.error = message;

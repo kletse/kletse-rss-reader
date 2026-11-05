@@ -327,6 +327,24 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 }
 
 #[test]
+fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
+    let unset = Status { configured: false, readeck: false, fetches: true };
+    let mut s = Screenful::starting(80, 24, unset);
+    s.key(KeyCode::BackTab).key(KeyCode::Right);
+    for _ in 0..3 {
+        s.key(KeyCode::Tab);
+    }
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, 4, "the password");
+    s.keys("secret");
+    assert!(s.shows("the API password from your profile"), "{}", s.text());
+    s.ui.app.apply(Outcome::SettingsSaved(Err(crate::greader::LOGIN_REJECTED.into())));
+    s.key(KeyCode::Tab);
+    assert!(s.shows("turned down the username or API"), "{}", s.text());
+    assert!(s.shows("Settings → Integrations."), "the whole message: {}", s.text());
+    assert!(s.shows("Enter to connect"), "{}", s.text());
+}
+
+#[test]
 fn onboarding_cant_be_left_but_ctrl_c_still_quits() {
     let unset = Status { configured: false, readeck: false, fetches: true };
     let mut s = Screenful::starting(100, 30, unset);

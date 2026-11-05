@@ -40,7 +40,7 @@ and how to build it is in the [README](README.md).
   1:1, since the system adds its own momentum.
 - **The shared core** (`miniflux.rs`, `readeck.rs`, `config.rs`, `error.rs`, `demo.rs`) came over from the Tauri
   version unchanged apart from dropping the IPC bits. Its tests use wiremock. `greader.rs` is the Google Reader API
-  client (FreshRSS, Miniflux's integration, Inoreader…), giving the same `Entry`/`FeedCount`/`Selection` as
+  client (FreshRSS, Miniflux's integration), giving the same `Entry`/`FeedCount`/`Selection` as
   `miniflux.rs`; `server.rs` is the enum over the two that `backend.rs` calls, which keeps one client per config
   (the Google Reader one remembers its login and the stream each hashed feed id stands for). Paging goes by
   `Entry::order_millis()`, the server's own order time (FreshRSS: arrival), not always `published_at`. What the
@@ -140,6 +140,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   otherwise. Gold fails with `undefined reference to 'cxx_qt_init_crate_onward'` (and the other
   `cxx_qt_init_*`) since `bridge.rs` moved into the library. Arch's `rust` package pulls in `lld`; with rustup,
   install it (`sudo pacman -S lld`). The PKGBUILD lists it in `makedepends`.
+- **Two HTTP clients.** `api_client()` in `backend.rs` is for the servers we sign in to, and follows a redirect only
+  if it stays on the server; images use a plain one, as they live on CDNs. Don't send anything signed in through it.
 - **Test-only accessors** in `app.rs` are `#[cfg(test)]`. Clippy runs with `-D warnings`, so an unused one fails
   CI.
 

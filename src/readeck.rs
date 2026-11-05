@@ -132,6 +132,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_token_and_the_saved_link_dont_follow_a_redirect_to_another_host() {
+        let elsewhere = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&elsewhere)
+            .await;
+        let to = format!("{}/login", elsewhere.uri().replace("127.0.0.1", "localhost"));
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(307).insert_header("Location", to.as_str()))
+            .mount(&server)
+            .await;
+        let http = crate::backend::api_client();
+        for err in [
+            check(&http, &cfg(&server)).await.unwrap_err(),
+            save(&http, &cfg(&server), "https://example.com/a").await.unwrap_err(),
+        ] {
+            assert_eq!(err.kind(), ErrorKind::Setup);
+            assert!(err.message().contains("token"), "{}", err.message());
+        }
+    }
+
+    #[tokio::test]
     async fn check_reports_unreachable_server() {
         // Port 1 is never listening; a freed mock port could be reused by a parallel test.
         let c = config::Readeck { url: "http://127.0.0.1:1".into(), token: "tok".into() };

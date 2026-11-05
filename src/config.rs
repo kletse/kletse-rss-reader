@@ -17,7 +17,7 @@ pub struct Config {
     pub server: Option<Server>,
     #[serde(default, skip_serializing_if = "Miniflux::is_empty")]
     pub miniflux: Miniflux,
-    /// A Google Reader API server: FreshRSS, Inoreader, BazQux, The Old Reader, Miniflux's own integration.
+    /// A Google Reader API server: FreshRSS or Miniflux's own integration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greader: Option<GReader>,
     /// `None` when Readeck is not set up: the bookmark button is hidden.

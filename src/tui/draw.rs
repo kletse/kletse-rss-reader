@@ -193,11 +193,12 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         "Settings → API Keys → Create a new API key",
         "https://freshrss.example.com/api/greader.php",
         "",
-        "FreshRSS: the API password in your profile",
+        "",
         "https://readeck.example.com",
         "Profile → API Tokens (needs “Bookmarks: write”)",
     ];
     const GREADER_HINT: &str = "FreshRSS: https://your-freshrss/api/greader.php. Miniflux: the server URL, with the Google Reader integration enabled.";
+    const PASSWORD_HINT: &str = "FreshRSS: the API password from your profile, not your login password. Miniflux: the one under Settings → Integrations.";
     let mut cursor = None;
     let shown = fields.shown();
     for (n, &i) in shown.iter().enumerate() {
@@ -241,27 +242,36 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             cursor = Some((rows.len(), 4 + at));
         }
         rows.push(Row { line: Line::from(vec![Span::raw("  "), mark, value]), ..Row::default() });
-        if i == 2 {
+        let hint = match i {
+            2 => Some(GREADER_HINT),
+            4 => Some(PASSWORD_HINT),
+            _ => None,
+        };
+        if let Some(hint) = hint {
             let indent = Span::raw("    ");
-            rows.extend(article::prefixed(article::plain(GREADER_HINT, DIM, w.saturating_sub(4)), &indent, &indent));
+            rows.extend(article::prefixed(article::plain(hint, DIM, w.saturating_sub(4)), &indent, &indent));
         }
         if n + 1 < shown.len() {
             rows.push(Row::default());
         }
     }
-    rows.push(Row::default());
+    let mut foot = vec![Row::default()];
     if !error.is_empty() {
-        rows.extend(article::plain(&error, ERROR, w));
-        rows.push(Row::default());
+        foot.extend(article::plain(&error, ERROR, w));
+        foot.push(Row::default());
     }
     let action = if first_run { "Enter to connect" } else { "Enter to save · Esc to cancel" };
     let hint = if checking { "Checking…".to_string() } else { format!("{action} · Tab for the next field") };
-    rows.extend(article::plain(&hint, DIM, w));
-    draw_rows(frame, &rows, column);
+    foot.extend(article::plain(&hint, DIM, w));
+    // The form doesn't scroll, so when it's too tall the fields give way: what went wrong has to be read.
+    let foot_height = u16::try_from(foot.len()).unwrap_or(u16::MAX).min(column.height);
+    let form_height = u16::try_from(rows.len()).unwrap_or(u16::MAX).min(column.height - foot_height);
+    draw_rows(frame, &rows, Rect { height: form_height, ..column });
+    draw_rows(frame, &foot, Rect { y: column.y + form_height, height: foot_height, ..column });
     if let Some((row, x)) = cursor
         && !checking
         && let (Ok(row), Ok(x)) = (u16::try_from(row), u16::try_from(x))
-        && column.y + row < column.bottom()
+        && row < form_height
     {
         frame.set_cursor_position(Position::new(column.x + x, column.y + row));
     }

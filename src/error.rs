@@ -7,7 +7,7 @@ use std::{error::Error as _, fmt};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
     Miniflux,
-    /// A Google Reader API server (FreshRSS, Inoreader, …).
+    /// A Google Reader API server (FreshRSS, Miniflux's integration).
     GReader,
     Readeck,
 }
@@ -17,7 +17,7 @@ impl Service {
     fn credential(self) -> &'static str {
         match self {
             Service::Miniflux => "API key",
-            Service::GReader => "password",
+            Service::GReader => "API password",
             Service::Readeck => "token",
         }
     }
@@ -44,6 +44,13 @@ pub enum Error {
     /// The server answered, but turned down the API key or token.
     #[error("{0}")]
     Rejected(String),
+    /// The server redirected to somewhere the app won't send what it signs in with.
+    #[error(
+        "{url} redirected to {to}, so Onward stopped rather than send your {} there. A sign-in page in front of the \
+         server would do this. Use the address that reaches {service} directly.",
+        .service.credential()
+    )]
+    Redirected { service: Service, url: String, to: String },
     /// The server answered with an HTTP error.
     #[error("{service} {status}{}", body_suffix(.body))]
     Http { service: Service, status: reqwest::StatusCode, body: String },
@@ -56,6 +63,14 @@ pub enum Error {
     /// A request the app turns down by itself, such as opening a `file:` link.
     #[error("{0}")]
     Refused(String),
+}
+
+/// Why the client for our servers stopped at a redirect. `to` is the scheme, host and port: a sign-in page's address
+/// can carry anything after that.
+#[derive(Debug, thiserror::Error)]
+#[error("redirected to {to}")]
+pub struct RedirectRefused {
+    pub to: String,
 }
 
 fn body_suffix(body: &str) -> String {
@@ -82,7 +97,7 @@ impl Error {
     #[cfg(test)]
     pub fn kind(&self) -> ErrorKind {
         match self {
-            Error::Setup(_) => ErrorKind::Setup,
+            Error::Setup(_) | Error::Redirected { .. } => ErrorKind::Setup,
             Error::Unreachable { .. } => ErrorKind::Unreachable,
             Error::Rejected(_) => ErrorKind::Rejected,
             Error::Http { .. } | Error::Unexpected { .. } => ErrorKind::Server,
@@ -103,9 +118,14 @@ impl Error {
         }
     }
 
-    /// Sending a request failed: no answer came back.
+    /// Sending a request failed: no answer came back, or a redirect `backend.rs` wouldn't follow.
     pub fn unreachable(service: Service, url: &str, source: reqwest::Error) -> Self {
-        Error::Unreachable { service, url: url.to_string(), source }
+        let refused =
+            std::iter::successors(source.source(), |&e| e.source()).find_map(|e| e.downcast_ref::<RedirectRefused>());
+        match refused {
+            Some(refused) => Error::Redirected { service, url: url.to_string(), to: refused.to.clone() },
+            None => Error::Unreachable { service, url: url.to_string(), source },
+        }
     }
 
     /// Reading an answer failed: either it isn't what we expected, or the connection broke off halfway.

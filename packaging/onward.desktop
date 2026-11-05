@@ -2,10 +2,10 @@
 Type=Application
 Name=Onward
 GenericName=Feed Reader
-Comment=Read your unread Miniflux articles one at a time
+Comment=Read your unread Miniflux or FreshRSS articles one at a time
 Exec=onward
 Icon=onward
 Terminal=false
 Categories=Network;News;Feed;
-Keywords=rss;feeds;miniflux;news;
+Keywords=rss;feeds;miniflux;freshrss;news;
 StartupWMClass=onward

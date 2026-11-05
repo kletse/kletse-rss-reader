@@ -41,11 +41,6 @@ impl Server {
     /// Every kind, in the order the settings form offers them.
     pub const ALL: [Server; 2] = [Server::Miniflux, Server::GReader];
 
-    /// As the Mac's settings offer it, where the help below the picker names the servers.
-    pub fn short_label(self) -> &'static str {
-        crate::providers::provider(self).short_label
-    }
-
     /// What this kind of server can do.
     pub fn capabilities(self) -> Capabilities {
         crate::providers::provider(self).capabilities

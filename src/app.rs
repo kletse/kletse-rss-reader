@@ -1632,7 +1632,7 @@ impl App {
 
     /// The kind of server a window's form names. One the core doesn't know stops the save, and the form says so:
     /// it would otherwise be saved as some other kind.
-    pub fn server_named(&mut self, name: &str) -> Option<Server> {
+    fn server_named(&mut self, name: &str) -> Option<Server> {
         let server = Server::from_name(name);
         if server.is_none()
             && let Some(form) = self.settings.as_mut()

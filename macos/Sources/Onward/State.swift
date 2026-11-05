@@ -27,6 +27,12 @@ struct AppState: Decodable {
     let position: String
     let readeck: Bool
     let capabilities: Capabilities
+    /// Reading the sample articles, chosen on the first screen.
+    let samples: Bool
+    /// The last link opened from a form: a browser may not have opened.
+    let shownLink: String?
+    /// First run, while it's on.
+    let onboarding: OnboardingInfo?
     let article: ArticleInfo?
     let picker: PickerInfo
     /// The search box starts from the last search.
@@ -101,9 +107,55 @@ struct ToastInfo: Decodable {
     let serial: Int
 }
 
+/// Where first run is, and all its words (src/providers.rs).
+struct OnboardingInfo: Decodable {
+    /// "welcome", "connect" or "no_server".
+    let step: String
+    /// The row the arrows are on.
+    let cursor: Int
+    let words: FirstRunWords
+}
+
+struct FirstRunWords: Decodable {
+    let welcomeTitle: String
+    let welcomeText: String
+    let welcome: [WelcomeRow]
+    let connectTitle: String
+    let connectText: String
+    let noServer: NoServerInfo
+}
+
+struct WelcomeRow: Decodable {
+    let label: String
+    /// Offered, not pushed.
+    let quiet: Bool
+}
+
+struct NoServerInfo: Decodable {
+    let title: String
+    let text: String
+    let offers: [OfferInfo]
+    let note: String
+    let more: LinkInfo
+}
+
+struct OfferInfo: Decodable {
+    let name: String
+    let price: String
+    let text: String
+    let link: LinkInfo
+}
+
+struct LinkInfo: Decodable, Identifiable {
+    let label: String
+    let url: String
+    var id: String { url }
+}
+
 struct SettingsInfo: Decodable {
     /// What the form offers.
-    let kinds: [ServerKind]
+    let providers: [ProviderInfo]
+    let readeckFields: [FieldInfo]
     let problem: String
     let error: String
     let checking: Bool
@@ -112,26 +164,55 @@ struct SettingsInfo: Decodable {
     let values: SettingsValues?
 }
 
-struct ServerKind: Decodable, Identifiable {
-    let name: String
-    let label: String
-    var id: String { name }
+/// A row of `PROVIDERS`. The core also sends its capabilities and such, which nothing here reads.
+struct ProviderInfo: Decodable, Identifiable {
+    let id: String
+    let shortLabel: String
+    let fields: [FieldInfo]
+    let links: [LinkInfo]
 }
 
-struct SettingsValues: Decodable, Equatable {
-    /// A `name` from `SettingsInfo.kinds`. The other kinds' fields are kept, for switching back.
-    var server: String
-    var minifluxUrl: String
-    var minifluxApiKey: String
-    var greaderUrl: String
-    var greaderUsername: String
-    var greaderPassword: String
-    var readeckUrl: String
-    var readeckToken: String
+struct FieldInfo: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let placeholder: String
+    let secret: Bool
+    /// May be empty.
+    let help: String
+    var id: String { key }
+}
 
-    static let empty = SettingsValues(
-        server: "miniflux", minifluxUrl: "", minifluxApiKey: "", greaderUrl: "", greaderUsername: "",
-        greaderPassword: "", readeckUrl: "", readeckToken: "")
+struct SettingsValues: Equatable {
+    /// An `id` from `SettingsInfo.providers`. The other kinds' fields are kept, for switching back.
+    var server: String
+    /// Every field's value by its `key`, on screen or not.
+    var fields: [String: String]
+
+    static let empty = SettingsValues(server: "miniflux", fields: [:])
+
+    subscript(field key: String) -> String {
+        get { fields[key] ?? "" }
+        set { fields[key] = newValue }
+    }
+}
+
+/// The core sends the fields as a list: this decoder would rewrite the keys of an object.
+extension SettingsValues: Decodable {
+    private struct Pair: Decodable {
+        let key: String
+        let value: String
+    }
+
+    private enum Key: String, CodingKey {
+        case server, fields
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        server = try c.decode(String.self, forKey: .server)
+        let pairs = try c.decode([Pair].self, forKey: .fields)
+        fields = Dictionary(uniqueKeysWithValues: pairs.map { ($0.key, $0.value) })
+    }
 }
 
 enum Block: Decodable {

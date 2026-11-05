@@ -4972,7 +4972,7 @@ async fn one_failed_poll_isnt_the_end_and_the_code_running_out_is() {
     h.press(0).await;
     h.tick().await;
     assert_eq!(h.view().stage, "waiting");
-    assert!(h.view().note.contains("HTTP 502") && h.view().note.contains("Still trying"), "{}", h.view().note);
+    assert_eq!(h.view().note, "Readeck answered with HTTP 502. Still trying.");
     h.tick().await;
     assert_eq!(h.view().note, "", "an answer again");
 

@@ -18,7 +18,7 @@ use serde::Serialize;
 const SLOW_DOWN_MS: u64 = 5000;
 
 const USE_A_TOKEN: &str = "Use a token instead: in Readeck, open Profile → API Tokens, make one with “Bookmarks: write”, \
-                           and paste it into API token above.";
+                           and paste it into API token above, then save.";
 const CONNECT: &str = "Connect in the browser";
 const OPEN: &str = "Open in browser";
 const AGAIN: &str = "Start again";
@@ -308,7 +308,8 @@ impl Grant {
                 let foreign = "Onward won't open this address itself, as it's not on the server you entered. Check it \
                                before you go there.";
                 let foreign = if waiting.open.is_none() { foreign } else { "" };
-                let still = (!waiting.trouble.is_empty()).then(|| format!("{} Still trying.", waiting.trouble));
+                let trouble = waiting.trouble.trim_end_matches('.');
+                let still = (!trouble.is_empty()).then(|| format!("{trouble}. Still trying."));
                 view.note = still.unwrap_or_else(|| foreign.to_string());
             }
             Stage::Keeping => {
@@ -346,7 +347,7 @@ pub struct GrantView {
     pub address: String,
     /// What else there is to know about either, while waiting.
     pub note: String,
-    /// What can be pressed: `App::readeck_row`. These open nothing a terminal should print: `address` has that.
+    /// What can be pressed: `App::readeck_row`. None has a `url`: `address` is what to read, wherever a row leads.
     pub rows: Vec<ConnectRow>,
 }
 

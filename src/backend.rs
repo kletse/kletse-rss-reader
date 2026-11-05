@@ -8,7 +8,7 @@ use crate::config;
 use crate::dates;
 use crate::demo;
 use crate::detect::{self, Detected};
-use crate::error::{Error, ErrorKind, RedirectRefused};
+use crate::error::{Error, RedirectRefused};
 use crate::feeds::{self, Capabilities, Changed, Counts, EntryPage, EntryStatus, FeedChange, FeedList, Selection};
 use crate::greader;
 use crate::manage;
@@ -354,11 +354,11 @@ impl Backend {
         let readeck = config::Readeck { url: url.to_string(), token: token.as_str().to_string() };
         match readeck::check(&self.http, &readeck).await {
             Ok(()) => Poll::Token(token),
-            Err(e) if matches!(e.kind(), ErrorKind::Unreachable | ErrorKind::Server) => Poll::Failed(e.message()),
-            Err(_) => Poll::Refused(
+            Err(Error::Rejected(_) | Error::Setup(_) | Error::Redirected { .. }) => Poll::Refused(
                 "Readeck approved Onward, then wouldn't take the token it gave. Start again, or paste one above."
                     .into(),
             ),
+            Err(e) => Poll::Failed(e.message()),
         }
     }
 

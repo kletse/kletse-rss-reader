@@ -1518,3 +1518,13 @@ fn a_row_that_goes_away_gives_the_focus_back() {
     assert!(s.shows("Profile → API Tokens") && !s.shows("Connect in the browser"), "{}", s.text());
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckToken));
 }
+
+#[test]
+fn what_came_of_it_is_on_screen_in_full_with_no_row_to_bring_it_there() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = at_readeck(width, height);
+        let server = s.runtime.block_on(wiremock::MockServer::start());
+        connect_to(&mut s, &server.uri());
+        assert!(s.shows("make one with") && s.shows("API token above"), "{}", s.text());
+    }
+}

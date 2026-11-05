@@ -5,7 +5,7 @@ use super::ui::{Focus, Form, Inline, Picture, Ui};
 use crate::app::{ConnectRow, ConnectView, Overlay, PickerList, Screen, Step, ToastKind};
 use crate::grant::GrantView;
 use crate::paging::Mode;
-use crate::providers::{self, Field};
+use crate::providers::{self, Field, FieldKey};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -338,6 +338,11 @@ impl Page {
         }
         if matches!(form.focus, Focus::Grant(_)) {
             self.focused = start..self.rows.len();
+        }
+        // What came of it is what's being looked for, and with no rows left there's nothing for the focus to go to.
+        let on_readeck = matches!(form.focus, Focus::Field(FieldKey::ReadeckUrl | FieldKey::ReadeckToken));
+        if on_readeck && view.stage != "idle" {
+            self.focused.end = self.rows.len();
         }
     }
 

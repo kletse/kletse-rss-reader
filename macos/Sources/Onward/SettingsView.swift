@@ -139,7 +139,9 @@ struct OnboardingView: View {
             if let onboarding {
                 switch onboarding.step {
                 case "connect":
-                    connect(onboarding.words, onboarding.connect, settings)
+                    connect(onboarding.connect, settings)
+                case "services", "hosting":
+                    choose(onboarding.choose, cursor: onboarding.cursor, settings)
                 case "no_server":
                     noServer(onboarding.words.noServer, cursor: onboarding.cursor, settings)
                 default:
@@ -201,6 +203,28 @@ struct OnboardingView: View {
         }
     }
 
+    /// The list of services, or the choice of a hosted one.
+    @ViewBuilder
+    private func choose(_ view: ChooseInfo, cursor: Int, _ settings: SettingsInfo?) -> some View {
+        heading(view.title, view.text)
+        MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
+        Section {
+            ForEach(Array(view.rows.enumerated()), id: \.offset) { index, row in
+                if row.quiet {
+                    RowButton(label: row.label, quiet: true, current: index == cursor) {
+                        model.chooseOnboarding(index)
+                    }
+                } else {
+                    ServiceRow(row: row, current: index == cursor) { model.chooseOnboarding(index) }
+                }
+            }
+        }
+        HStack {
+            Spacer()
+            Button("Back") { model.key("Escape") }
+        }
+    }
+
     @ViewBuilder
     private func noServer(_ words: NoServerInfo, cursor: Int, _ settings: SettingsInfo?) -> some View {
         heading(words.title, words.text)
@@ -228,16 +252,16 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder
-    private func connect(_ words: FirstRunWords, _ view: ConnectInfo, _ settings: SettingsInfo?) -> some View {
+    private func connect(_ view: ConnectInfo, _ settings: SettingsInfo?) -> some View {
         let checking = settings?.checking == true
         let byHand = view.stage == "by_hand"
-        heading(words.connectTitle, byHand ? words.byHandText : words.connectText)
+        heading(view.title, view.intro)
         MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
         if byHand {
             FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
         } else {
             Section {
-                FieldRow(field: words.address, values: $values, focus: $focus)
+                FieldRow(field: view.address, values: $values, focus: $focus)
                     .disabled(checking)
                 if !view.text.isEmpty { Text(verbatim: view.text) }
                 ForEach(view.fields) {
@@ -247,7 +271,7 @@ struct OnboardingView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if !view.note.isEmpty { Text(verbatim: view.note) }
-                    ForEach(([words.address] + view.fields).filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
+                    ForEach(([view.address] + view.fields).filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

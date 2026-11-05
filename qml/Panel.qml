@@ -35,7 +35,8 @@ Item {
         x: (overlay.width - width) / 2
         y: overlay.panelY
         width: overlay.panelWidth
-        height: Math.min(column.implicitHeight + 2, overlay.height * 0.8)
+        // Whole pixels: text with a line height comes to a fraction, and that loses the bottom border.
+        height: Math.min(Math.ceil(column.implicitHeight) + 2, overlay.height * 0.8)
         color: overlay.ui.model.bg
         border.color: overlay.ui.model.accent
         radius: overlay.ui.radius

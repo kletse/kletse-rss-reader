@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // the generated FFI; nothing hand-written here is unsafe
 #![allow(clippy::too_many_arguments)] // `key` takes one flag per modifier, as QML has them
 
-use crate::app::{App, Effect, KeyPress, PickerList, ToastKind};
+use crate::app::{App, Effect, FeedFile, KeyPress, PickerList, ToastKind};
 use crate::backend::Backend;
 use crate::content::convert;
 use crate::keys;
@@ -54,6 +54,9 @@ pub mod qobject {
         #[qproperty(bool, readeck)]
         // The server refreshes feeds on request (r).
         #[qproperty(bool, refreshes)]
+        // The server takes an OPML file (i), and gives one (e).
+        #[qproperty(bool, imports)]
+        #[qproperty(bool, exports)]
         // The article. The serial changes with the article or its text, not with a re-render for the theme.
         #[qproperty(i32, article_serial)]
         #[qproperty(QString, title)]
@@ -82,12 +85,17 @@ pub mod qobject {
         #[qproperty(QString, picker_rows)]
         #[qproperty(i32, picker_cursor)]
         #[qproperty(bool, picker_history)]
+        // What the picker says with no rows, and whether it then offers to import.
+        #[qproperty(QString, picker_empty)]
+        #[qproperty(bool, picker_offers_import)]
         // Unread items come newest first.
         #[qproperty(bool, newest_first)]
         // Help, confirm, toast
         // JSON `[[keys, action], …]`.
         #[qproperty(QString, help_lines)]
         #[qproperty(QString, confirm_text)]
+        // The import and export panel: see `app::TransferView`, as JSON; "null" with nothing going on.
+        #[qproperty(QString, transfer)]
         #[qproperty(QString, toast_message)]
         #[qproperty(bool, toast_error)]
         #[qproperty(i32, toast_serial)]
@@ -198,6 +206,15 @@ pub mod qobject {
         /// A click in the image viewer.
         #[qinvokable]
         fn close_viewer(self: Pin<&mut Model>);
+        /// The import and export panel's main button, the same as Enter.
+        #[qinvokable]
+        fn transfer_action(self: Pin<&mut Model>);
+        /// Its Cancel or Close, or a click beside it.
+        #[qinvokable]
+        fn cancel_transfer(self: Pin<&mut Model>);
+        /// What the file dialog came up with: a `file:` URL, or a path.
+        #[qinvokable]
+        fn feed_file(self: Pin<&mut Model>, file: &QString);
         #[qinvokable]
         fn dismiss_toast(self: Pin<&mut Model>, serial: i32);
         /// The window regained focus or the system appearance changed (macOS follows the theme this way).
@@ -210,6 +227,9 @@ pub mod qobject {
         fn scroll_page(self: Pin<&mut Model>, up: bool);
         #[qsignal]
         fn quit_requested(self: Pin<&mut Model>);
+        /// Bring up a file dialog, to save to or to open.
+        #[qsignal]
+        fn choose_feed_file(self: Pin<&mut Model>, saving: bool);
     }
 
     impl cxx_qt::Threading for Model {}
@@ -258,6 +278,8 @@ pub struct ModelRust {
     position: QString,
     readeck: bool,
     refreshes: bool,
+    imports: bool,
+    exports: bool,
     article_serial: i32,
     title: QString,
     url: QString,
@@ -278,9 +300,12 @@ pub struct ModelRust {
     picker_rows: QString,
     picker_cursor: i32,
     picker_history: bool,
+    picker_empty: QString,
+    picker_offers_import: bool,
     newest_first: bool,
     help_lines: QString,
     confirm_text: QString,
+    transfer: QString,
     toast_message: QString,
     toast_error: bool,
     toast_serial: i32,
@@ -366,6 +391,8 @@ impl Default for ModelRust {
             position: QString::default(),
             readeck: false,
             refreshes: true,
+            imports: false,
+            exports: false,
             article_serial: 0,
             title: QString::default(),
             url: QString::default(),
@@ -386,9 +413,12 @@ impl Default for ModelRust {
             picker_rows: QString::from("[]"),
             picker_cursor: 0,
             picker_history: false,
+            picker_empty: QString::default(),
+            picker_offers_import: false,
             newest_first: false,
             help_lines: QString::from("[]"),
             confirm_text: QString::default(),
+            transfer: QString::from("null"),
             toast_message: QString::default(),
             toast_error: false,
             toast_serial: 0,
@@ -618,6 +648,26 @@ impl qobject::Model {
         self.sync();
     }
 
+    pub fn transfer_action(mut self: Pin<&mut Self>) {
+        let fx = self.as_mut().state().app.transfer_action();
+        self.run(fx);
+    }
+
+    pub fn cancel_transfer(mut self: Pin<&mut Self>) {
+        let fx = self.as_mut().state().app.cancel_transfer();
+        self.run(fx);
+    }
+
+    /// With `false`: `FileDialog` has been told not to ask about a file that's there, so that it's always asked in
+    /// one place, by the core.
+    pub fn feed_file(mut self: Pin<&mut Self>, file: &QString) {
+        let file = file.to_string();
+        let path = url::Url::parse(&file).ok().filter(|u| u.scheme() == "file").and_then(|u| u.to_file_path().ok());
+        let path = path.map_or(file, |path| path.display().to_string());
+        let fx = self.as_mut().state().app.feed_file(&path, false);
+        self.run(fx);
+    }
+
     pub fn dismiss_toast(mut self: Pin<&mut Self>, serial: i32) {
         self.as_mut().state().app.dismiss_toast(u64::try_from(serial).unwrap_or(0));
         self.sync();
@@ -634,6 +684,7 @@ impl qobject::Model {
                 }
                 Effect::ScrollPage { up } => self.as_mut().scroll_page(up),
                 Effect::Quit => self.as_mut().quit_requested(),
+                Effect::ChooseFeedFile(file) => self.as_mut().choose_feed_file(file == FeedFile::Export),
                 effect => {
                     let backend = Arc::clone(&self.as_mut().state().backend);
                     let qt = self.qt_thread();
@@ -676,6 +727,8 @@ impl qobject::Model {
         let (window_title, label, position, readeck) =
             (app.window_title(), app.selection_label().to_string(), app.position(), app.readeck());
         let refreshes = app.capabilities().refresh;
+        let (imports, exports) = (app.capabilities().import_feeds, app.capabilities().export_feeds);
+        let transfer = json(&app.transfer_view());
         let help = serde_json::to_string(&app.help_lines()).unwrap_or_else(|_| "[]".into());
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
@@ -715,6 +768,9 @@ impl qobject::Model {
         self.as_mut().set_position(qs(&position));
         self.as_mut().set_readeck(readeck);
         self.as_mut().set_refreshes(refreshes);
+        self.as_mut().set_imports(imports);
+        self.as_mut().set_exports(exports);
+        self.as_mut().set_transfer(qs(&transfer));
         self.as_mut().set_help_lines(qs(&help));
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
@@ -821,6 +877,9 @@ impl qobject::Model {
         let rows = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into());
         let (cursor, history) = (to_i32(s.app.picker_cursor()), s.app.picker_mode() == Mode::History);
         let newest_first = s.app.newest_first();
+        let (empty, offers_import) = (s.app.picker_empty_text(), s.app.offers_import());
+        self.as_mut().set_picker_empty(qs(&empty));
+        self.as_mut().set_picker_offers_import(offers_import);
         self.as_mut().set_picker_state(qs(state));
         self.as_mut().set_picker_error(qs(&error));
         self.as_mut().set_picker_rows(qs(&rows));

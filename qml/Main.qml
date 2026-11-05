@@ -41,6 +41,7 @@ ApplicationWindow {
         Component.onCompleted: start()
         onScrollPage: up => reader.scrollPage(up ? -1 : 1)
         onQuitRequested: Qt.quit()
+        onChooseFeedFile: saving => feedFileDialog.ask(saving)
         // The search box takes the keyboard itself (SearchPanel.qml).
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
         // A step's fields go with it (Onboarding.qml), and Connect's take the keyboard themselves.
@@ -169,6 +170,7 @@ ApplicationWindow {
             sourceComponent: SearchPanel { ui: win }
         }
         Help { ui: win; anchors.fill: parent; visible: model.overlay === "help" }
+        Transfer { ui: win; anchors.fill: parent; visible: model.overlay === "transfer" }
         Confirm { ui: win; anchors.fill: parent; visible: model.overlay === "confirm" }
         // Over everything while it's there: nothing is behind it yet. Made when it opens, so a field that's gone
         // keeps no focus.
@@ -178,6 +180,18 @@ ApplicationWindow {
             sourceComponent: Onboarding { ui: win }
         }
         Toast { ui: win; anchors.fill: parent }
+    }
+
+    // Made when it's asked for, and made again each time for the way it's going.
+    Loader {
+        id: feedFileDialog
+        active: false
+        function ask(saving) {
+            active = false
+            setSource("FeedFileDialog.qml", { model: model, saving: saving, suggested: JSON.parse(model.transfer)?.suggested ?? "" })
+            active = true
+        }
+        onLoaded: item.open()
     }
 
     /// The key as the web's `KeyboardEvent.key` names it, which is what keys.rs binds.
@@ -217,7 +231,8 @@ ApplicationWindow {
     // ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (Enter: open the first
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
     // loads and draws. Besides keys: type:text goes into the field with the focus, accept is Enter in that field, tab
-    // moves to the next one, row:n presses a row of first run, and find is Settings' way to the address box.
+    // moves to the next one, row:n presses a row of first run, find is Settings' way to the address box, and file:path
+    // is what the file dialog would hand over.
     Timer {
         id: snapshotKeys
         property var pending: null
@@ -242,6 +257,8 @@ ApplicationWindow {
                 model.chooseOnboarding(Number(name.slice(4)))
             else if (name === "find")
                 model.findServer()
+            else if (name?.startsWith("file:"))
+                model.feedFile(name.slice(5))
             else if (name !== undefined)
                 model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
             if (pending.length === 0) {

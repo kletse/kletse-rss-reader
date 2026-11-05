@@ -7,6 +7,8 @@ import AppKit
 enum Keyboard {
     private static var monitor: Any?
     static weak var settingsWindow: NSWindow?
+    /// An open or save panel, which keeps its keys too: Enter there isn't Enter in the core.
+    static weak var filePanel: NSWindow?
 
     static func install(model: Model) {
         guard monitor == nil else { return }
@@ -18,6 +20,7 @@ enum Keyboard {
 
     private static func handle(_ event: NSEvent, model: Model) -> Bool {
         if let settingsWindow, event.window === settingsWindow { return false }
+        if let filePanel, event.window === filePanel { return false }
         guard let name = name(of: event) else { return false }
         let flags = event.modifierFlags
         return model.key(

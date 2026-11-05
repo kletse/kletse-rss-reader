@@ -66,7 +66,7 @@ final class Model {
     }
 
     /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
-    /// "search", "order".
+    /// "search", "order", "import", "export".
     func press(_ button: String) { send(["cmd": "press", "button": button]) }
     func chooseRow(_ row: Int) { send(["cmd": "choose_row", "row": row]) }
     func pickerBackdrop() { send(["cmd": "picker_backdrop"]) }
@@ -80,6 +80,34 @@ final class Model {
     func cancelSearch() { send(["cmd": "cancel_search"]) }
     func viewImage(_ src: String) { send(["cmd": "view_image", "src": src]) }
     func closeViewer() { send(["cmd": "close_viewer"]) }
+    func transferAction() { send(["cmd": "transfer_action"]) }
+    func cancelTransfer() { send(["cmd": "cancel_transfer"]) }
+    /// `replace`: a save panel has asked about a file that's there already.
+    func feedFile(_ path: String, replace: Bool = false) {
+        send(["cmd": "feed_file", "path": path, "replace": replace])
+    }
+
+    /// The system's open or save panel. It's not a sheet, for the same reasons as `Floating`, and cancelling it leaves
+    /// the panel behind it asking.
+    private func chooseFile(saving: Bool) {
+        let panel: NSSavePanel
+        if saving {
+            panel = NSSavePanel()
+            panel.nameFieldStringValue = state?.transfer?.suggested ?? ""
+        } else {
+            let opening = NSOpenPanel()
+            opening.canChooseDirectories = false
+            opening.allowsMultipleSelection = false
+            panel = opening
+        }
+        Keyboard.filePanel = panel
+        Task { @MainActor in
+            let response = await panel.begin()
+            Keyboard.filePanel = nil
+            if response == .OK, let url = panel.url { feedFile(url.path, replace: saving) }
+        }
+    }
+
     func dismissToast(_ serial: Int) { send(["cmd": "dismiss_toast", "serial": serial]) }
 
     func submitSettings(_ values: SettingsValues) {
@@ -115,6 +143,8 @@ final class Model {
                 scrollSerial += 1
             case "show_settings":
                 settingsRequests += 1
+            case "choose_import_file", "choose_export_file":
+                chooseFile(saving: event == "choose_export_file")
             case "quit":
                 quit()
             default:

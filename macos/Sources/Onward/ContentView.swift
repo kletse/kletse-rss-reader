@@ -1,5 +1,5 @@
 // The window: the toolbar, the reader (an article or a message; on first run, onboarding), and what goes over it: the
-// feeds picker, the keys and the search box (`Floating`), the confirm dialog (an alert), the image viewer and toasts.
+// feeds picker, the keys, the search box and importing feeds (`Floating`), the confirm dialog (an alert), the image viewer and toasts.
 // The floating ones aren't sheets: a sheet disables the window's red button, ignores clicks beside it and holds up a
 // quit from the Dock.
 import SwiftUI
@@ -11,7 +11,7 @@ struct ContentView: View {
 
     /// Something floats over the reader.
     private var floating: Bool {
-        model.state?.pickerShown == true || ["help", "search"].contains(model.state?.overlay)
+        model.state?.pickerShown == true || ["help", "search", "transfer"].contains(model.state?.overlay)
     }
 
     var body: some View {
@@ -41,6 +41,8 @@ struct ContentView: View {
                 }
             } else if state?.overlay == "search" {
                 Floating(dismiss: model.cancelSearch) { SearchView(model: model) }
+            } else if state?.overlay == "transfer", let transfer = state?.transfer {
+                Floating(dismiss: model.cancelTransfer) { TransferPanel(model: model, transfer: transfer) }
             }
         }
         .overlay {

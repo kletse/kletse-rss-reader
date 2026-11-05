@@ -15,17 +15,37 @@ and how to build it is in the [README](README.md).
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.
-- **`src/providers.rs` is what the windows draw the form and first run from:** the kinds of server with their fields
-  (`fields`, all of them, and `asks`, what Connect needs once it knows the address), help and links, Readeck's fields,
-  and first run's words. A window never names a field: it gets the table, keeps a value per `key`, and hands them all
-  back (`App::submit_fields`). A new field or row is one edit there, plus a slot in `SettingsValues`. A hosted service
-  is one row in `HOSTED`, with its `fixed_url`, and goes there only after it passes against a real account: there is
-  none yet.
+- **`src/providers.rs` is what the windows draw the form and first run from:** the services Connect lists (`SERVICES`), the
+  kinds of server with their fields (`fields`, all of them, and `asks`, what Connect needs once it knows the address), help
+  and links, Readeck's fields, and first run's words. A window never names a field: it gets the table, keeps a value per
+  `key`, and hands them all back (`App::submit_fields`). A new field or row is one edit there, plus a slot in
+  `SettingsValues`. A hosted service is one row in `HOSTED`, under its `Service`, with its `fixed_url`, and that's all it
+  takes: that service then gets `Step::Hosting`, its own choice of hosted or my own server, and a service with no row goes
+  straight to its address. It goes there only after it passes against a real account: there is none yet, so the tests
+  bring their own (`App::offer_hosted`). Only what has passed is named in `SERVICES`, greyed out or otherwise, and a test
+  holds the words to that.
+- **Connect starts from a list** (`Step::Services`, drawn from `App::choose_view()`, as `Step::Hosting` is). A row sets
+  `Connect::service`, which is all that scopes Connect: its title, its words and its address `Field`, which is always the one
+  `FieldKey::Address`, so what's typed stays when you change your mind. `None` is the address box as it was, from the quiet
+  last row and from Settings. Detection is the same walk: its answer is then checked against the choice (`App::wrong_pick`).
+  Two services with the same `server` aren't a wrong pick, which is why `Other` takes FreshRSS. A wrong pick isn't an error:
+  the answer waits in `Connect::switch`, no field is shown, and only `RowDoes::Switch`, or Enter, which does the same, goes
+  on, from what was found and with no new request. **No username, password or key goes anywhere before that**, and a test
+  says so with the fields full. An address that answers as nothing stays on the box with the message, and by hand is then
+  the chosen service's form, filled from what the address could tell (`fill_by_hand`).
 - **Connect has stages of its own** (`Stage` in app.rs): the address box, then what that server needs, or the whole form
   by hand. The windows draw `App::connect_view()` and nothing else decides: `submit_settings` does what the stage is for,
   and a row goes through `choose_onboarding`. `address_edited` is told about every change to the box and sends nothing;
   only Enter or the button looks. `latest_probe` is to probes what `latest_load` is to loads. Settings keeps the direct
   form, with `find_server` as its way here; Esc goes back there (`from_settings`).
+- **A service's icon is a letter on a tile, and not its logo.** `icon` in `SERVICES` is drawn by `qml/ServiceIcon.qml` and
+  `ServiceIcon` in `macos/Sources/Onward/ServiceIcon.swift`, in the theme's colours; those two are all that change if a logo
+  ever comes in, one file per window, plus the file itself in `build.rs` and the Mac bundle. As of 2026-11-05 neither project's
+  terms clearly allow it. Miniflux's repository is [Apache-2.0](https://github.com/miniflux/v2/blob/main/LICENSE), whose
+  section 6 gives no right to its marks, and its logo also lives in a [website repository](https://github.com/miniflux/website)
+  with no licence. FreshRSS is [AGPL-3.0](https://github.com/FreshRSS/FreshRSS/blob/edge/LICENSE.txt), with no separate terms
+  for a logo that [its site credits](https://freshrss.org/legal.html) to two designers. Nothing here may suggest that either
+  project endorses Onward.
 - **Detection is `src/detect.rs`,** on `detection_client()`, which follows no redirect: not `api_client`, not the plain
   one. Its tests are what real servers answered, byte for byte, so change them only against a running server. The order
   matters: the FreshRSS checks with the dummy `Authorization`, CommaFeed, `GET <base>/` (which also recognises the other
@@ -34,12 +54,12 @@ and how to build it is in the [README](README.md).
 - **A Miniflux password lives as long as one request.** It goes out in `Effect::MintKey` and is never in `form.values`.
   The window's copy goes when `SettingsForm::refill` is bumped: `bridge.rs`, `ffi.rs` and `tui/ui.rs` then fill the form
   from `values` again. Minting uses `detection_client()` too, so a redirect can't take the password anywhere.
-- **First run is `Overlay::Onboarding` plus `Step`** (Welcome, Connect, NoServer) in app.rs; Esc steps back and Welcome
-  is the end of that. "Try it with sample articles" is `Effect::UseSamples`, an effect with an answer because effects
+- **First run is `Overlay::Onboarding` plus `Step`** (Welcome, Services, Hosting, Connect, NoServer) in app.rs; Esc steps
+  back and Welcome is the end of that. "Try it with sample articles" is `Effect::UseSamples`, an effect with an answer because effects
   run concurrently: `Outcome::SamplesSwitched` is what opens the picker, so nothing reaches the backend before it
   switched. `App::samples` is that choice and only that. `ONWARD_DEMO=1` sets `Backend`'s demo from the start, skips first
   run, and has no marker and no way to Connect, for UI work. In the samples `Action::Settings` means leave them, into
-  Connect: a save there would go nowhere. `leave_samples` starts from a new `App`, so a field added later is left behind
+  the list of services: a save there would go nowhere. `leave_samples` starts from a new `App`, so a field added later is left behind
   too; only `latest_load` and the like carry over. Prefs aren't saved in the samples, and go back when you leave.
 - **Feed lists are `Overlay::Transfer`** with `Transfer` in app.rs (`TransferStage`: Asking, Working, Done), drawn from
   `App::transfer_view()`. `src/opml.rs` holds the file side: `read_file` checks before anything goes out, `write_file`
@@ -225,12 +245,14 @@ The feeds panel needs one too, with feeds on it: `/feeds-miniflux` and `/feeds-f
 back. `"m"` (the panel), `"m j j"` (a feed's keys), `"a type:http://feeds.example/alpha.xml accept x x"` (a refusal), `"m j d x"` (the
 question about a category; `x` waits for the count), `"m j j m"` (where it can go), `"m j j m ArrowUp Enter"` (a new category).
 First run works the same with `XDG_CONFIG_HOME` and `XDG_STATE_HOME` on an empty folder and no `ONWARD_DEMO`: `" "` (the first
-screen), `"ArrowDown Enter"` (Connect), `"ArrowDown Enter row:0"` (the whole form), `"ArrowUp Enter"` (no server), `"ArrowUp
-Enter Enter"` (a link opened; that does run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the
-marker), `"Enter Enter ,"` (leaving them). Keys can also be `type:text` (into the field with the focus), `accept` (Enter in
-that field), `tab`, `row:n` (a row of first run) and `find` (Settings' way to the address box). A word that's no key waits a
-tick, which a probe needs: `"ArrowDown Enter type:127.0.0.1:18399/miniflux accept x x"`. `.github/fake-server.py` answers as
-the real servers did, one path each, and that's what CI walks; to run it, start it first.
+screen), `"ArrowDown Enter"` (the list of services), `"ArrowDown Enter row:0"` (Connect for Miniflux; `row:1` FreshRSS, `row:2`
+Other, `row:3` the address box with nothing chosen), `"ArrowDown Enter row:3 row:0"` (the whole form), `"ArrowUp Enter"` (no
+server), `"ArrowUp Enter Enter"` (a link opened; that does run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample
+article, with the marker), `"Enter Enter ,"` (leaving them). Keys can also be `type:text` (into the field with the focus),
+`accept` (Enter in that field), `tab`, `row:n` (a row of first run) and `find` (Settings' way to the address box). A word
+that's no key waits a tick, which a probe needs: `"ArrowDown Enter row:0 type:127.0.0.1:18399/miniflux accept x x"`, and a
+wrong pick is the same with `/freshrss`, with `row:0` as the switch. `.github/fake-server.py` answers as the real servers did,
+one path each, and that's what CI walks; to run it, start it first.
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
@@ -247,6 +269,9 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
 
 ## Traps found so far
 
+- **A step's fields are made when the step changes**, so `sync_step` in bridge.rs goes after `sync_settings`: otherwise a new
+  field loads what the window held before, and its `edited` tells the core the old address. That's what a hosted row would
+  hit, as it fills the box and looks at once.
 - **Names in this QML module shadow Qt's.** `qml/Settings.qml` hid QtCore's `Settings` until `Main.qml` imported
   QtCore `as Core`. Before naming a new QML file, check that Qt Quick, Controls and QtCore have no type by that name
   (newer Controls have a `SearchField`, hence `SearchPanel.qml`).
@@ -255,6 +280,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
   takes the focus itself on creation, so a hidden field never keeps it.
 - **Don't redeclare properties Qt types already have.** `property string icon` on a `Button` fails, because
   `AbstractButton.icon` is FINAL. The same goes for `width` on `TextMetrics` and the like.
+- **A qproperty's name can't start with `connect_` plus another's.** cxx-qt makes `connect_title_changed` for `title`, so a
+  `connect_title` property clashes with it. Hence `connect_heading`.
 - **Size loops end up as size zero.** A control whose content width depends on its own width, such as a label
   `width: Math.min(implicitWidth, availableWidth)` inside a Button's `contentItem`, quietly collapses to nothing.
   Compute `implicitWidth` from children's implicit widths only. Binding loops on `height` show up as warnings, so

@@ -2,7 +2,8 @@
 //! around them. It's data, here once, so that a new row or field means one edit rather than one in the core, the Qt
 //! bridge, the C interface, QML, Swift and the terminal. What it all does is in app.rs.
 //!
-//! A hosted service gets a row only once it has passed against a real account.
+//! A service is named here only once it has passed against a real account: first run says what Onward supports, so
+//! that list stays true. The same goes for a hosted one.
 
 use crate::config::Server;
 use crate::feeds::{Capabilities, FeedOps};
@@ -12,7 +13,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldKey {
-    /// The box first run starts from, whatever the server turns out to be.
+    /// The address box of Connect, whatever the server turns out to be.
     Address,
     MinifluxUrl,
     MinifluxApiKey,
@@ -85,8 +86,6 @@ pub struct Provider {
     pub label: &'static str,
     /// Where the help nearby names the servers: the Mac's picker, section titles.
     pub short_label: &'static str,
-    /// The address of a hosted service, which then needs no address field: see `HOSTED`.
-    pub fixed_url: Option<&'static str>,
     pub protocol: Server,
     /// All of it, for filling in by hand.
     pub fields: &'static [Field],
@@ -111,7 +110,6 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
         id: "miniflux",
         label: "Miniflux",
         short_label: "Miniflux",
-        fixed_url: None,
         protocol: Server::Miniflux,
         fields: &[
             field(FieldKey::MinifluxUrl, "Miniflux URL", "https://miniflux.example.com", ""),
@@ -133,7 +131,6 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
         id: "greader",
         label: "Google Reader API (FreshRSS, …)",
         short_label: "Google Reader API",
-        fixed_url: None,
         protocol: Server::GReader,
         fields: &[
             field(
@@ -195,17 +192,88 @@ pub fn provider(server: Server) -> &'static Provider {
     &PROVIDERS[server.place()]
 }
 
-/// Hosted services, offered under the address box: one row here, with its `fixed_url`, is all a new one takes. A row
-/// goes in only once it has passed against a real account, and none has.
-pub const HOSTED: &[Provider] = &[];
+/// A row of the list Connect opens on, and what Connect is like once it's chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Service {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// One honest line under the label.
+    pub line: &'static str,
+    /// What the row's tile shows: `qml/ServiceIcon.qml` and `ServiceIcon.swift` draw it, and a terminal has none. It's
+    /// not a logo, and one takes its project's leave: see AGENTS.md.
+    pub icon: &'static str,
+    /// The kind of server it leads to. Two services with the same one aren't a wrong pick of each other.
+    pub server: Server,
+    pub title: &'static str,
+    pub text: &'static str,
+    pub address: Field,
+}
 
-/// The box first run opens with. What comes after it depends on what's there.
-pub const ADDRESS: Field = field(
-    FieldKey::Address,
-    "Server address",
-    "rss.example.com",
-    "The one you open in your browser. A short name, a port, a path or a page copied from the address bar will do.",
-);
+const ADDRESS_HELP: &str =
+    "The one you open in your browser. A short name, a port, a path or a page copied from the address bar will do.";
+
+pub const MINIFLUX: Service = Service {
+    id: "miniflux",
+    label: "Miniflux",
+    line: "Your own server, with everything Onward can do.",
+    icon: "M",
+    server: Server::Miniflux,
+    title: "Connect Miniflux",
+    text: "Onward checks the address before it asks you for anything.",
+    address: field(FieldKey::Address, "Miniflux address", "miniflux.example.com", ADDRESS_HELP),
+};
+
+pub const FRESHRSS: Service = Service {
+    id: "freshrss",
+    label: "FreshRSS",
+    line: "Your own server. Onward can't fetch full articles or ask for a refresh here.",
+    icon: "F",
+    server: Server::GReader,
+    title: "Connect FreshRSS",
+    text: "Onward checks the address, then asks for your username and API password.",
+    address: field(FieldKey::Address, "FreshRSS address", "freshrss.example.com", ADDRESS_HELP),
+};
+
+pub const OTHER: Service = Service {
+    id: "other",
+    label: "Other",
+    line: "Any server with the Google Reader API",
+    icon: "…",
+    server: Server::GReader,
+    title: "Connect a Google Reader server",
+    text: "Onward looks at the address for what it can tell, and you fill in the rest.",
+    address: field(FieldKey::Address, "Server address", "rss.example.com", ADDRESS_HELP),
+};
+
+/// What Connect opens on, top to bottom. A new row goes in once it has passed against a real account.
+pub const SERVICES: [Service; 3] = [MINIFLUX, FRESHRSS, OTHER];
+
+pub const SERVICES_TITLE: &str = "Connect your feeds";
+pub const SERVICES_TEXT: &str = "Onward reads your feeds from a server. These are the ones it works with.";
+/// The quiet last row, which is the address box with nothing chosen.
+pub const ANY_SERVICE_ROW: &str = "Not sure what you have? Find it by its address";
+
+/// A service run for you, offered with its `Service` on a screen of its own: use this, or use my own server. One row
+/// here is all a new one takes, and a service with none goes straight to its address. A row goes in only once it has
+/// passed against a real account, and none has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hosted {
+    /// The `Service` it comes under.
+    pub service: &'static str,
+    pub label: &'static str,
+    pub line: &'static str,
+    pub fixed_url: &'static str,
+}
+
+pub const HOSTED: &[Hosted] = &[];
+
+pub const HOSTING_TITLE: &str = "Where is yours?";
+pub const HOSTING_TEXT: &str = "Onward only needs to know where to look.";
+pub const OWN_SERVER_ROW: &str = "Use my own server";
+
+/// The box Connect has with no service chosen: the quiet row, and Settings' way here. What comes after it depends on
+/// what's there.
+pub const ADDRESS: Field = field(FieldKey::Address, "Server address", "rss.example.com", ADDRESS_HELP);
 
 /// Readeck isn't a feed server, and it's not on the way to a first article: it's in Settings only.
 pub const READECK: [Field; 2] = [
@@ -265,6 +333,33 @@ pub const NO_PASSWORD_ROW: &str = "I don't sign in with a password";
 pub const USE_PASSWORD_ROW: &str = "Use my username and password";
 pub const KEY_PAGE_ROW: &str = "Open Miniflux's API key page";
 pub const OPEN_FRESHRSS_ROW: &str = "Open FreshRSS";
+/// What the main button says when the address is another service: Enter does what the row does.
+pub const SWITCH_ACTION: &str = "Switch";
+
+/// The row that goes from the service chosen to the one that's there.
+pub fn switch_row(found: &Service) -> String {
+    format!("Switch to {}", found.label)
+}
+
+/// What Connect says when the address isn't the service that was chosen. It isn't a failure, and it asks for nothing.
+pub fn wrong_pick(chosen: &Service, found: &Service) -> String {
+    if chosen.id == OTHER.id {
+        format!(
+            "This is {name}, and Onward does more with it directly than through the Google Reader API.",
+            name = found.label
+        )
+    } else {
+        format!("This is {}, not {}.", found.label, chosen.label)
+    }
+}
+
+/// `Other`, at an address that's nothing Onward knows, which is what a Google Reader server can look like from outside.
+pub fn other_unknown(base: &str) -> String {
+    format!(
+        "Onward reached {base}, and can't tell from outside what it is. If it has the Google Reader API, enter the \
+         details yourself. If your server lives under a path, add it, as in rss.example.com/reader."
+    )
+}
 
 /// An unset API password and a wrong one look the same from here, so this covers both.
 pub fn freshrss_refused(web: &str) -> String {
@@ -347,10 +442,6 @@ pub struct FirstRun {
     pub welcome_title: &'static str,
     pub welcome_text: &'static str,
     pub welcome: [WelcomeRow; 3],
-    pub connect_title: &'static str,
-    pub connect_text: &'static str,
-    pub by_hand_text: &'static str,
-    pub address: Field,
     /// Settings' way to the address box.
     pub find_server: &'static str,
     pub no_server: NoServer,
@@ -360,10 +451,6 @@ pub const FIRST_RUN: FirstRun = FirstRun {
     welcome_title: WELCOME_TITLE,
     welcome_text: WELCOME_TEXT,
     welcome: WELCOME,
-    connect_title: CONNECT_TITLE,
-    connect_text: CONNECT_TEXT,
-    by_hand_text: BY_HAND_TEXT,
-    address: ADDRESS,
     find_server: TO_ADDRESS_ROW,
     no_server: NO_SERVER,
 };
@@ -382,14 +469,45 @@ mod tests {
 
     #[test]
     fn every_field_is_on_some_form_and_named_as_its_json() {
-        let shown = std::iter::once(&ADDRESS)
-            .chain(PROVIDERS.iter().flat_map(|p| p.fields.iter().chain(p.asks)))
-            .chain(&READECK);
+        let boxes = SERVICES.iter().map(|s| &s.address).chain(std::iter::once(&ADDRESS));
+        let shown = boxes.chain(PROVIDERS.iter().flat_map(|p| p.fields.iter().chain(p.asks))).chain(&READECK);
         let keys: Vec<FieldKey> = shown.map(|f| f.key).collect();
         for key in FieldKey::ALL {
             assert!(keys.contains(&key), "{key:?} is on no form");
             assert_eq!(serde_json::to_value(key).unwrap(), key.name());
         }
+    }
+
+    #[test]
+    fn every_service_has_the_one_address_box() {
+        for service in SERVICES {
+            assert_eq!(service.address.key, FieldKey::Address, "{}", service.id);
+            assert!(!service.address.help.is_empty() && !service.address.placeholder.is_empty());
+            assert!(!service.icon.is_empty() && !service.line.is_empty());
+        }
+    }
+
+    /// The list says what Onward supports, so it's held to what has passed against a real account.
+    #[test]
+    fn the_list_names_only_what_passed_and_nothing_is_hosted_yet() {
+        let ids: Vec<&str> = SERVICES.iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["miniflux", "freshrss", "other"]);
+        let words = SERVICES
+            .iter()
+            .flat_map(|s| [s.label, s.line, s.title, s.text, s.address.label, s.address.placeholder, s.address.help]);
+        let words = words.chain([SERVICES_TITLE, SERVICES_TEXT, ANY_SERVICE_ROW]);
+        let words = words.collect::<Vec<_>>().join(" ").to_lowercase();
+        for name in ["bazqux", "old reader", "feedbin", "inoreader", "newsblur", "hosted", "coming soon"] {
+            assert!(!words.contains(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_wrong_pick_says_what_is_there() {
+        assert_eq!(wrong_pick(&MINIFLUX, &FRESHRSS), "This is FreshRSS, not Miniflux.");
+        assert_eq!(wrong_pick(&FRESHRSS, &MINIFLUX), "This is Miniflux, not FreshRSS.");
+        assert!(wrong_pick(&OTHER, &MINIFLUX).contains("Google Reader API"));
+        assert_eq!(switch_row(&FRESHRSS), "Switch to FreshRSS");
     }
 
     /// Spike S3 hasn't run: a hosted row needs a real account first.
@@ -401,7 +519,8 @@ mod tests {
     #[test]
     fn what_first_run_asks_a_miniflux_user_never_says_api_key() {
         let words = provider(Server::Miniflux).asks.iter().flat_map(|f| [f.label, f.help, f.placeholder]);
-        for text in words.chain([ADDRESS.label, ADDRESS.help, CONNECT_TITLE, CONNECT_TEXT]) {
+        let boxes = [ADDRESS.label, ADDRESS.help, CONNECT_TITLE, CONNECT_TEXT, MINIFLUX.title, MINIFLUX.text];
+        for text in words.chain(boxes).chain([MINIFLUX.line, MINIFLUX.address.label, MINIFLUX.address.help]) {
             assert!(!text.to_lowercase().contains("api key"), "{text}");
         }
     }

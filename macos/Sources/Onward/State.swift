@@ -182,16 +182,40 @@ struct ToastInfo: Decodable {
 
 /// Where first run is, and all its words (src/providers.rs).
 struct OnboardingInfo: Decodable {
-    /// "welcome", "connect" or "no_server".
+    /// "welcome", "services", "hosting", "connect" or "no_server".
     let step: String
     /// The row the arrows are on.
     let cursor: Int
     let words: FirstRunWords
+    /// The list, on "services" and "hosting".
+    let choose: ChooseInfo
     let connect: ConnectInfo
+}
+
+/// The list of services, or the choice of a hosted one (`app::ChooseView`).
+struct ChooseInfo: Decodable {
+    let title: String
+    let text: String
+    let rows: [ChoiceRowInfo]
+}
+
+struct ChoiceRowInfo: Decodable {
+    let id: String
+    let label: String
+    /// May be empty.
+    let line: String
+    /// What its tile shows, or empty for no tile.
+    let icon: String
+    let quiet: Bool
 }
 
 /// Connect as it stands: the core says what's on screen, and this keeps what's typed (`app::ConnectView`).
 struct ConnectInfo: Decodable {
+    let title: String
+    /// The line under it.
+    let intro: String
+    /// The address box, in the words of the service chosen.
+    let address: FieldInfo
     /// "address" for the address box with `fields` under it, or "by_hand" for the whole form.
     let stage: String
     /// What was found.
@@ -229,10 +253,6 @@ struct FirstRunWords: Decodable {
     let welcomeTitle: String
     let welcomeText: String
     let welcome: [WelcomeRow]
-    let connectTitle: String
-    let connectText: String
-    let byHandText: String
-    let address: FieldInfo
     let noServer: NoServerInfo
 }
 

@@ -9,7 +9,9 @@
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
-use crate::app::{App, ConnectView, Effect, FeedFile, KeyPress, Outcome, Overlay, PickerList, ToastKind, TransferView};
+use crate::app::{
+    App, ChooseView, ConnectView, Effect, FeedFile, KeyPress, Outcome, Overlay, PickerList, ToastKind, TransferView,
+};
 use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
@@ -341,11 +343,12 @@ struct ToastState {
 
 #[derive(Serialize)]
 struct Onboarding {
-    /// "welcome", "connect" or "no_server".
+    /// "welcome", "services", "hosting", "connect" or "no_server".
     step: &'static str,
     /// The row the arrows are on.
     cursor: usize,
     words: FirstRun,
+    choose: ChooseView,
     connect: ConnectView,
 }
 
@@ -605,6 +608,7 @@ impl Core {
                 step: app.step().name(),
                 cursor: app.step_cursor(),
                 words: FIRST_RUN,
+                choose: app.choose_view(),
                 connect: app.connect_view(),
             }),
             article,
@@ -762,7 +766,7 @@ pub unsafe extern "C" fn kr_free_string(reply: *mut c_char) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::app::ConnectRow;
+    use crate::app::{ChoiceRow, ConnectRow};
     use std::sync::atomic::AtomicUsize;
 
     static WAKES: AtomicUsize = AtomicUsize::new(0);
@@ -787,6 +791,9 @@ mod tests {
     #[test]
     fn first_run_reaches_swift_as_it_expects() {
         let connect = ConnectView {
+            title: "c",
+            intro: "i",
+            address: crate::providers::ADDRESS,
             stage: "address",
             text: "t".into(),
             note: "n".into(),
@@ -795,7 +802,9 @@ mod tests {
             action: "Continue",
             probing: false,
         };
-        let onboarding = Onboarding { step: "welcome", cursor: 0, words: FIRST_RUN, connect };
+        let row = ChoiceRow { id: "miniflux", label: "l", line: "s", icon: "M", quiet: false };
+        let choose = ChooseView { title: "t", text: "w", rows: vec![row] };
+        let onboarding = Onboarding { step: "welcome", cursor: 0, words: FIRST_RUN, choose, connect };
         let json = serde_json::to_value(&onboarding).unwrap();
         for path in [
             "/step",
@@ -803,11 +812,17 @@ mod tests {
             "/words/welcome_text",
             "/words/welcome/0/label",
             "/words/welcome/2/quiet",
-            "/words/connect_title",
-            "/words/connect_text",
-            "/words/by_hand_text",
-            "/words/address/key",
-            "/words/address/label",
+            "/choose/title",
+            "/choose/text",
+            "/choose/rows/0/id",
+            "/choose/rows/0/label",
+            "/choose/rows/0/line",
+            "/choose/rows/0/icon",
+            "/choose/rows/0/quiet",
+            "/connect/title",
+            "/connect/intro",
+            "/connect/address/key",
+            "/connect/address/label",
             "/words/no_server/title",
             "/connect/stage",
             "/connect/text",

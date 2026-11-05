@@ -260,8 +260,8 @@ impl Page {
 
     /// The address box, what it found, and what that server needs. Once there's a server, the box needs no help.
     fn connect(&mut self, form: &Form, view: &ConnectView, width: usize) {
-        let quiet = Field { help: "", ..providers::ADDRESS };
-        self.field(form, if view.fields.is_empty() { &providers::ADDRESS } else { &quiet }, width);
+        let quiet = Field { help: "", ..view.address };
+        self.field(form, if view.fields.is_empty() { &view.address } else { &quiet }, width);
         for said in [&view.text, &view.note] {
             if !said.is_empty() {
                 self.blank();
@@ -429,6 +429,23 @@ fn onboarding(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             }
             page.draw(frame, &form_foot("", "↑ ↓ and Enter · Ctrl+C to quit", w), column, false);
         }
+        Step::Services | Step::Hosting => {
+            let view = ui.app.choose_view();
+            page.head(view.title, view.text, problem, w);
+            for (n, row) in view.rows.iter().enumerate() {
+                let start = page.rows.len();
+                let style = if row.quiet { DIM } else { BOLD };
+                let line = Line::from(vec![mark(n == cursor), Span::styled(row.label, style)]);
+                page.rows.push(Row { line, ..Row::default() });
+                if !row.line.is_empty() {
+                    page.indented(row.line, DIM, w);
+                }
+                if n == cursor {
+                    page.focused = start..page.rows.len();
+                }
+            }
+            page.draw(frame, &form_foot("", "↑ ↓ and Enter · Esc to go back", w), column, false);
+        }
         Step::NoServer => {
             let panel = providers::NO_SERVER;
             page.head(panel.title, panel.text, problem, w);
@@ -455,8 +472,7 @@ fn onboarding(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         Step::Connect => {
             let view = ui.app.connect_view();
             let by_hand = view.stage == "by_hand";
-            let text = if by_hand { providers::BY_HAND_TEXT } else { providers::CONNECT_TEXT };
-            page.head(providers::CONNECT_TITLE, text, problem, w);
+            page.head(view.title, view.intro, problem, w);
             let (error, checking) = state.map_or(("", false), |s| (s.error.as_str(), s.checking));
             if let Some(form) = &ui.form {
                 if by_hand {

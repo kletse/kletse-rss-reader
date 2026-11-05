@@ -22,6 +22,8 @@ const QML: &[&str] = &[
     "qml/Toast.qml",
     "qml/Settings.qml",
     "qml/Onboarding.qml",
+    "qml/ServiceRow.qml",
+    "qml/ServiceIcon.qml",
     "qml/ServerForm.qml",
     "qml/FieldList.qml",
     "qml/Fieldset.qml",

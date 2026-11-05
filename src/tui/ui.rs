@@ -785,6 +785,9 @@ impl Ui {
                         form.connect = shown;
                         form.place_focus(&view);
                     }
+                } else {
+                    // Coming back gets the focus placed again: a row it was on may not be there.
+                    form.connect = ("", Vec::new());
                 }
             }
             _ => self.form = None,

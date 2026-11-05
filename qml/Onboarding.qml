@@ -1,8 +1,9 @@
-// First run: the three things the first screen offers, the server form, and what to do with no server. It has the whole
-// window, as there's nothing behind it yet. The core keeps the step and all the words (src/app.rs, src/providers.rs);
+// First run: the three things the first screen offers, the list of services, the server form, and what to do with no
+// server. It has the whole window, as there's nothing behind it yet. The core keeps the step and all the words
+// (src/app.rs, src/providers.rs);
 // a key or a click goes there, and Esc steps back. What's typed stays here, so stepping back doesn't lose it, while the
-// fields themselves are made when Connect opens: a hidden field would keep the keyboard. Connect starts from an address
-// and shows what the core says that server needs (`app::ConnectView`).
+// fields themselves are made when Connect opens: a hidden field would keep the keyboard. Connect starts from a service
+// (`app::ChooseView`), then an address, and shows what the core says that server needs (`app::ConnectView`).
 import QtQuick
 import QtQuick.Controls.Basic as T
 
@@ -13,6 +14,8 @@ Rectangle {
     readonly property var model: ui.model
     readonly property var words: JSON.parse(o.model.firstRun)
     readonly property string step: o.model.onboardingStep
+    readonly property bool choosing: o.step === "services" || o.step === "hosting"
+    readonly property var choices: JSON.parse(o.model.onboardingChoices)
     // Every field's value by its key, on screen or not: a Readeck saved earlier stays what it was.
     property var values: ({})
     property string server: "miniflux"
@@ -63,7 +66,8 @@ Rectangle {
                 topPadding: o.step === "welcome" ? 20 : 0
                 bottomPadding: 8
                 text: o.step === "welcome" ? o.words.welcome_title
-                    : o.step === "connect" ? o.words.connect_title : o.words.no_server.title
+                    : o.choosing ? o.choices.title
+                    : o.step === "connect" ? o.model.connectHeading : o.words.no_server.title
                 color: o.model.fgBright
                 font.family: o.ui.headingFont
                 font.pixelSize: 28
@@ -74,8 +78,8 @@ Rectangle {
                 width: parent.width
                 bottomPadding: 24
                 text: o.step === "welcome" ? o.words.welcome_text
-                    : o.step !== "connect" ? o.words.no_server.text
-                    : o.model.connectStage === "by_hand" ? o.words.by_hand_text : o.words.connect_text
+                    : o.choosing ? o.choices.text
+                    : o.step === "connect" ? o.model.connectIntro : o.words.no_server.text
                 color: o.model.fgDim
                 lineHeight: 1.4
                 wrapMode: Text.Wrap
@@ -89,7 +93,8 @@ Rectangle {
             }
             Loader {
                 width: parent.width
-                sourceComponent: o.step === "connect" ? connect : o.step === "no_server" ? noServer : welcome
+                sourceComponent: o.step === "connect" ? connect : o.step === "no_server" ? noServer
+                    : o.choosing ? choose : welcome
             }
         }
     }
@@ -111,6 +116,55 @@ Rectangle {
                     current: index === o.model.onboardingCursor
                     text: modelData.label
                     onClicked: o.model.chooseOnboarding(index)
+                }
+            }
+        }
+    }
+
+    // The list of services, or the choice of a hosted one. A quiet row has no tile and goes last.
+    Component {
+        id: choose
+        Column {
+            spacing: 8
+            Repeater {
+                model: o.choices.rows
+                delegate: Loader {
+                    required property var modelData
+                    required property int index
+                    width: parent?.width ?? 0
+                    sourceComponent: modelData.quiet ? quietRow : serviceRow
+                    Component {
+                        id: serviceRow
+                        ServiceRow {
+                            ui: o.ui
+                            label: modelData.label
+                            line: modelData.line
+                            mark: modelData.icon
+                            current: index === o.model.onboardingCursor
+                            onClicked: o.model.chooseOnboarding(index)
+                        }
+                    }
+                    Component {
+                        id: quietRow
+                        Button {
+                            ui: o.ui
+                            height: 38
+                            quiet: true
+                            current: index === o.model.onboardingCursor
+                            text: modelData.label
+                            onClicked: o.model.chooseOnboarding(index)
+                        }
+                    }
+                }
+            }
+            Row {
+                anchors.right: parent.right
+                topPadding: 8
+                Button {
+                    ui: o.ui
+                    text: "Back"
+                    tip: "Esc"
+                    onClicked: o.back()
                 }
             }
         }
@@ -216,7 +270,7 @@ Rectangle {
                 id: box
                 ui: o.ui
                 width: parent.width
-                fields: [o.words.address]
+                fields: [JSON.parse(o.model.connectAddress)]
                 values: o.values
                 readOnly: o.model.settingsChecking
                 onAccepted: o.submit()

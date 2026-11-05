@@ -123,12 +123,17 @@ pub mod qobject {
         #[qproperty(QString, form_values)]
         // Readeck's browser way in, as JSON: `grant::GrantView`.
         #[qproperty(QString, readeck_grant)]
-        // First run: "welcome", "connect" or "no_server", the row the arrows are on, and its words as JSON.
+        // First run: "welcome", "services", "hosting", "connect" or "no_server", the row the arrows are on, and its
+        // words as JSON. `onboarding_choices` is the list of the two that are one: see `app::ChooseView`.
         #[qproperty(QString, onboarding_step)]
         #[qproperty(i32, onboarding_cursor)]
         #[qproperty(QString, first_run)]
+        #[qproperty(QString, onboarding_choices)]
         // Connect as it stands: see `app::ConnectView`. Fields and rows are JSON, apart from the rest, so that a new
         // message doesn't make the fields again and lose what's being typed in them.
+        #[qproperty(QString, connect_heading)]
+        #[qproperty(QString, connect_intro)]
+        #[qproperty(QString, connect_address)]
         #[qproperty(QString, connect_stage)]
         #[qproperty(QString, connect_text)]
         #[qproperty(QString, connect_note)]
@@ -353,6 +358,10 @@ pub struct ModelRust {
     onboarding_step: QString,
     onboarding_cursor: i32,
     first_run: QString,
+    onboarding_choices: QString,
+    connect_heading: QString,
+    connect_intro: QString,
+    connect_address: QString,
     connect_stage: QString,
     connect_text: QString,
     connect_note: QString,
@@ -473,6 +482,10 @@ impl Default for ModelRust {
             onboarding_step: QString::from("welcome"),
             onboarding_cursor: 0,
             first_run: QString::from(&json(&providers::FIRST_RUN)),
+            onboarding_choices: QString::from("{\"rows\":[]}"),
+            connect_heading: QString::default(),
+            connect_intro: QString::default(),
+            connect_address: QString::from(&json(&providers::ADDRESS)),
             connect_stage: QString::from("address"),
             connect_text: QString::default(),
             connect_note: QString::default(),
@@ -772,7 +785,18 @@ impl qobject::Model {
         self.as_mut().sync_chrome();
         self.as_mut().sync_article();
         self.as_mut().sync_picker();
-        self.sync_settings();
+        self.as_mut().sync_settings();
+        self.sync_step();
+    }
+
+    /// After the settings: a step's fields are made when it comes, from the values the window has by then.
+    fn sync_step(mut self: Pin<&mut Self>) {
+        let (step, cursor) = {
+            let app = &self.as_mut().state().app;
+            (app.step().name(), to_i32(app.step_cursor()))
+        };
+        self.as_mut().set_onboarding_step(qs(step));
+        self.set_onboarding_cursor(cursor);
     }
 
     fn sync_chrome(mut self: Pin<&mut Self>) {
@@ -803,11 +827,15 @@ impl qobject::Model {
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
         let prefs = app.prefs();
-        let (step, cursor) = (app.step().name(), to_i32(app.step_cursor()));
         let shown_link = app.shown_link().unwrap_or_default().to_string();
         let samples = app.samples();
         let connect = app.connect_view();
+        let choices = app.choose_view();
 
+        self.as_mut().set_onboarding_choices(qs(&json(&choices)));
+        self.as_mut().set_connect_heading(qs(connect.title));
+        self.as_mut().set_connect_intro(qs(connect.intro));
+        self.as_mut().set_connect_address(qs(&json(&connect.address)));
         self.as_mut().set_connect_stage(qs(connect.stage));
         self.as_mut().set_connect_text(qs(&connect.text));
         self.as_mut().set_connect_note(qs(&connect.note));
@@ -815,8 +843,6 @@ impl qobject::Model {
         self.as_mut().set_connect_probing(connect.probing);
         self.as_mut().set_connect_fields(qs(&json(&connect.fields)));
         self.as_mut().set_connect_rows(qs(&json(&connect.rows)));
-        self.as_mut().set_onboarding_step(qs(step));
-        self.as_mut().set_onboarding_cursor(cursor);
         self.as_mut().set_shown_link(qs(&shown_link));
         self.as_mut().set_samples(samples);
         self.as_mut().set_screen(qs(screen));

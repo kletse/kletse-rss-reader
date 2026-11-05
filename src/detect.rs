@@ -117,6 +117,13 @@ impl Address {
     }
 }
 
+impl Address {
+    /// The first place it'd look, for filling in by hand before anything was looked at.
+    pub fn first_try(&self) -> Option<&str> {
+        self.tries.first().map(String::as_str)
+    }
+}
+
 /// A URL as a base to add paths to.
 fn bare(url: &Url) -> String {
     url.as_str().trim_end_matches('/').to_string()
@@ -219,6 +226,21 @@ pub enum Detected {
 }
 
 impl Detected {
+    /// Where what's there lives, for filling in by hand. FreshRSS is its API, which is the address that form wants.
+    pub fn url(&self) -> Option<String> {
+        match self {
+            Detected::FreshRss { api, .. } => Some(api.clone()),
+            Detected::Miniflux { base, .. }
+            | Detected::CantRead { base, .. }
+            | Detected::Gate { base, .. }
+            | Detected::Blocked { base }
+            | Detected::Unknown { base, .. }
+            | Detected::Certificate { base }
+            | Detected::NoAnswer { base, .. } => (!base.is_empty()).then(|| base.clone()),
+            Detected::Samples => None,
+        }
+    }
+
     /// What to tell someone when there's nothing to ask them for. `None` when there is.
     pub fn problem(&self) -> Option<String> {
         Some(match self {

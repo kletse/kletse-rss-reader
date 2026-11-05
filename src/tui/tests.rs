@@ -67,10 +67,19 @@ impl Screenful {
         screen
     }
 
-    /// A first run, at Connect.
-    fn at_connect(width: u16, height: u16) -> Self {
+    /// A first run, at the list of services.
+    fn at_services(width: u16, height: u16) -> Self {
         let mut s = Self::first_run(width, height);
         s.key(KeyCode::Down).key(KeyCode::Enter);
+        s.settle();
+        assert_eq!(s.ui.app.step(), Step::Services);
+        s
+    }
+
+    /// A first run, at the address box with nothing chosen: the quiet row, last on the list.
+    fn at_connect(width: u16, height: u16) -> Self {
+        let mut s = Self::at_services(width, height);
+        s.key(KeyCode::Up).key(KeyCode::Enter);
         s.settle();
         assert_eq!(s.ui.app.step(), Step::Connect);
         s
@@ -428,8 +437,8 @@ fn connecting_from_the_samples_drops_them() {
     s.settle();
     s.keys(",");
     s.settle();
-    assert_eq!(s.ui.app.step(), Step::Connect);
-    assert!(s.shows("Connect your server"), "{}", s.text());
+    assert_eq!(s.ui.app.step(), Step::Services);
+    assert!(s.shows("Connect your feeds"), "{}", s.text());
     assert!(!s.shows("sample articles"), "{}", s.text());
     assert!(!s.backend.demo());
     assert!(!s.backend.status().configured, "what comes next needs a server");
@@ -463,7 +472,7 @@ fn a_field_takes_what_only_the_first_run_keys_would_otherwise_take() {
     assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk-pasted", "no field on this step");
     s.key(KeyCode::Enter);
     s.settle();
-    assert_eq!(s.ui.app.step(), Step::Connect, "the cursor is on Connect, and what was typed is still there");
+    assert_eq!(s.ui.app.step(), Step::Connect, "the cursor is on the row it left, and what was typed is still there");
     assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk-pasted");
 }
 
@@ -493,6 +502,21 @@ mod connecting {
             server
         });
         s.key(KeyCode::Down).key(KeyCode::Enter);
+        s.settle();
+        s.key(KeyCode::Up).key(KeyCode::Enter);
+        s.settle();
+        (s, server)
+    }
+
+    /// The same, on a service's own address box.
+    fn on_service(dir: &std::path::Path, routes: Routes, row: usize) -> (Screenful, MockServer) {
+        let (mut s, server) = with_config(dir, routes);
+        s.key(KeyCode::Esc);
+        s.settle();
+        for _ in 0..4 + row - s.ui.app.step_cursor() {
+            s.key(KeyCode::Down);
+        }
+        s.key(KeyCode::Enter);
         s.settle();
         (s, server)
     }
@@ -543,6 +567,23 @@ mod connecting {
         let body = String::from_utf8_lossy(&requests[0].body).to_string();
         assert!(body.contains("Onward "), "{body}");
         assert_ne!(s.ui.app.overlay(), Overlay::Onboarding);
+    }
+
+    #[test]
+    fn a_wrong_pick_sends_nothing_but_the_look_and_the_row_goes_on_from_what_was_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let check = "/api/greader.php/check/compatibility";
+        let (mut s, server) = on_service(dir.path(), vec![("GET", check, page(200, "PASS", "text/plain"))], 0);
+        assert!(s.shows("Connect Miniflux") && s.shows("Miniflux address"), "{}", s.text());
+        s.keys(&server.uri()).key(KeyCode::Enter);
+        assert!(s.shows("This is FreshRSS, not Miniflux.") && s.shows("Switch to FreshRSS"), "{}", s.text());
+        assert!(!s.shows("Username") && s.shows("Enter to switch"), "{}", s.text());
+        let looked = sent(&s, &server).len();
+        s.key(KeyCode::Enter);
+        assert!(s.shows("Connect FreshRSS") && s.shows("API password"), "{}", s.text());
+        let requests = sent(&s, &server);
+        assert_eq!(requests.len(), looked, "the switch asks nothing of the server");
+        assert!(requests.iter().all(|r| r.method.as_str() == "GET"), "and nothing has signed in");
     }
 
     #[test]
@@ -609,6 +650,48 @@ mod connecting {
 }
 
 #[test]
+fn the_list_of_services_is_plain_text_and_fits_at_the_smallest_size() {
+    let mut s = Screenful::at_services(80, 24);
+    assert!(s.shows("Connect your feeds") && s.shows("› Miniflux"), "{}", s.text());
+    for service in providers::SERVICES {
+        assert!(s.shows(service.label), "{}: {}", service.id, s.text());
+    }
+    assert!(s.shows("Any server with the Google Reader API"), "{}", s.text());
+    assert!(s.shows(providers::ANY_SERVICE_ROW), "{}", s.text());
+    s.key(KeyCode::Down).key(KeyCode::Enter);
+    s.settle();
+    assert!(s.shows("Connect FreshRSS") && s.shows("FreshRSS address"), "{}", s.text());
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::Address));
+    s.keys("jk");
+    s.key(KeyCode::Esc);
+    s.settle();
+    assert!(s.shows("› FreshRSS"), "{}", s.text());
+    s.key(KeyCode::Esc);
+    s.settle();
+    assert_eq!(s.ui.app.step(), Step::Welcome);
+    assert!(s.shows("› Connect"), "{}", s.text());
+}
+
+#[test]
+fn a_hosted_row_gets_a_screen_of_its_own_here_too() {
+    const TABLE: &[providers::Hosted] = &[providers::Hosted {
+        service: "miniflux",
+        label: "Reader Example",
+        line: "Run for you",
+        fixed_url: "https://reader.example.net",
+    }];
+    let mut s = Screenful::at_services(80, 24);
+    s.ui.app.offer_hosted(TABLE);
+    s.key(KeyCode::Enter);
+    s.settle();
+    assert_eq!(s.ui.app.step(), Step::Hosting);
+    assert!(s.shows("› Reader Example") && s.shows(providers::OWN_SERVER_ROW), "{}", s.text());
+    s.key(KeyCode::Down).key(KeyCode::Enter);
+    s.settle();
+    assert!(s.shows("Connect Miniflux"), "{}", s.text());
+}
+
+#[test]
 fn the_no_server_screen_prints_its_addresses_in_full_at_the_smallest_size() {
     let mut s = Screenful::first_run(80, 24);
     s.key(KeyCode::Up).key(KeyCode::Enter);
@@ -637,6 +720,9 @@ fn a_problem_with_the_config_shows_on_every_step() {
     assert!(s.shows("Line 3 is broken"), "{}", s.text());
     s.key(KeyCode::Down).key(KeyCode::Enter);
     s.settle();
+    assert!(s.shows("Line 3 is broken"), "the list: {}", s.text());
+    s.key(KeyCode::Enter);
+    s.settle();
     assert!(s.shows("Line 3 is broken"), "{}", s.text());
 }
 
@@ -646,7 +732,7 @@ fn first_run_only_steps_back_and_ctrl_c_still_quits() {
     s.key(KeyCode::Esc);
     assert_eq!(s.ui.app.overlay(), Overlay::Onboarding);
     assert!(!s.ui.quitting());
-    s.key(KeyCode::Down).key(KeyCode::Enter);
+    s.key(KeyCode::Down).key(KeyCode::Enter).key(KeyCode::Enter);
     s.ctrl('c');
     assert!(s.ui.quitting(), "from a field too");
 }

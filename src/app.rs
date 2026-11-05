@@ -30,7 +30,7 @@ use crate::opml::ExportFailed;
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
-use crate::providers::{self, Choice, Field, FieldKey, Provider};
+use crate::providers::{self, Choice, Field, FieldKey, Hosted, Service};
 use crate::readeck::{Asked, Poll, Ticket, Token};
 use crate::secrets::{self, Place};
 use serde::Serialize;
@@ -119,8 +119,8 @@ enum KeyRoute {
 enum RowDoes {
     /// Open a page.
     Open(String),
-    /// Go looking at a hosted service's address.
-    Hosted(&'static str),
+    /// From the service chosen to the one that's at the address.
+    Switch,
     /// Miniflux's key page, and the box to paste what it gives.
     KeyPage(String),
     UsePassword,
@@ -136,9 +136,35 @@ pub struct ConnectRow {
     pub url: Option<String>,
 }
 
+/// A row of a step that's a list of choices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChoiceRow {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// May be empty.
+    pub line: &'static str,
+    /// What its tile shows, or empty for no tile.
+    pub icon: &'static str,
+    /// Offered, not pushed: drawn with less weight than the others.
+    pub quiet: bool,
+}
+
+/// `Step::Services` or `Step::Hosting`, as the windows draw them. `choose_onboarding` takes a row of `rows`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChooseView {
+    pub title: &'static str,
+    pub text: &'static str,
+    pub rows: Vec<ChoiceRow>,
+}
+
 /// Connect as the windows draw it. They keep what's typed; the core says what's on screen and what it's for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConnectView {
+    pub title: &'static str,
+    /// The line under it.
+    pub intro: &'static str,
+    /// The address box, in the words of the service chosen.
+    pub address: Field,
     /// "address" for the address box with `fields` under it, or "by_hand" for the whole form.
     pub stage: &'static str,
     /// What was found.
@@ -167,12 +193,26 @@ struct Connect {
     plain: bool,
     /// Opened from Settings, which is where Esc goes back to.
     from_settings: bool,
+    /// What was chosen from the list: this and nothing else is what scopes Connect. `None` is the address box as it
+    /// is from the quiet row and from Settings, where whatever's there is fine.
+    service: Option<Service>,
+    /// The address isn't `service`: what's there, and what a look found, kept until it's chosen. Nothing switches by
+    /// itself, and nothing is asked for meanwhile.
+    switch: Option<(Service, Detected)>,
+    /// Where a look found what's there, for filling in by hand, for as long as the address stays the same.
+    found_url: Option<String>,
+    /// What the box held before a hosted service's address took its place.
+    own_address: Option<String>,
 }
 
 /// Where first run is. It opens on `Welcome`, and Esc comes back there from the others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     Welcome,
+    /// The list of services, which is where Connect starts.
+    Services,
+    /// A service that also comes hosted: that, or your own server. Only such a service gets here.
+    Hosting,
     Connect,
     NoServer,
 }
@@ -182,6 +222,8 @@ impl Step {
     pub fn name(self) -> &'static str {
         match self {
             Step::Welcome => "welcome",
+            Step::Services => "services",
+            Step::Hosting => "hosting",
             Step::Connect => "connect",
             Step::NoServer => "no_server",
         }
@@ -968,6 +1010,8 @@ pub struct App {
     secrets_stuck: bool,
     /// See `Step`; means nothing outside `Overlay::Onboarding`.
     step: Step,
+    /// What can be chosen on `Step::Hosting`, which is `providers::HOSTED` but for the tests' own rows.
+    hosted: &'static [Hosted],
     /// How far `Step::Connect` has got.
     connect: Connect,
     /// A new address, or stepping back, makes the probes still in flight no-ops: each remembers this and compares.
@@ -1040,6 +1084,7 @@ impl App {
             looking: false,
             secrets_stuck: false,
             step: Step::Welcome,
+            hosted: providers::HOSTED,
             connect: Connect::default(),
             latest_probe: 0,
             grant: Grant::default(),
@@ -1183,6 +1228,12 @@ impl App {
     /// Where first run is.
     pub fn step(&self) -> Step {
         self.step
+    }
+
+    /// Hosted services of a test's own, as none has passed yet.
+    #[cfg(test)]
+    pub fn offer_hosted(&mut self, table: &'static [Hosted]) {
+        self.hosted = table;
     }
 
     /// The row the arrows are on, on the first-run steps that have rows.
@@ -3117,10 +3168,44 @@ impl App {
         self.shown_link = None;
     }
 
+    /// The list on the step on screen.
+    pub fn choose_view(&self) -> ChooseView {
+        match self.connect.service.filter(|_| self.step == Step::Hosting) {
+            Some(service) => {
+                let row = |h: &Hosted| ChoiceRow {
+                    id: h.service,
+                    label: h.label,
+                    line: h.line,
+                    icon: service.icon,
+                    quiet: false,
+                };
+                let own = ChoiceRow { id: "own", label: providers::OWN_SERVER_ROW, line: "", icon: "", quiet: false };
+                let hosted = self.hosted_for(&service).map(row);
+                let rows = hosted.chain(std::iter::once(own)).collect();
+                ChooseView { title: providers::HOSTING_TITLE, text: providers::HOSTING_TEXT, rows }
+            }
+            None => {
+                let row =
+                    |s: &Service| ChoiceRow { id: s.id, label: s.label, line: s.line, icon: s.icon, quiet: false };
+                let any = ChoiceRow { id: "any", label: providers::ANY_SERVICE_ROW, line: "", icon: "", quiet: true };
+                let rows = providers::SERVICES.iter().map(row).chain(std::iter::once(any)).collect();
+                ChooseView { title: providers::SERVICES_TITLE, text: providers::SERVICES_TEXT, rows }
+            }
+        }
+    }
+
+    fn hosted_for(&self, service: &Service) -> impl Iterator<Item = &'static Hosted> {
+        let id = service.id;
+        self.hosted.iter().filter(move |h| h.service == id)
+    }
+
     /// Connect as it stands.
     pub fn connect_view(&self) -> ConnectView {
         let c = &self.connect;
+        let wrong =
+            c.switch.as_ref().and_then(|(found, _)| c.service.map(|chosen| providers::wrong_pick(&chosen, found)));
         let (stage, text, action) = match &c.stage {
+            Stage::Address if c.switch.is_some() => ("address", "", providers::SWITCH_ACTION),
             Stage::Address if c.look_again => ("address", "", "Check again"),
             Stage::Address => ("address", "", "Continue"),
             Stage::ByHand => ("by_hand", "", "Connect"),
@@ -3132,9 +3217,14 @@ impl App {
             }
             Stage::Miniflux { key: KeyRoute::NoMinting, .. } => ("address", providers::MINIFLUX_NO_MINTING, "Connect"),
         };
+        let (title, intro) =
+            c.service.map_or((providers::CONNECT_TITLE, providers::CONNECT_TEXT), |s| (s.title, s.text));
         ConnectView {
+            title,
+            intro: if stage == "by_hand" { providers::BY_HAND_TEXT } else { intro },
+            address: c.service.map_or(providers::ADDRESS, |s| s.address),
             stage,
-            text: text.to_string(),
+            text: wrong.unwrap_or_else(|| text.to_string()),
             note: if c.plain { providers::PLAIN_HTTP.to_string() } else { String::new() },
             fields: self.connect_fields(),
             rows: self
@@ -3170,8 +3260,10 @@ impl App {
         let row = |label: &str, does| (label.to_string(), does);
         match &self.connect.stage {
             Stage::Address => {
-                let mut rows = self.connect.found_rows.clone();
-                rows.extend(hosted_rows(providers::HOSTED));
+                let switch =
+                    self.connect.switch.iter().map(|(found, _)| (providers::switch_row(found), RowDoes::Switch));
+                let mut rows: Vec<_> = switch.collect();
+                rows.extend(self.connect.found_rows.iter().cloned());
                 rows.push(row(providers::BY_HAND_ROW, RowDoes::ByHand));
                 rows
             }
@@ -3199,12 +3291,9 @@ impl App {
         };
         match does {
             RowDoes::Open(url) => self.open_link(&url),
-            RowDoes::Hosted(url) => {
-                let Some(form) = self.settings.as_mut() else { return Vec::new() };
-                url.clone_into(&mut form.values.address);
-                form.refill += 1;
-                url.clone_into(&mut self.connect.address);
-                self.look(url)
+            RowDoes::Switch => {
+                self.switch_service();
+                Vec::new()
             }
             RowDoes::KeyPage(url) => {
                 self.use_route(KeyRoute::Chosen);
@@ -3215,7 +3304,9 @@ impl App {
                 Vec::new()
             }
             RowDoes::ByHand => {
+                let found = self.connect.found_url.clone();
                 self.back_to_address();
+                self.fill_by_hand(found);
                 self.connect.stage = Stage::ByHand;
                 Vec::new()
             }
@@ -3223,6 +3314,42 @@ impl App {
                 self.back_to_address();
                 Vec::new()
             }
+        }
+    }
+
+    /// Goes on to the service that's at the address, with what the look found: nothing is asked of the server again.
+    fn switch_service(&mut self) {
+        if let Some((found, detected)) = self.connect.switch.take() {
+            self.connect.service = Some(found);
+            self.connect.own_address = None;
+            self.apply_probe(detected);
+        }
+    }
+
+    /// The form by hand is the chosen service's, with what the address could tell it. Not asked again if it's the same,
+    /// as that would take back what's typed there.
+    fn fill_by_hand(&mut self, found: Option<String>) {
+        let Some(service) = self.connect.service else { return };
+        let address = self.connect.address.clone();
+        let tried = || Address::parse(&address).ok().and_then(|a| a.first_try().map(str::to_string));
+        let url = found.or_else(tried).map(|url| {
+            let api = service.id == providers::FRESHRSS.id && !url.ends_with(".php");
+            if api { format!("{url}/api/greader.php") } else { url }
+        });
+        let (url_key, secret) = match service.server {
+            Server::Miniflux => (FieldKey::MinifluxUrl, FieldKey::MinifluxApiKey),
+            Server::GReader => (FieldKey::GreaderUrl, FieldKey::GreaderPassword),
+        };
+        if let Some(url) = &url {
+            self.forget_secret_of_another_server(url_key, url, secret);
+        }
+        let Some(form) = self.settings.as_mut() else { return };
+        let url = url.unwrap_or_else(|| form.values.field(url_key).to_string());
+        if form.values.server != service.server || form.values.field(url_key) != url {
+            form.values.server = service.server;
+            *form.values.field_mut(url_key) = url;
+            form.values.address = address;
+            form.refill += 1;
         }
     }
 
@@ -3253,8 +3380,8 @@ impl App {
     fn back_to_address(&mut self) {
         self.latest_probe += 1;
         let password = matches!(self.connect.stage, Stage::Miniflux { key: KeyRoute::Password, .. });
-        let Connect { address, from_settings, .. } = std::mem::take(&mut self.connect);
-        self.connect = Connect { address, from_settings, ..Connect::default() };
+        let Connect { address, from_settings, service, own_address, found_url, .. } = std::mem::take(&mut self.connect);
+        self.connect = Connect { address, from_settings, service, own_address, found_url, ..Connect::default() };
         self.shown_link = None;
         if password {
             self.forget_password();
@@ -3268,6 +3395,7 @@ impl App {
         let checking = self.settings.as_ref().is_some_and(|f| f.checking);
         if self.overlay == Overlay::Onboarding && self.connect.address != text && !checking {
             text.clone_into(&mut self.connect.address);
+            self.connect.found_url = None;
             self.back_to_address();
         }
     }
@@ -3283,6 +3411,10 @@ impl App {
             return Vec::new();
         }
         match self.connect.stage.clone() {
+            Stage::Address if self.connect.switch.is_some() => {
+                self.switch_service();
+                Vec::new()
+            }
             Stage::Address => {
                 values.miniflux_password.clear();
                 let address = values.address.clone();
@@ -3329,14 +3461,41 @@ impl App {
                 self.connect.probing = true;
                 self.connect.found_rows.clear();
                 self.connect.look_again = false;
+                self.connect.switch = None;
+                self.connect.found_url = None;
                 vec![Effect::Probe { probe: self.latest_probe, address }]
             }
         }
     }
 
+    /// The service that a look found, when it isn't the one that was chosen.
+    fn wrong_pick(&self, found: &Detected) -> Option<Service> {
+        let there = match found {
+            Detected::Miniflux { .. } => providers::MINIFLUX,
+            Detected::FreshRss { .. } => providers::FRESHRSS,
+            _ => return None,
+        };
+        self.connect.service.filter(|chosen| chosen.server != there.server).map(|_| there)
+    }
+
     fn probed(&mut self, found: Detected) {
         self.connect.probing = false;
-        let message = found.problem();
+        if let Some(there) = self.wrong_pick(&found) {
+            self.connect.switch = Some((there, found));
+            self.clear_connect_error();
+        } else {
+            self.apply_probe(found);
+        }
+    }
+
+    /// What a look found, for the service it's about. It only asks for things: nothing goes out from here.
+    fn apply_probe(&mut self, found: Detected) {
+        self.connect.found_url = found.url();
+        let other = self.connect.service.is_some_and(|s| s.id == providers::OTHER.id);
+        let message = match &found {
+            Detected::Unknown { base, sign_in: false } if other => Some(providers::other_unknown(base)),
+            _ => found.problem(),
+        };
         match found {
             Detected::Miniflux { base, sign_in } => {
                 let key = if sign_in { KeyRoute::Password } else { KeyRoute::NoPasswords };
@@ -3419,6 +3578,7 @@ impl App {
     fn step_rows(&self) -> usize {
         match self.step {
             Step::Welcome => providers::WELCOME.len(),
+            Step::Services | Step::Hosting => self.choose_view().rows.len(),
             Step::NoServer => providers::NO_SERVER.links().len(),
             Step::Connect => 0,
         }
@@ -3470,13 +3630,17 @@ impl App {
                 let from_settings = self.connect.from_settings;
                 self.back_to_address();
                 self.connect.from_settings = false;
-                self.go_to_step(Step::Welcome, row(Choice::Connect));
                 if from_settings {
+                    self.go_to_step(Step::Welcome, row(Choice::Connect));
                     self.overlay = Overlay::None;
                     self.settings = None;
                     self.open_settings(false, fx);
+                } else {
+                    self.leave_address();
                 }
             }
+            Step::Hosting => self.back_to_services(),
+            Step::Services => self.go_to_step(Step::Welcome, row(Choice::Connect)),
             Step::NoServer => self.go_to_step(Step::Welcome, row(Choice::NoServer)),
         }
         true
@@ -3491,7 +3655,7 @@ impl App {
             Step::Welcome => match providers::WELCOME.get(row).map(|r| r.choice) {
                 Some(Choice::Samples) => vec![Effect::UseSamples(true)],
                 Some(Choice::Connect) => {
-                    self.go_to_step(Step::Connect, 0);
+                    self.go_to_step(Step::Services, 0);
                     Vec::new()
                 }
                 Some(Choice::NoServer) => {
@@ -3507,8 +3671,71 @@ impl App {
                 }
                 None => Vec::new(),
             },
+            Step::Services => {
+                self.choose_service(row);
+                Vec::new()
+            }
+            Step::Hosting => self.choose_hosting(row),
             Step::Connect => self.choose_connect_row(row),
         }
+    }
+
+    /// A row of the list. A service that also comes hosted asks which, and any other goes straight to its address.
+    fn choose_service(&mut self, row: usize) {
+        match providers::SERVICES.get(row) {
+            Some(service) => {
+                self.connect.service = Some(*service);
+                let hosted = self.hosted_for(service).next().is_some();
+                self.go_to_step(if hosted { Step::Hosting } else { Step::Connect }, 0);
+            }
+            None if row == providers::SERVICES.len() => self.go_to_step(Step::Connect, 0),
+            None => {}
+        }
+    }
+
+    /// A hosted service, which goes to the same probe as a typed address, or your own server.
+    fn choose_hosting(&mut self, row: usize) -> Vec<Effect> {
+        let Some(service) = self.connect.service else { return Vec::new() };
+        let Some(hosted) = self.hosted_for(&service).nth(row) else {
+            if row == self.hosted_for(&service).count() {
+                self.go_to_step(Step::Connect, 0);
+            }
+            return Vec::new();
+        };
+        let Some(form) = self.settings.as_mut() else { return Vec::new() };
+        hosted.fixed_url.clone_into(&mut form.values.address);
+        form.refill += 1;
+        let typed = std::mem::replace(&mut self.connect.address, hosted.fixed_url.to_string());
+        self.connect.own_address = Some(typed);
+        self.go_to_step(Step::Connect, 0);
+        self.look(hosted.fixed_url)
+    }
+
+    /// Esc on the address box, which goes back to wherever it was chosen from, keeping what's typed in it.
+    fn leave_address(&mut self) {
+        let on_hosted = self
+            .connect
+            .service
+            .and_then(|service| self.hosted_for(&service).position(|h| h.fixed_url == self.connect.address));
+        if let Some(typed) = self.connect.own_address.take() {
+            self.connect.address = typed;
+            self.forget_password();
+        }
+        let Some(service) = self.connect.service else {
+            return self.go_to_step(Step::Services, providers::SERVICES.len());
+        };
+        let rows = self.hosted_for(&service).count();
+        if rows == 0 {
+            return self.back_to_services();
+        }
+        self.go_to_step(Step::Hosting, on_hosted.unwrap_or(rows));
+    }
+
+    /// Back on the list, on the service that was chosen, which is chosen no more.
+    fn back_to_services(&mut self) {
+        let chosen = self.connect.service.take();
+        let row = providers::SERVICES.iter().position(|s| Some(s.id) == chosen.map(|c| c.id));
+        self.go_to_step(Step::Services, row.unwrap_or(0));
     }
 
     /// The backend serves the samples now, so they can be asked for.
@@ -3540,7 +3767,7 @@ impl App {
         fresh.toast_serial = self.toast_serial;
         *self = fresh;
         self.overlay = Overlay::Onboarding;
-        self.go_to_step(Step::Connect, 0);
+        self.go_to_step(Step::Services, 0);
         fx.extend([Effect::UseSamples(false), Effect::LoadSettings]);
     }
 
@@ -3860,12 +4087,6 @@ impl App {
         }
         fx
     }
-}
-
-/// The rows of hosted services. Each goes to the same probe as a typed address.
-fn hosted_rows(table: &[Provider]) -> Vec<(String, RowDoes)> {
-    let hosted = table.iter().filter_map(|p| p.fixed_url.map(|url| (p.label, url)));
-    hosted.map(|(label, url)| (label.to_string(), RowDoes::Hosted(url))).collect()
 }
 
 /// Feeds a selection takes in.

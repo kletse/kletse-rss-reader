@@ -1087,11 +1087,27 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
 }
 
 impl Harness {
-    /// From the first screen to the address box.
-    fn go_to_connect(&mut self) {
+    /// From the first screen to the list of services.
+    fn go_to_services(&mut self) {
         self.key("ArrowDown");
         self.key("Enter");
+        assert_eq!(self.app.step(), Step::Services);
+    }
+
+    /// From the first screen to the address box with nothing chosen: the list's quiet last row.
+    fn go_to_connect(&mut self) {
+        self.go_to_services();
+        self.key("ArrowUp");
+        self.key("Enter");
         assert_eq!(self.app.step(), Step::Connect);
+    }
+
+    /// From the first screen to the address box of a service.
+    fn pick(&mut self, service: providers::Service) {
+        self.go_to_services();
+        let row = providers::SERVICES.iter().position(|s| s.id == service.id).unwrap();
+        let fx = self.app.choose_onboarding(row);
+        self.run(fx);
     }
 
     /// From the address box to the whole form.
@@ -1249,7 +1265,7 @@ fn esc_steps_back_to_the_row_you_left_and_no_further() {
     let mut h = first_run();
     h.key("ArrowDown");
     h.key("Enter");
-    assert_eq!(h.app.step(), Step::Connect);
+    assert_eq!(h.app.step(), Step::Services);
     h.key("Escape");
     assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Welcome, 1));
     h.key("ArrowDown");
@@ -1269,6 +1285,8 @@ fn esc_steps_back_from_a_field_and_the_rest_of_the_keys_are_the_fields() {
     let mut h = first_run();
     let fx = h.app.choose_onboarding(1);
     h.run(fx);
+    let fx = h.app.choose_onboarding(0);
+    h.run(fx);
     for key in ["j", "Enter", "ArrowDown"] {
         let (used, fx) = h.app.key(&KeyPress { key: key.into(), typing: true, ..KeyPress::default() });
         assert!(!used && fx.is_empty(), "{key}");
@@ -1276,7 +1294,7 @@ fn esc_steps_back_from_a_field_and_the_rest_of_the_keys_are_the_fields() {
     assert_eq!(h.app.step(), Step::Connect);
     let (used, _) = h.app.key(&KeyPress { key: "Escape".into(), typing: true, ..KeyPress::default() });
     assert!(used);
-    assert_eq!(h.app.step(), Step::Welcome);
+    assert_eq!(h.app.step(), Step::Services);
 }
 
 #[test]
@@ -1406,7 +1424,7 @@ fn connect_from_the_samples_leaves_nothing_of_them() {
     let fx = h.app.search("watch");
     h.run(fx);
     h.key(",");
-    assert_eq!((h.app.overlay(), h.app.step()), (Overlay::Onboarding, Step::Connect));
+    assert_eq!((h.app.overlay(), h.app.step()), (Overlay::Onboarding, Step::Services));
     assert!(!h.app.samples());
     assert!(h.calls.contains(&Effect::UseSamples(false)));
     assert!(h.app.settings().is_some(), "the form, loaded afresh");
@@ -1661,7 +1679,7 @@ fn onboarding_says_why_the_config_file_wasnt_used() {
     assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem));
     h.key("Enter");
     h.key(",");
-    assert_eq!(h.app.step(), Step::Connect);
+    assert_eq!(h.app.step(), Step::Services);
     assert_eq!(h.app.settings().unwrap().problem.as_deref(), Some(problem), "the samples don't lose it");
 }
 
@@ -2783,7 +2801,7 @@ fn an_answer_after_stepping_back_is_a_no_op() {
     h.go_to_connect();
     let stale = h.look_at("rss.example.com");
     h.key("Escape");
-    assert_eq!(h.app.step(), Step::Welcome);
+    assert_eq!(h.app.step(), Step::Services);
     h.found(stale, miniflux_found());
     h.key("Enter");
     assert_eq!(h.app.step(), Step::Connect);
@@ -2966,7 +2984,7 @@ fn esc_goes_back_to_the_box_and_takes_a_typed_password_out_of_the_window() {
     assert!(form.refill > before);
     assert_eq!(form.values.address, "rss.example.com");
     h.key("Escape");
-    assert_eq!(h.app.step(), Step::Welcome);
+    assert_eq!(h.app.step(), Step::Services);
 }
 
 #[test]
@@ -3087,26 +3105,346 @@ fn filling_in_by_hand_is_the_form_as_it_was_and_esc_comes_back_from_it() {
     assert!(h.looked_at.is_empty());
 }
 
+const HOSTED_MINIFLUX: &[providers::Hosted] = &[providers::Hosted {
+    service: "miniflux",
+    label: "Reader Example",
+    line: "Run for you",
+    fixed_url: "https://reader.example.net",
+}];
+
 #[test]
-fn a_hosted_row_is_one_row_of_the_table_and_goes_to_the_same_probe() {
-    let hosted = Provider {
-        id: "hosted-miniflux",
-        label: "Hosted Miniflux",
-        short_label: "Hosted Miniflux",
-        fixed_url: Some("https://reader.example.net"),
-        ..*providers::provider(Server::Miniflux)
-    };
-    assert!(hosted_rows(&[*providers::provider(Server::Miniflux)]).is_empty(), "no fixed address, no row");
+fn connect_opens_on_the_services_and_the_address_box_is_the_quiet_last_row() {
     let mut h = first_run();
-    h.go_to_connect();
-    h.app.connect.found_rows = hosted_rows(&[hosted]);
-    h.row("Hosted Miniflux");
-    assert_eq!(h.looked_at.len(), 1);
-    assert_eq!(h.looked_at[0].1, Address::parse("https://reader.example.net").unwrap());
-    assert_eq!(h.app.settings().unwrap().values.address, "https://reader.example.net");
-    let probe = h.looked_at[0].0;
+    h.go_to_services();
+    let view = h.app.choose_view();
+    assert_eq!(view.title, "Connect your feeds");
+    let ids: Vec<&str> = view.rows.iter().map(|r| r.id).collect();
+    assert_eq!(ids, ["miniflux", "freshrss", "other", "any"]);
+    assert!(view.rows[..3].iter().all(|r| !r.quiet && !r.icon.is_empty() && !r.line.is_empty()));
+    assert!(view.rows[3].quiet && view.rows[3].icon.is_empty());
+    h.key("j");
+    assert_eq!(h.app.step_cursor(), 1);
+    h.key("k");
+    h.key("k");
+    assert_eq!(h.app.step_cursor(), 3, "the arrows go round, as on the first screen");
+    h.key("Enter");
+    let connect = h.app.connect_view();
+    assert_eq!((h.app.step(), connect.title), (Step::Connect, providers::CONNECT_TITLE));
+    assert_eq!(connect.address, providers::ADDRESS);
+    assert!(h.looked_at.is_empty());
+}
+
+#[test]
+fn a_service_scopes_connect_to_its_own_words() {
+    for service in providers::SERVICES {
+        let mut h = first_run();
+        h.pick(service);
+        let view = h.app.connect_view();
+        assert_eq!(h.app.step(), Step::Connect, "{}", service.id);
+        assert_eq!((view.title, view.intro, view.address), (service.title, service.text, service.address));
+        assert!(view.fields.is_empty(), "nothing is asked for before the address is looked at");
+    }
+}
+
+#[test]
+fn esc_goes_back_one_step_at_a_time_and_keeps_what_was_typed() {
+    let mut h = first_run();
+    h.pick(providers::FRESHRSS);
+    h.app.address_edited("rss.example.com");
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Services, 1), "on the row it came from");
+    assert_eq!(h.app.choose_view().title, providers::SERVICES_TITLE);
+    h.key("ArrowUp");
+    h.key("Enter");
+    assert_eq!(h.app.connect_view().title, providers::MINIFLUX.title, "the choice was let go of");
+    assert_eq!(h.app.connect.address, "rss.example.com");
+    h.key("Escape");
+    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Welcome);
+    assert_eq!(h.app.step_cursor(), 1, "on Connect");
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::Services);
+    h.key("ArrowUp");
+    h.key("Enter");
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Services, 3), "the quiet row came from there too");
+}
+
+#[test]
+fn the_right_pick_goes_on_to_the_same_steps_as_ever() {
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    let probe = h.look_at("rss.example.com");
     h.found(probe, miniflux_found());
     assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+    assert_eq!(h.app.connect_view().action, "Sign in");
+    assert_eq!(h.app.connect_view().title, providers::MINIFLUX.title);
+    h.submit(signing_in());
+    assert_eq!(h.logins.len(), 1);
+    let mut h = first_run();
+    h.pick(providers::FRESHRSS);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, freshrss_found(Api::Ready));
+    assert_eq!(h.field_keys(), [FieldKey::GreaderUsername, FieldKey::GreaderPassword]);
+    assert_eq!(h.app.connect_view().text, providers::FRESHRSS_FOUND);
+}
+
+#[test]
+fn a_wrong_pick_says_so_and_asks_for_nothing_until_someone_switches() {
+    let cases = [
+        (providers::MINIFLUX, freshrss_found(Api::Ready), "This is FreshRSS, not Miniflux.", providers::FRESHRSS),
+        (providers::FRESHRSS, miniflux_found(), "This is Miniflux, not FreshRSS.", providers::MINIFLUX),
+    ];
+    for (chosen, found, says, there) in cases {
+        let mut h = first_run();
+        h.pick(chosen);
+        let probe = h.look_at("rss.example.com");
+        h.found(probe, found);
+        let view = h.app.connect_view();
+        assert_eq!(view.text, says);
+        assert_eq!(view.title, chosen.title, "nothing switched on its own");
+        assert_eq!(h.form_error(), "", "it isn't a failure");
+        assert!(view.fields.is_empty());
+        assert_eq!(view.rows[0].label, providers::switch_row(&there));
+        h.row(&providers::switch_row(&there));
+        assert_eq!(h.app.connect_view().title, there.title);
+        assert!(!h.field_keys().is_empty());
+        assert_eq!(h.looked_at.len(), 1, "what was found isn't asked for again");
+        assert!(h.logins.is_empty() && h.saved_values.is_none());
+    }
+}
+
+/// The whole of the promise: whatever's in the window's fields, nothing of it leaves on a wrong pick, and the main button
+/// only does what the row does. Only signing in on the service that's there sends anything.
+#[test]
+fn no_credential_goes_to_a_server_before_it_was_seen_and_chosen() {
+    let mut h = first_run();
+    h.pick(providers::FRESHRSS);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, miniflux_found());
+    assert_eq!(h.app.connect_view().action, providers::SWITCH_ACTION);
+    h.submit(signing_in());
+    assert!(h.logins.is_empty() && h.saved_values.is_none(), "not even with the fields full");
+    assert_eq!(h.app.connect_view().title, providers::MINIFLUX.title, "Enter chose it, and that's all");
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+    assert_eq!(h.app.settings().unwrap().values.miniflux_password, "");
+    assert_eq!(h.looked_at.len(), 1);
+    h.submit(signing_in());
+    assert_eq!(h.logins.len(), 1, "now it's been seen, and chosen");
+}
+
+#[test]
+fn a_wrong_pick_with_freshrss_turned_off_gets_its_guidance_after_the_switch() {
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, freshrss_found(Api::Off));
+    assert_eq!(h.form_error(), "");
+    h.row("Switch to FreshRSS");
+    assert!(h.form_error().contains("its API is off"), "{}", h.form_error());
+    assert_eq!(h.app.connect_view().action, "Check again");
+    assert!(h.connect_words().contains("open freshrss"));
+}
+
+#[test]
+fn a_new_address_after_a_wrong_pick_starts_over_on_the_service_chosen() {
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, freshrss_found(Api::Ready));
+    h.app.address_edited("rss.example.org");
+    let view = h.app.connect_view();
+    assert_eq!((view.title, view.action, view.text.as_str()), (providers::MINIFLUX.title, "Continue", ""));
+    assert!(view.rows.iter().all(|r| !r.label.starts_with("Switch")));
+}
+
+#[test]
+fn an_address_that_answers_as_nothing_stays_with_the_service_by_hand() {
+    let dead = Detected::NoAnswer { base: BASE.into(), why: "refused".into(), clear_refused: false };
+    let cases = [
+        (providers::MINIFLUX, Server::Miniflux, FieldKey::MinifluxUrl, BASE.to_string()),
+        (providers::FRESHRSS, Server::GReader, FieldKey::GreaderUrl, format!("{BASE}/api/greader.php")),
+        (providers::OTHER, Server::GReader, FieldKey::GreaderUrl, BASE.to_string()),
+    ];
+    for (service, server, key, url) in cases {
+        let mut h = first_run();
+        h.pick(service);
+        let probe = h.look_at("rss.example.com");
+        h.found(probe, dead.clone());
+        assert!(h.form_error().contains("No answer from"), "{}", h.form_error());
+        assert_eq!(h.app.connect_view().title, service.title);
+        h.by_hand();
+        let view = h.app.connect_view();
+        assert_eq!((view.title, view.intro), (service.title, providers::BY_HAND_TEXT));
+        let values = &h.app.settings().unwrap().values;
+        assert_eq!((values.server, values.field(key)), (server, url.as_str()), "{}", service.id);
+        h.key("Escape");
+        assert_eq!((h.app.connect_view().stage, h.app.connect_view().title), ("address", service.title));
+    }
+}
+
+#[test]
+fn by_hand_with_a_service_starts_from_the_address_even_with_no_look() {
+    let mut h = first_run();
+    h.pick(providers::OTHER);
+    h.app.address_edited("reader.example.org");
+    h.by_hand();
+    let values = &h.app.settings().unwrap().values;
+    assert_eq!((values.server, values.greader_url.as_str()), (Server::GReader, "https://reader.example.org"));
+    assert_eq!(values.address, "reader.example.org", "the box keeps what was typed in it");
+}
+
+#[test]
+fn by_hand_with_nothing_chosen_is_the_form_as_it_was() {
+    let mut h = first_run();
+    h.go_to_connect();
+    let refill = h.app.settings().unwrap().refill;
+    h.app.address_edited("reader.example.org");
+    h.by_hand();
+    let values = &h.app.settings().unwrap().values;
+    assert_eq!((values.miniflux_url.as_str(), values.greader_url.as_str()), ("", ""));
+    assert_eq!(h.app.settings().unwrap().refill, refill);
+}
+
+#[test]
+fn going_by_hand_again_doesnt_take_back_what_was_typed_there() {
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    h.app.address_edited("rss.example.com");
+    h.by_hand();
+    let refill = h.app.settings().unwrap().refill;
+    h.key("Escape");
+    h.by_hand();
+    assert_eq!(h.app.settings().unwrap().refill, refill);
+}
+
+#[test]
+fn going_by_hand_again_after_a_look_keeps_where_it_found_the_server() {
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    let probe = h.look_at("rss");
+    h.found(probe, Detected::Unknown { base: "http://rss:8080".into(), sign_in: false });
+    h.by_hand();
+    assert_eq!(h.app.settings().unwrap().values.miniflux_url, "http://rss:8080");
+    let refill = h.app.settings().unwrap().refill;
+    h.key("Escape");
+    h.by_hand();
+    assert_eq!(h.app.settings().unwrap().refill, refill, "or what's typed there would go");
+    h.key("Escape");
+    h.app.address_edited("other");
+    h.by_hand();
+    assert_eq!(h.app.settings().unwrap().values.miniflux_url, "https://other", "a new address is a new start");
+}
+
+#[test]
+fn other_takes_freshrss_as_one_of_its_own_and_offers_miniflux() {
+    let mut h = first_run();
+    h.pick(providers::OTHER);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, freshrss_found(Api::Ready));
+    assert_eq!(h.app.connect_view().title, providers::OTHER.title, "it's a Google Reader server, so nothing was wrong");
+    assert_eq!(h.field_keys(), [FieldKey::GreaderUsername, FieldKey::GreaderPassword]);
+    let mut h = first_run();
+    h.pick(providers::OTHER);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, miniflux_found());
+    assert!(h.app.connect_view().text.contains("directly than through the Google Reader API"));
+    assert!(h.app.connect_view().fields.is_empty());
+    h.row("Switch to Miniflux");
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+}
+
+#[test]
+fn other_says_what_it_can_at_an_address_it_cant_tell() {
+    let mut h = first_run();
+    h.pick(providers::OTHER);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, Detected::Unknown { base: BASE.into(), sign_in: false });
+    assert!(h.form_error().contains("Google Reader API"), "{}", h.form_error());
+    assert!(!h.form_error().contains("neither"), "{}", h.form_error());
+    h.by_hand();
+    assert_eq!(h.app.settings().unwrap().values.greader_url, BASE);
+}
+
+#[test]
+fn commafeed_stays_something_to_recognise_from_any_row() {
+    for service in providers::SERVICES {
+        let mut h = first_run();
+        h.pick(service);
+        let probe = h.look_at("rss.example.com");
+        h.found(probe, Detected::CantRead { name: "CommaFeed", base: BASE.into() });
+        assert!(h.form_error().contains("This is CommaFeed, and Onward can't read it yet."));
+        assert!(h.app.connect_view().fields.is_empty());
+        assert!(h.app.connect_view().rows.iter().all(|r| !r.label.starts_with("Switch")));
+    }
+}
+
+#[test]
+fn with_nothing_chosen_no_address_is_a_wrong_pick() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+    assert_eq!(h.app.connect_view().title, providers::CONNECT_TITLE);
+}
+
+#[test]
+fn with_no_hosted_row_a_service_goes_straight_to_its_address() {
+    let mut h = first_run();
+    h.app.offer_hosted(HOSTED_MINIFLUX);
+    h.pick(providers::FRESHRSS);
+    assert_eq!(h.app.step(), Step::Connect, "this table has a row for Miniflux only");
+    let mut h = first_run();
+    h.pick(providers::MINIFLUX);
+    assert_eq!(h.app.step(), Step::Connect, "and the real one has none");
+}
+
+#[test]
+fn a_hosted_row_is_all_a_service_needs_for_a_screen_of_its_own() {
+    let mut h = first_run();
+    h.app.offer_hosted(HOSTED_MINIFLUX);
+    h.pick(providers::MINIFLUX);
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Hosting, 0));
+    let view = h.app.choose_view();
+    let labels: Vec<&str> = view.rows.iter().map(|r| r.label).collect();
+    assert_eq!(labels, ["Reader Example", providers::OWN_SERVER_ROW]);
+    assert_eq!(view.rows[0].line, "Run for you");
+    assert_eq!(view.title, providers::HOSTING_TITLE);
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::Connect);
+    assert_eq!(h.looked_at.len(), 1, "the same probe as a typed address");
+    assert_eq!(h.looked_at[0].1, Address::parse("https://reader.example.net").unwrap());
+    assert_eq!(h.app.settings().unwrap().values.address, "https://reader.example.net");
+    h.found(h.looked_at[0].0, miniflux_found());
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+}
+
+#[test]
+fn my_own_server_goes_to_the_address_and_esc_comes_back_through_the_choice() {
+    let mut h = first_run();
+    h.app.offer_hosted(HOSTED_MINIFLUX);
+    h.pick(providers::MINIFLUX);
+    h.key("ArrowDown");
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::Connect);
+    assert!(h.looked_at.is_empty());
+    assert_eq!(h.app.connect_view().title, providers::MINIFLUX.title);
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Hosting, 1));
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Services, 0));
+}
+
+#[test]
+fn stepping_back_from_a_hosted_service_gives_the_box_back_what_was_typed() {
+    let mut h = first_run();
+    h.app.offer_hosted(HOSTED_MINIFLUX);
+    h.pick(providers::MINIFLUX);
+    h.app.connect.address = "mine.example.com".into();
+    h.key("Enter");
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.step_cursor()), (Step::Hosting, 0));
+    assert_eq!(h.app.connect.address, "mine.example.com");
+    assert_eq!(h.app.settings().unwrap().values.address, "mine.example.com");
 }
 
 #[test]
@@ -3217,6 +3555,7 @@ fn a_look_from_before_the_samples_is_out_of_date_after_them() {
     let mut h = first_run();
     h.go_to_connect();
     let stale = h.look_at("rss.example.com");
+    h.key("Escape");
     h.key("Escape");
     h.key("ArrowUp");
     h.key("Enter");

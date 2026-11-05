@@ -260,7 +260,9 @@ Afterwards Onward looks at the list, as FreshRSS says OK to changes it didn't ma
 
 Both servers refuse a feed on a private address until they're told they may; see above.
 
-Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
+Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. Enter its URL and press **Connect in the browser**: Onward shows a code and an address, you approve it in a browser that's signed in to Readeck, on this machine or any other, and that's all. There's no token to make and paste and nothing else to save, and the terminal version works the same way over SSH. Onward asks for **Bookmarks: write** and nothing wider.
+
+That takes Readeck 0.21 or later, and a server that can look up public web addresses. Otherwise Onward says so, and the API token field is the way: in Readeck, Profile → API Tokens, with the **Bookmarks: write** permission, then paste it and save. Leave the URL and token empty and the bookmark button is hidden. Readeck never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
 The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`). What Onward signs in with isn't: see [Where secrets live](#where-secrets-live). You can also edit the file by hand:
 
@@ -349,7 +351,8 @@ src/
   server.rs          the feed server: Miniflux or a Google Reader API server, one set of calls
   miniflux.rs        Miniflux API client
   greader.rs         Google Reader API client (FreshRSS, Miniflux's integration)
-  readeck.rs         Readeck "save bookmark"
+  readeck.rs         Readeck: "save bookmark", and the calls of its device grant
+  grant.rs           connecting Readeck in a browser: how far an attempt has got
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
   secrets.rs         the keyring and the file behind it; secrets/system.rs is the real store
   moved.rs           moves the kletse-rss folders to onward on first use

@@ -77,6 +77,20 @@ and how to build it is in the [README](README.md).
   dropped (`new_load`), and a mark-all question about the old list goes (`forget_pending_about`). There's no "create a category"
   anywhere, as FreshRSS has no call for one: it comes to be when a feed moves to a new name. `tag/list` and `/v1/categories`
   are what show the empty ones, so they're only asked for on the panel (`Server::feed_list`), not on each picker load.
+- **Connecting Readeck in a browser is `src/grant.rs`,** with the calls in `readeck.rs`, and the windows draw `App::readeck_view()`
+  under Readeck's fields and hand back `readeck_row` and `readeck_edited`. An attempt has a number (`Grant::attempt`), bumped by
+  closing the form, a change of address, starting again and Save, and every answer is compared with it. The wait is its own
+  effect (`AwaitReadeck`, then `PollReadeck`), so a stopped attempt sends nothing more. Time left goes by the waits plus how long
+  each poll took, as `App` has no clock, and a poll with no answer only leaves a note until the code runs out. `features`
+  in `/api/info` is the switch, and no answer there is `Failed`, not "no grant". The button is always offered until someone
+  presses it: nothing is sent while an address is being typed. `Backend::poll_readeck` checks a token before the core ever
+  sees it, and polling again gives the same one, so a check that couldn't be made is one more poll. `keep_readeck` is the
+  usual save (`Backend::store`) with only `readeck` changed: no `set_config`, so the feed server's client stays, what's typed stays
+  in the window, and a `config.toml` that doesn't parse isn't replaced. The token never goes to a window: the field doesn't
+  know about it, so `save_values` swaps it in unless something else was typed there since. What `tell_where` has to say waits
+  until the form closes, as a confirm would take the form's place and lose what's typed. The address to open comes from the
+  server: `openable` is the only thing that lets it through, and in QML everything from the server is `PlainText`. A
+  Readeck refuses a client it can't look up, and the words `invalid client URI` are all that tell that apart.
 - **Secrets are `src/secrets.rs`,** and `src/secrets/system.rs` is the only file that can reach a real store (`secret-service` on tokio on Linux, `security-framework` on macOS; `keyring` brings a second runtime and libdbus or async-io). Read
   **Keyrings** below before running anything. A secret is keyed on `SecretId`: kind, address, username. `config.toml`
   wins, then the file, then the store, and the last two are only asked for what `Config::missing` lists: a section with
@@ -200,6 +214,10 @@ space as `Space`). It then waits 3 s for images, saves the window to the PNG and
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
 `"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j j Enter j"` (the end of a feed, with where j goes next), `"Enter *"` (a starred article), `"j Enter"` (the Starred list; the demo starts with two starred, in memory).
+Readeck in a browser needs a feed server in the config and `.github/fake-server.py`: `", tab type:http://127.0.0.1:18399/readeck-approve
+grant:0 x x x x x x x x"` (`grant:n` presses a row; `tab` goes from the API key to the Readeck URL), then `-deny`, `-elsewhere` (the
+code on screen, and an address on another host), `-none`. `-approve` is past its code by the time of the shot, so `-elsewhere` is
+the one for that screen.
 Importing needs a server, as the samples have none to import into: `.github/fake-server.py` plays one, on a `config.toml`
 naming it. `"i"` (the panel), `"i file:/tmp/feeds.opml"` (`file:` is what the file dialog would hand over), `"i Enter"` (the
 dialog: Qt makes its own on the offscreen platform, over the window, so the PNG doesn't show it and a QML warning would).

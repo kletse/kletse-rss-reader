@@ -50,11 +50,22 @@ pub struct Prefs {
     /// Unread items newest first (`s`), instead of oldest first.
     pub newest_first: bool,
     pub colours: Colours,
+    /// That a secret went to the file has been said, which is only said once.
+    pub told_file: bool,
+    /// The same, for what Omarchy's keyring is.
+    pub told_omarchy: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { font_size: FONT.initial, width_factor: WIDTH.initial, newest_first: false, colours: Colours::System }
+        Self {
+            font_size: FONT.initial,
+            width_factor: WIDTH.initial,
+            newest_first: false,
+            colours: Colours::System,
+            told_file: false,
+            told_omarchy: false,
+        }
     }
 }
 
@@ -83,9 +94,9 @@ impl Prefs {
         *self = Self { width_factor: self.width_factor - WIDTH.step, ..*self }.clamped();
     }
 
-    /// Ctrl+0 resets the size and width; the order and the colours stay.
+    /// Ctrl+0 resets the size and width, and nothing else.
     pub fn reset(&mut self) {
-        *self = Self { newest_first: self.newest_first, colours: self.colours, ..Self::default() };
+        *self = Self { font_size: FONT.initial, width_factor: WIDTH.initial, ..*self };
     }
 
     pub fn flip_order(&mut self) {
@@ -125,15 +136,39 @@ mod tests {
 
     #[test]
     fn steps_stay_in_range() {
-        let mut p = Prefs { font_size: 31, width_factor: 78, newest_first: true, colours: Colours::OnwardLight };
+        let mut p = Prefs {
+            font_size: 31,
+            width_factor: 78,
+            newest_first: true,
+            colours: Colours::OnwardLight,
+            ..Prefs::default()
+        };
         p.bigger();
         p.bigger();
         p.wider();
-        assert_eq!(p, Prefs { font_size: 32, width_factor: 80, newest_first: true, colours: Colours::OnwardLight });
+        assert_eq!(
+            p,
+            Prefs {
+                font_size: 32,
+                width_factor: 80,
+                newest_first: true,
+                colours: Colours::OnwardLight,
+                ..Prefs::default()
+            }
+        );
         p.reset();
         p.narrower();
         p.smaller();
-        assert_eq!(p, Prefs { font_size: 17, width_factor: 36, newest_first: true, colours: Colours::OnwardLight });
+        assert_eq!(
+            p,
+            Prefs {
+                font_size: 17,
+                width_factor: 36,
+                newest_first: true,
+                colours: Colours::OnwardLight,
+                ..Prefs::default()
+            }
+        );
     }
 
     #[test]

@@ -249,7 +249,8 @@ ApplicationWindow {
         repeat: true
         // First run's keys open the picker and leave it, so what started this can stop being true on the way.
         running: model.snapshotPath !== "" && !done
-                 && (pending !== null || model.pickerState === "ready" || model.overlay === "onboarding")
+                 && (pending !== null || model.pickerState === "ready" || model.pickerState === "error"
+                     || model.overlay === "onboarding")
         onTriggered: {
             // One key per tick, so what a key starts (opening a selection) is done before the next one.
             if (pending === null)

@@ -16,6 +16,7 @@ use crate::miniflux;
 use crate::opml::{self, ExportFailed};
 use crate::paging::PageRequest;
 use crate::readeck;
+use crate::secrets::{Failure, Kind, SecretId, Secrets};
 use crate::server::Server;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +35,12 @@ pub struct Backend {
     config: RwLock<config::Config>,
     /// What was wrong with the config file at startup, until a save replaces it.
     problem: RwLock<Option<String>>,
+    /// Where the secrets are that `config.toml` doesn't hold.
+    secrets: Secrets,
+    /// Whether they've been asked for. Until then, a section with no secret doesn't mean anything yet.
+    looked: AtomicBool,
+    /// What the stores gave no answer about, and why: there may well be a secret, which is not the same as none.
+    unread: RwLock<Option<Unread>>,
     /// The client for the configured server, made on first use and kept: a Google Reader client remembers its
     /// login and which stream each feed id stands for. A new config drops it.
     server: Mutex<Option<Arc<Server>>>,
@@ -47,6 +54,12 @@ pub struct Backend {
     demo: AtomicBool,
     /// The demo's starred articles, which `*` changes in memory.
     stars: demo::Stars,
+}
+
+#[derive(Clone)]
+struct Unread {
+    ids: Vec<SecretId>,
+    failure: Failure,
 }
 
 /// Settings that passed the checks, ready to save.
@@ -109,13 +122,20 @@ impl std::fmt::Debug for Backend {
 
 impl Backend {
     pub fn new(demo: bool) -> Self {
-        Self::reading(demo, config::path())
+        Self::reading(demo, config::path(), Secrets::system())
     }
 
-    /// One whose `config.toml` is in `dir`, for tests: they mustn't depend on the real config, let alone change it.
+    /// One whose `config.toml` is in `dir`, for tests: they mustn't depend on the real config, let alone change it,
+    /// and the same goes for the real keyring. Secrets go to a store in memory.
     #[cfg(test)]
     pub(crate) fn with_config_dir(demo: bool, dir: &std::path::Path) -> Self {
-        Self::reading(demo, Some(dir.join("config.toml")))
+        Self::with_secrets(demo, dir, crate::secrets::tests::in_memory(dir))
+    }
+
+    /// The same, with a store that's been told how to behave.
+    #[cfg(test)]
+    pub(crate) fn with_secrets(demo: bool, dir: &std::path::Path, secrets: Secrets) -> Self {
+        Self::reading(demo, Some(dir.join("config.toml")), secrets)
     }
 
     /// For tests that need no config: an empty one, and nowhere to save one.
@@ -124,7 +144,7 @@ impl Backend {
         Self::with_config_dir(demo, std::path::Path::new("/nonexistent/onward-tests"))
     }
 
-    fn reading(demo: bool, config_path: Option<PathBuf>) -> Self {
+    fn reading(demo: bool, config_path: Option<PathBuf>, secrets: Secrets) -> Self {
         let http = api_client();
         let (config, problem) = match config::read(config_path.as_deref()) {
             Ok(config) => (config, None),
@@ -137,6 +157,9 @@ impl Backend {
             config_path,
             config: RwLock::new(config),
             problem: RwLock::new(problem),
+            secrets,
+            looked: AtomicBool::new(false),
+            unread: RwLock::new(None),
             server: Mutex::new(None),
             http,
             detection: detection_client(),
@@ -153,9 +176,56 @@ impl Backend {
     }
 
     fn set_config(&self, cfg: config::Config) {
+        let ids = cfg.secret_ids();
+        let mut unread = self.unread.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(left) = unread.as_mut() {
+            left.ids.retain(|id| ids.contains(id));
+        }
+        unread.take_if(|left| left.ids.is_empty());
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = cfg;
         *self.problem.write().unwrap_or_else(|e| e.into_inner()) = None;
         *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.looked.store(true, Ordering::Release);
+    }
+
+    fn unread(&self) -> Option<Unread> {
+        self.unread.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Goes to the stores for what `config.toml` doesn't hold. A section nobody has a secret for after that is one
+    /// that's really missing it: the form then says so. With no answer, it stays as it is and `failure` says why.
+    async fn read_secrets(&self) -> Outcome {
+        let mut found = Vec::new();
+        let mut gone = Vec::new();
+        let mut unread: Option<Unread> = None;
+        for (id, answer) in self.secrets.read(self.config().missing()).await {
+            match answer {
+                Ok(Some(secret)) => found.push((id, secret)),
+                Ok(None) => gone.push(id),
+                Err(failure) => unread.get_or_insert(Unread { ids: Vec::new(), failure }).ids.push(id),
+            }
+        }
+        let cfg = {
+            let mut cfg = self.config.write().unwrap_or_else(|e| e.into_inner());
+            found.into_iter().for_each(|(id, secret)| cfg.fill(&id, secret));
+            // A Readeck with no token never counted as set up.
+            if gone.iter().any(|id| id.kind == Kind::Readeck) {
+                cfg.readeck = None;
+            }
+            cfg.clone()
+        };
+        if !cfg.is_complete() && unread.is_none() {
+            let wanted = gone.iter().find(|id| match cfg.server() {
+                config::Server::Miniflux => id.kind == Kind::Miniflux,
+                config::Server::GReader => id.kind == Kind::GReader,
+            });
+            *self.problem.write().unwrap_or_else(|e| e.into_inner()) = wanted.map(SecretId::missing_message);
+        }
+        let problem = unread.as_ref().map(|left| left.failure.message());
+        *self.unread.write().unwrap_or_else(|e| e.into_inner()) = unread;
+        *self.server.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.looked.store(true, Ordering::Release);
+        Outcome::SecretsRead { status: self.status(), problem }
     }
 
     /// Sample data, and nothing is saved, prefs included.
@@ -174,8 +244,9 @@ impl Backend {
         let cfg = self.config();
         let demo = self.demo();
         Status {
+            looking: !demo && !self.looked.load(Ordering::Acquire) && !cfg.missing().is_empty(),
             configured: demo || cfg.is_complete(),
-            readeck: demo || cfg.readeck.is_some(),
+            readeck: demo || cfg.readeck.as_ref().is_some_and(config::Readeck::is_complete),
             capabilities: if demo { Capabilities::SAMPLES } else { cfg.capabilities() },
         }
     }
@@ -213,7 +284,8 @@ impl Backend {
     fn server(&self) -> Result<Arc<Server>, Error> {
         let cfg = self.config();
         if !cfg.is_complete() {
-            return Err(Error::Setup("The feed server is not set up yet".into()));
+            let why = self.unread().map_or_else(|| "The feed server is not set up yet".into(), |u| u.failure.message());
+            return Err(Error::Setup(why));
         }
         let mut kept = self.server.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(server) = &*kept {
@@ -228,20 +300,50 @@ impl Backend {
     /// stops everything; Readeck values that fail don't: see `check_readeck`.
     async fn save_settings(&self, values: SettingsValues) -> Result<Saved, Error> {
         let Checked { cfg, username, readeck_problem } = self.check_settings(values).await?;
+        let mut place = None;
         if !self.demo() {
+            // Stored and read back first: if that can't be done, `config.toml` isn't touched. What goes in it has no
+            // secret in it, whatever was there, as this is a save someone made.
+            let stored = self.secrets.save(cfg.secrets()).await?;
             // Writing and flushing the file blocks; keep it off the runtime's few workers.
-            let (saved, path) = (cfg.clone(), self.config_path.clone());
+            let (saved, path) = (cfg.without_secrets(), self.config_path.clone());
             tokio::task::spawn_blocking(move || config::save(&saved, path.as_deref())).await.map_err(|e| {
                 Error::Io { context: "Could not save the settings".into(), source: std::io::Error::other(e) }
             })??;
+            let keep = cfg.secret_ids();
+            let stale = self.config().secret_ids().into_iter().filter(|id| !keep.contains(id)).collect();
+            self.secrets.forget(stale, &stored).await;
+            place = Some(stored);
         }
         self.set_config(cfg);
-        Ok(Saved { status: self.status(), username, readeck_problem })
+        Ok(Saved { status: self.status(), username, readeck_problem, place })
+    }
+
+    /// Which sections the form leaves as they are though it shows no secret for them: the stores couldn't say what's
+    /// there, so an empty field means nothing, and treating it as "no secret" would throw the real one away. A feed
+    /// server in use can't be one of them. It has to be signed in to, and `check_settings` says so.
+    fn left_alone(&self, values: &SettingsValues) -> Vec<Kind> {
+        let Some(unread) = self.unread() else { return Vec::new() };
+        let unknown = |kind, url: &str, username: &str, secret: &str| {
+            let (url, username) = (url.trim().trim_end_matches('/'), username.trim());
+            let same = |id: &SecretId| id.kind == kind && id.url == url && id.username == username;
+            secret.is_empty() && unread.ids.iter().any(same)
+        };
+        let miniflux = unknown(Kind::Miniflux, &values.miniflux_url, "", &values.miniflux_api_key)
+            && values.server != config::Server::Miniflux;
+        let greader = unknown(Kind::GReader, &values.greader_url, &values.greader_username, &values.greader_password)
+            && values.server != config::Server::GReader;
+        let readeck = unknown(Kind::Readeck, &values.readeck_url, "", &values.readeck_token);
+        [(miniflux, Kind::Miniflux), (greader, Kind::GReader), (readeck, Kind::Readeck)]
+            .into_iter()
+            .filter_map(|(left, kind)| left.then_some(kind))
+            .collect()
     }
 
     /// What to save, once the servers have had their say. The other kind of server's fields are kept when they're
     /// complete, so switching back needs no typing; otherwise they're dropped.
     async fn check_settings(&self, values: SettingsValues) -> Result<Checked, Error> {
+        let left_alone = self.left_alone(&values);
         let half_filled = values.readeck_url.trim().is_empty() != values.readeck_token.trim().is_empty();
         let mut cfg = config::Config {
             server: Some(values.server),
@@ -267,11 +369,19 @@ impl Backend {
         let readeck = cfg.readeck.take();
         cfg.validate()?;
         let username = if self.demo() { None } else { Some(self.client_for(&cfg)?.check().await?) };
+        let before = self.config();
         let (readeck, readeck_problem) = match self.check_readeck(readeck, half_filled).await {
+            _ if left_alone.contains(&Kind::Readeck) => (before.readeck, None),
             Ok(readeck) => (readeck, None),
-            Err(e) => (self.config().readeck, Some(e.message())),
+            Err(e) => (before.readeck, Some(e.message())),
         };
         cfg.readeck = readeck;
+        if left_alone.contains(&Kind::Miniflux) {
+            cfg.miniflux = before.miniflux;
+        }
+        if left_alone.contains(&Kind::GReader) {
+            cfg.greader = before.greader;
+        }
         Ok(Checked { cfg, username, readeck_problem })
     }
 
@@ -423,9 +533,12 @@ impl Backend {
                 let result = if self.demo() {
                     Ok(())
                 } else {
-                    match self.config().readeck {
+                    match self.config().readeck.filter(config::Readeck::is_complete) {
                         Some(cfg) => readeck::save(&self.http, &cfg, &url).await,
-                        None => Err(Error::Setup("Readeck is not set up. Add it in Settings.".into())),
+                        None => Err(Error::Setup(self.unread().map_or_else(
+                            || "Readeck is not set up. Add it in Settings.".into(),
+                            |left| left.failure.message(),
+                        ))),
                     }
                 };
                 Outcome::SavedToReadeck { index, id, result: result.map_err(msg) }
@@ -475,9 +588,15 @@ impl Backend {
                 };
                 Outcome::RowMarkedRead { selection, label, up_to, result: result.map_err(msg) }
             }
+            Effect::ReadSecrets => self.read_secrets().await,
             Effect::LoadSettings => Outcome::SettingsLoaded {
                 values: self.settings(),
-                problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
+                problem: self
+                    .problem
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                    .or_else(|| self.unread().map(|left| left.failure.in_form())),
             },
             Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
             Effect::Probe { probe, address } => {
@@ -972,7 +1091,12 @@ mod tests {
         backend.set_config(cfg);
         assert_eq!(
             backend.status(),
-            Status { configured: true, readeck: false, capabilities: config::Server::GReader.capabilities() }
+            Status {
+                looking: false,
+                configured: true,
+                readeck: false,
+                capabilities: config::Server::GReader.capabilities()
+            }
         );
         assert_eq!(backend.settings().server, config::Server::GReader);
         assert!(matches!(*backend.server().unwrap(), Server::GReader(_)));
@@ -1010,7 +1134,10 @@ mod tests {
     #[tokio::test]
     async fn demo_mode_serves_the_sample_data() {
         let backend = Backend::unconfigured(true);
-        assert_eq!(backend.status(), Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES });
+        assert_eq!(
+            backend.status(),
+            Status { looking: false, configured: true, readeck: true, capabilities: Capabilities::SAMPLES }
+        );
         let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
             panic!("no feed counts");
         };
@@ -1303,5 +1430,336 @@ mod tests {
         let feeds = ["http://feeds.lan/a", "http://feeds.lan/b", "http://192.168.1.2/c", "https://example.com/d", "x"];
         let feeds = feeds.map(String::from);
         assert_eq!(private_hosts(&feeds), ["feeds.lan", "192.168.1.2"]);
+    }
+
+    // ---- Secrets ---------------------------------------------------------------------------------------------------
+
+    use crate::secrets::Place;
+    use crate::secrets::tests::{Act, FILE, Scripted, id, scripted};
+    use wiremock::matchers::{header, method, path as at};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const URL_ONLY: &str = "server = \"miniflux\"\n[miniflux]\nurl = \"https://m.example.com\"\n";
+
+    fn in_dir(config: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        std::fs::write(&file, config).unwrap();
+        (dir, file)
+    }
+
+    async fn read(backend: &Backend) -> (Status, Option<String>) {
+        match backend.run(Effect::ReadSecrets).await {
+            Some(Outcome::SecretsRead { status, problem }) => (status, problem),
+            _ => panic!("the answer to reading secrets"),
+        }
+    }
+
+    async fn saved(backend: &Backend, values: SettingsValues) -> Result<Saved, String> {
+        match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
+            Some(Outcome::SettingsSaved(result)) => result,
+            _ => panic!("the answer to a save"),
+        }
+    }
+
+    async fn form(backend: &Backend) -> (SettingsValues, Option<String>) {
+        match backend.run(Effect::LoadSettings).await {
+            Some(Outcome::SettingsLoaded { values, problem }) => (values, problem),
+            _ => panic!("the form"),
+        }
+    }
+
+    /// A Miniflux that takes this key and no other, and says who's there.
+    async fn miniflux_taking(key: &str) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(at("/v1/me"))
+            .and(header("X-Auth-Token", key))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 1, "username": "me" })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[test]
+    fn a_config_with_its_secrets_in_it_looks_for_nothing() {
+        let (dir, _file) = in_dir("[miniflux]\nurl = \"https://m.example.com\"\napi_key = \"typed\"\n");
+        let store = Scripted::default();
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let status = backend.status();
+        assert!(status.configured && !status.looking);
+        assert_eq!(store.calls(), 0, "and no store is called: an existing setup goes on as it was");
+    }
+
+    #[tokio::test]
+    async fn a_secret_in_the_config_wins_over_the_store() {
+        let (dir, _file) = in_dir(
+            "[miniflux]\nurl = \"https://m.example.com\"\napi_key = \"typed\"\n[readeck]\nurl = \"https://r.example.com\"\n",
+        );
+        let store = Scripted::default();
+        store.put_in(&id(Kind::Miniflux, "https://m.example.com", ""), "stored");
+        store.put_in(&id(Kind::Readeck, "https://r.example.com", ""), "token");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        read(&backend).await;
+        let (values, _) = form(&backend).await;
+        assert_eq!(values.miniflux_api_key, "typed");
+        assert_eq!(values.readeck_token, "token", "each secret on its own");
+    }
+
+    #[tokio::test]
+    async fn starting_never_rewrites_the_config() {
+        let text = "# mine\n[miniflux]\nurl = \"https://m.example.com\"\napi_key = \"typed\"\n[readeck]\nurl = \"https://r.example.com\"\n";
+        let (dir, file) = in_dir(text);
+        let store = Scripted::default();
+        store.put_in(&id(Kind::Readeck, "https://r.example.com", ""), "token");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        assert!(backend.status().looking);
+        read(&backend).await;
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        assert_eq!(store.holds(&id(Kind::Miniflux, "https://m.example.com", "")), None, "nothing moved by itself");
+    }
+
+    #[tokio::test]
+    async fn a_stored_secret_is_found_and_used() {
+        let server = miniflux_taking("stored").await;
+        let (dir, _file) = in_dir(&format!("[miniflux]\nurl = \"{}\"\n", server.uri()));
+        let store = Scripted::default();
+        store.put_in(&id(Kind::Miniflux, &server.uri(), ""), "stored");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let before = backend.status();
+        assert!(before.looking && !before.configured);
+        let (after, problem) = read(&backend).await;
+        assert!(after.configured && !after.looking && problem.is_none());
+        assert_eq!(backend.server().unwrap().check().await.unwrap(), "me");
+    }
+
+    #[tokio::test]
+    async fn pointing_the_config_at_another_server_leaves_the_secret_behind() {
+        let mine = MockServer::start().await;
+        let other = MockServer::start().await;
+        Mock::given(wiremock::matchers::any()).respond_with(ResponseTemplate::new(500)).expect(0).mount(&other).await;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Scripted::default();
+        store.put_in(&id(Kind::Miniflux, &mine.uri(), ""), "the secret");
+        let config = |url: &str| format!("[miniflux]\nurl = \"{url}\"\n");
+        std::fs::write(dir.path().join("config.toml"), config(&other.uri())).unwrap();
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let (status, problem) = read(&backend).await;
+        assert!(!status.configured && problem.is_none(), "it's not stuck: this server has no secret");
+        assert!(backend.server().is_err());
+        let (values, problem) = form(&backend).await;
+        assert_eq!(values.miniflux_api_key, "");
+        assert!(problem.unwrap().contains("no API key"), "and the form says so");
+        // `Mock::expect(0)`, checked when `other` is dropped: not one request reached it.
+    }
+
+    #[tokio::test]
+    async fn another_username_or_kind_is_another_secret() {
+        let url = "https://rss.example.com/api/greader.php";
+        let config = format!("server = \"greader\"\n[greader]\nurl = \"{url}\"\nusername = \"sam\"\n");
+        let (dir, _file) = in_dir(&config);
+        let store = Scripted::default();
+        store.put_in(&id(Kind::GReader, url, "ward"), "ward's");
+        store.put_in(&id(Kind::Miniflux, url, ""), "another kind's");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let (status, _) = read(&backend).await;
+        assert!(!status.configured);
+        assert_eq!(form(&backend).await.0.greader_password, "");
+    }
+
+    #[tokio::test]
+    async fn a_password_left_out_of_a_greader_section_is_looked_for() {
+        let url = "https://rss.example.com/api/greader.php";
+        let config = format!("server = \"greader\"\n[greader]\nurl = \"{url}\"\nusername = \"ward\"\n");
+        let (dir, _file) = in_dir(&config);
+        let store = Scripted::default();
+        store.put_in(&id(Kind::GReader, url, "ward"), "stored");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        assert_eq!(backend.problem.read().unwrap().as_deref(), None, "it isn't a broken file");
+        assert!(read(&backend).await.0.configured);
+    }
+
+    #[tokio::test]
+    async fn a_locked_keyring_is_not_an_empty_one() {
+        let (dir, file) = in_dir(URL_ONLY);
+        let store = Scripted::default();
+        store.put_in(&id(Kind::Miniflux, "https://m.example.com", ""), "the real one");
+        store.set(Act::Fails(Failure::Locked));
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let (status, problem) = read(&backend).await;
+        assert!(!status.configured && !status.looking);
+        assert!(problem.unwrap().contains("locked"));
+        let refused = backend.server().unwrap_err().message();
+        assert!(refused.contains("locked"), "not \"not set up\": {refused}");
+
+        // The form says why it's empty, and saving it as it is throws nothing away.
+        let (values, problem) = form(&backend).await;
+        assert!(problem.unwrap().contains("locked"));
+        assert!(saved(&backend, values).await.is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), URL_ONLY);
+        store.set(Act::Works);
+        assert_eq!(store.holds(&id(Kind::Miniflux, "https://m.example.com", "")).as_deref(), Some("the real one"));
+        assert!(read(&backend).await.0.configured, "and r finds it");
+    }
+
+    #[tokio::test]
+    async fn a_store_that_never_answers_is_a_failure_to_reach_it() {
+        let (dir, _file) = in_dir(URL_ONLY);
+        let store = Scripted::default();
+        store.set(Act::Hangs);
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let (status, problem) = read(&backend).await;
+        assert!(!status.configured);
+        assert!(problem.unwrap().contains("isn't answering"));
+    }
+
+    #[tokio::test]
+    async fn the_other_servers_unread_secret_survives_a_save() {
+        let server = miniflux_taking("key").await;
+        let greader = "https://f.example.com/api/greader.php";
+        let (dir, file) = in_dir(&format!(
+            "server = \"miniflux\"\n[miniflux]\nurl = \"{}\"\napi_key = \"key\"\n[greader]\nurl = \"{greader}\"\nusername = \"ward\"\n\
+             [readeck]\nurl = \"https://r.example.com\"\n",
+            server.uri()
+        ));
+        let store = Scripted::default();
+        let (their_password, token) =
+            (id(Kind::GReader, greader, "ward"), id(Kind::Readeck, "https://r.example.com", ""));
+        store.put_in(&their_password, "password");
+        store.put_in(&token, "token");
+        store.set(Act::Fails(Failure::Locked));
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        read(&backend).await;
+        let (values, _) = form(&backend).await;
+        assert_eq!(values.greader_password, "");
+        let answer = saved(&backend, values).await.unwrap();
+        assert_eq!(answer.readeck_problem, None, "an empty field here isn't half a Readeck");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(greader) && text.contains("r.example.com"), "{text}");
+        store.set(Act::Works);
+        assert_eq!(store.holds(&their_password).as_deref(), Some("password"));
+        assert_eq!(store.holds(&token).as_deref(), Some("token"));
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        read(&backend).await;
+        assert_eq!(form(&backend).await.0.greader_password, "password", "and it's all there next time");
+    }
+
+    #[tokio::test]
+    async fn a_save_moves_a_plain_secret_out_of_the_config() {
+        let server = miniflux_taking("plain secret").await;
+        let (dir, file) = in_dir(&format!("[miniflux]\nurl = \"{}\"\napi_key = \"plain secret\"\n", server.uri()));
+        let store = Scripted::default();
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let values = form(&backend).await.0;
+        let answer = saved(&backend, values).await.unwrap();
+        assert_eq!(answer.place, Some(Place::Keyring { omarchy: false }));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("plain secret") && !text.contains("api_key"), "{text}");
+        assert_eq!(store.holds(&id(Kind::Miniflux, &server.uri(), "")).as_deref(), Some("plain secret"));
+
+        let again = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        assert!(again.status().looking, "a lookup after a restart");
+        assert!(read(&again).await.0.configured);
+    }
+
+    #[tokio::test]
+    async fn the_store_failing_sends_it_to_the_file_and_it_still_leaves_the_config() {
+        let server = miniflux_taking("plain secret").await;
+        let (dir, file) = in_dir(&format!("[miniflux]\nurl = \"{}\"\napi_key = \"plain secret\"\n", server.uri()));
+        let store = Scripted::default();
+        store.set(Act::Fails(Failure::Unreachable));
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let values = form(&backend).await.0;
+        let answer = saved(&backend, values).await.unwrap();
+        assert_eq!(answer.place, Some(Place::File(dir.path().join(FILE).display().to_string())));
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("plain secret"));
+        assert!(std::fs::read_to_string(dir.path().join(FILE)).unwrap().contains("plain secret"));
+        let again = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        assert!(read(&again).await.0.configured, "from the file, without the store having to work");
+    }
+
+    #[tokio::test]
+    async fn with_nowhere_to_put_it_the_save_fails_and_the_config_stays_as_it_was() {
+        let server = miniflux_taking("plain secret").await;
+        let text = format!("# mine\n[miniflux]\nurl = \"{}\"\napi_key = \"plain secret\"\n", server.uri());
+        let (dir, file) = in_dir(&text);
+        let blocked = dir.path().join("not-a-folder");
+        std::fs::write(&blocked, "").unwrap();
+        let store = Scripted::default();
+        store.set(Act::Fails(Failure::Unreachable));
+        let secrets =
+            Secrets::new(Box::new(store), Some(blocked.join("secrets.toml")), false, Duration::from_millis(50));
+        let backend = Backend::with_secrets(false, dir.path(), secrets);
+        let values = form(&backend).await.0;
+        let message = saved(&backend, values).await.unwrap_err();
+        assert!(message.contains("Nothing was saved"), "{message}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        assert_eq!(form(&backend).await.0.miniflux_api_key, "plain secret", "and the app goes on as before");
+    }
+
+    #[tokio::test]
+    async fn changing_server_deletes_the_old_copy() {
+        let (old, new) = (miniflux_taking("old key").await, miniflux_taking("new key").await);
+        let (dir, _file) = in_dir(&format!("[miniflux]\nurl = \"{}\"\n", old.uri()));
+        let store = Scripted::default();
+        let (old_id, new_id) = (id(Kind::Miniflux, &old.uri(), ""), id(Kind::Miniflux, &new.uri(), ""));
+        store.put_in(&old_id, "old key");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        read(&backend).await;
+        let mut values = form(&backend).await.0;
+        values.miniflux_url = new.uri();
+        values.miniflux_api_key = "new key".into();
+        saved(&backend, values).await.unwrap();
+        assert_eq!(store.holds(&old_id), None);
+        assert_eq!(store.holds(&new_id).as_deref(), Some("new key"));
+    }
+
+    #[tokio::test]
+    async fn dropping_readeck_deletes_its_token_from_the_file_too() {
+        let server = miniflux_taking("key").await;
+        let reader = MockServer::start().await;
+        Mock::given(at("/api/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&reader)
+            .await;
+        let (dir, _file) = in_dir(&format!("[miniflux]\nurl = \"{}\"\napi_key = \"key\"\n", server.uri()));
+        let store = Scripted::default();
+        store.set(Act::Fails(Failure::Unreachable));
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let mut values = form(&backend).await.0;
+        values.readeck_url = reader.uri();
+        values.readeck_token = "the token".into();
+        saved(&backend, values.clone()).await.unwrap();
+        assert!(std::fs::read_to_string(dir.path().join(FILE)).unwrap().contains("the token"));
+        values.readeck_url.clear();
+        values.readeck_token.clear();
+        saved(&backend, values).await.unwrap();
+        assert!(!std::fs::read_to_string(dir.path().join(FILE)).unwrap().contains("the token"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_symlinked_config_stays_one_and_loses_the_secret_at_its_target() {
+        let server = miniflux_taking("plain secret").await;
+        let dir = tempfile::tempdir().unwrap();
+        let (link, target) = (dir.path().join("config.toml"), dir.path().join("dotfiles.toml"));
+        std::fs::write(&target, format!("[miniflux]\nurl = \"{}\"\napi_key = \"plain secret\"\n", server.uri()))
+            .unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let backend = Backend::with_config_dir(false, dir.path());
+        let values = form(&backend).await.0;
+        saved(&backend, values).await.unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(!std::fs::read_to_string(&target).unwrap().contains("plain secret"));
+    }
+
+    #[tokio::test]
+    async fn the_samples_never_call_a_store() {
+        let (dir, _file) = in_dir(URL_ONLY);
+        let store = Scripted::default();
+        let backend = Backend::with_secrets(true, dir.path(), scripted(dir.path(), &store));
+        assert!(!backend.status().looking);
+        assert_eq!(saved(&backend, values("https://m.example.com", "", "")).await.unwrap().place, None);
+        assert_eq!(store.calls(), 0);
     }
 }

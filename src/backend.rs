@@ -8,15 +8,15 @@ use crate::config;
 use crate::dates;
 use crate::demo;
 use crate::detect::{self, Detected};
-use crate::error::{Error, RedirectRefused};
+use crate::error::{Error, ErrorKind, RedirectRefused};
 use crate::feeds::{self, Capabilities, Changed, Counts, EntryPage, EntryStatus, FeedChange, FeedList, Selection};
 use crate::greader;
 use crate::manage;
 use crate::miniflux;
 use crate::opml::{self, ExportFailed};
 use crate::paging::PageRequest;
-use crate::readeck;
-use crate::secrets::{Failure, Kind, SecretId, Secrets};
+use crate::readeck::{self, Asked, Poll, Ticket, Token};
+use crate::secrets::{Failure, Kind, Place, SecretId, Secrets};
 use crate::server::Server;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -300,23 +300,66 @@ impl Backend {
     /// stops everything; Readeck values that fail don't: see `check_readeck`.
     async fn save_settings(&self, values: SettingsValues) -> Result<Saved, Error> {
         let Checked { cfg, username, readeck_problem } = self.check_settings(values).await?;
-        let mut place = None;
-        if !self.demo() {
-            // Stored and read back first: if that can't be done, `config.toml` isn't touched. What goes in it has no
-            // secret in it, whatever was there, as this is a save someone made.
-            let stored = self.secrets.save(cfg.secrets()).await?;
-            // Writing and flushing the file blocks; keep it off the runtime's few workers.
-            let (saved, path) = (cfg.without_secrets(), self.config_path.clone());
-            tokio::task::spawn_blocking(move || config::save(&saved, path.as_deref())).await.map_err(|e| {
-                Error::Io { context: "Could not save the settings".into(), source: std::io::Error::other(e) }
-            })??;
-            let keep = cfg.secret_ids();
-            let stale = self.config().secret_ids().into_iter().filter(|id| !keep.contains(id)).collect();
-            self.secrets.forget(stale, &stored).await;
-            place = Some(stored);
-        }
+        let place = if self.demo() { None } else { Some(self.store(&cfg).await?) };
         self.set_config(cfg);
         Ok(Saved { status: self.status(), username, readeck_problem, place })
+    }
+
+    /// Puts `cfg` where it belongs. Stored and read back first: if that can't be done, `config.toml` isn't touched. What
+    /// goes in it has no secret in it, whatever was there, as this is a save someone made.
+    async fn store(&self, cfg: &config::Config) -> Result<Place, Error> {
+        let stored = self.secrets.save(cfg.secrets()).await?;
+        // Writing and flushing the file blocks; keep it off the runtime's few workers.
+        let (saved, path) = (cfg.without_secrets(), self.config_path.clone());
+        tokio::task::spawn_blocking(move || config::save(&saved, path.as_deref())).await.map_err(|e| Error::Io {
+            context: "Could not save the settings".into(),
+            source: std::io::Error::other(e),
+        })??;
+        let keep = cfg.secret_ids();
+        let stale = self.config().secret_ids().into_iter().filter(|id| !keep.contains(id)).collect();
+        self.secrets.forget(stale, &stored).await;
+        Ok(stored)
+    }
+
+    /// Saves an approved Readeck token by itself, the moment it's there: nobody has to remember to press Save, and what's
+    /// half typed into the rest of the form stays there, unsaved. The feed server's client stays too, with what it
+    /// remembers, as nothing about it changed.
+    async fn keep_readeck(&self, url: String, token: &Token) -> Result<Saved, Error> {
+        // In memory, a file that didn't parse is an empty config, and this isn't someone choosing to replace it.
+        let path = self.config_path.clone();
+        tokio::task::spawn_blocking(move || config::read(path.as_deref())).await.map_err(|e| Error::Io {
+            context: "Could not read the settings".into(),
+            source: std::io::Error::other(e),
+        })??;
+        let readeck = config::Readeck { url, token: token.as_str().to_string() };
+        let mut cfg = self.config();
+        cfg.readeck = Some(readeck.clone());
+        let place = self.store(&cfg).await?;
+        let id = cfg.secret_ids().into_iter().find(|id| id.kind == Kind::Readeck);
+        self.config.write().unwrap_or_else(|e| e.into_inner()).readeck = Some(readeck);
+        let mut unread = self.unread.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(left) = unread.as_mut() {
+            left.ids.retain(|known| Some(known) != id.as_ref());
+        }
+        unread.take_if(|left| left.ids.is_empty());
+        drop(unread);
+        Ok(Saved { status: self.status(), username: None, readeck_problem: None, place: Some(place) })
+    }
+
+    /// One poll. A token is only passed on once Readeck takes it: asking again gets the same one, so a check that
+    /// couldn't be made is one more poll to try.
+    async fn poll_readeck(&self, url: &str, ticket: &Ticket) -> Poll {
+        let answer = readeck::poll(&self.http, url, ticket).await;
+        let Poll::Token(token) = answer else { return answer };
+        let readeck = config::Readeck { url: url.to_string(), token: token.as_str().to_string() };
+        match readeck::check(&self.http, &readeck).await {
+            Ok(()) => Poll::Token(token),
+            Err(e) if matches!(e.kind(), ErrorKind::Unreachable | ErrorKind::Server) => Poll::Failed(e.message()),
+            Err(_) => Poll::Refused(
+                "Readeck approved Onward, then wouldn't take the token it gave. Start again, or paste one above."
+                    .into(),
+            ),
+        }
     }
 
     /// Which sections the form leaves as they are though it shows no secret for them: the stores couldn't say what's
@@ -598,6 +641,28 @@ impl Backend {
                     .clone()
                     .or_else(|| self.unread().map(|left| left.failure.in_form())),
             },
+            Effect::AskReadeck { attempt, url } => {
+                let answer = if self.demo() {
+                    Asked::Failed("The sample articles have no Readeck to connect to.".into())
+                } else {
+                    readeck::ask(&self.http, &url).await
+                };
+                Outcome::ReadeckAsked { attempt, answer }
+            }
+            Effect::AwaitReadeck { attempt, millis } => {
+                tokio::time::sleep(Duration::from_millis(millis)).await;
+                Outcome::ReadeckPollDue { attempt }
+            }
+            Effect::PollReadeck { attempt, url, ticket } => {
+                let started = std::time::Instant::now();
+                let answer = self.poll_readeck(&url, &ticket).await;
+                let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                Outcome::ReadeckPolled { attempt, answer, took_ms }
+            }
+            Effect::KeepReadeck { attempt, url, token } => {
+                let result = self.keep_readeck(url, &token).await.map_err(msg);
+                Outcome::ReadeckKept { attempt, token, result }
+            }
             Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
             Effect::Probe { probe, address } => {
                 let found =
@@ -1611,6 +1676,58 @@ mod tests {
         let (status, problem) = read(&backend).await;
         assert!(!status.configured);
         assert!(problem.unwrap().contains("isn't answering"));
+    }
+
+    #[tokio::test]
+    async fn a_kept_readeck_token_leaves_a_feed_server_the_stores_didnt_answer_for_as_it_was() {
+        let (dir, file) = in_dir(URL_ONLY);
+        let store = Scripted::default();
+        let key = id(Kind::Miniflux, "https://m.example.com", "");
+        store.put_in(&key, "feed-key");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        store.set(Act::Fails(Failure::Locked));
+        backend.run(Effect::ReadSecrets).await;
+        assert!(backend.unread().is_some());
+        store.set(Act::Works);
+
+        let token = readeck::tests::token("the-token");
+        let url = "https://r.example.com".to_string();
+        let effect = Effect::KeepReadeck { attempt: 1, url: url.clone(), token };
+        let Some(Outcome::ReadeckKept { result: Ok(saved), .. }) = backend.run(effect).await else { panic!("no") };
+        assert!(saved.status.readeck);
+        assert!(!saved.status.configured, "the feed server's key is still unknown here");
+        assert_eq!(store.holds(&key).as_deref(), Some("feed-key"), "not forgotten, and not replaced by nothing");
+        assert_eq!(store.holds(&id(Kind::Readeck, &url, "")).as_deref(), Some("the-token"));
+        assert!(backend.unread().is_some_and(|left| left.ids == [key]), "and still known to be unknown");
+        let text = std::fs::read_to_string(file).unwrap();
+        assert!(text.contains("https://m.example.com") && text.contains(&url), "{text}");
+        assert!(!text.contains("the-token"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_kept_readeck_token_replaces_the_one_in_config_toml_and_the_old_address_goes() {
+        let config = "[miniflux]\nurl = \"https://m.example.com\"\napi_key = \"key\"\n\n[readeck]\n\
+                      url = \"https://old.example.com\"\ntoken = \"old-token\"\n";
+        let (dir, file) = in_dir(config);
+        let store = Scripted::default();
+        let old = id(Kind::Readeck, "https://old.example.com", "");
+        store.put_in(&old, "older");
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let token = readeck::tests::token("new-token");
+        backend.keep_readeck("https://new.example.com".into(), &token).await.unwrap();
+        let text = std::fs::read_to_string(file).unwrap();
+        assert!(!text.contains("token =") || text.contains("token = \"\""), "{text}");
+        assert!(!text.contains("old-token") && !text.contains("new-token"), "{text}");
+        assert_eq!(store.holds(&old), None);
+        assert_eq!(backend.config().readeck.unwrap().token, "new-token");
+    }
+
+    #[tokio::test]
+    async fn the_samples_have_no_readeck_to_ask() {
+        let effect = Effect::AskReadeck { attempt: 1, url: "http://127.0.0.1:1".into() };
+        let answer = Backend::unconfigured(true).run(effect).await;
+        let Some(Outcome::ReadeckAsked { answer: Asked::Failed(why), .. }) = answer else { panic!("no answer") };
+        assert!(why.contains("sample"), "{why}");
     }
 
     #[tokio::test]

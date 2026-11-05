@@ -14,12 +14,14 @@
 //! for items that arrived meanwhile.
 
 use crate::config::Server;
+use crate::config::clean_url;
 use crate::content::convert::{self, ImageRef};
 use crate::detect::{Address, Api, Detected};
 use crate::feeds::{
     self, Articles, Capabilities, Category, Changed, Counts, DeleteCategory, Destination, Entry, EntryPage,
     EntryStatus, FeedChange, FeedList, Selection,
 };
+use crate::grant::{Does, Grant, GrantView, Next};
 use crate::greader;
 use crate::keys::{self, Action};
 use crate::manage::{self, Manage, ManageView, Notice, Row as ManageRow, Stage as ManageStage, Target};
@@ -29,6 +31,7 @@ use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
 use crate::providers::{self, Choice, Field, FieldKey, Provider};
+use crate::readeck::{Asked, Poll, Ticket, Token};
 use crate::secrets::{self, Place};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -617,6 +620,28 @@ pub enum Effect {
     /// Serves the sample articles, or stops. It's an answered effect so that nothing is asked of the backend before
     /// it has switched: the backend's answer is what opens the picker.
     UseSamples(bool),
+    /// All that comes before the wait for a Readeck's approval. `attempt` is compared with every answer: see `grant.rs`.
+    AskReadeck {
+        attempt: u64,
+        url: String,
+    },
+    /// The wait before a poll, on its own so that a stopped attempt sends nothing more.
+    AwaitReadeck {
+        attempt: u64,
+        millis: u64,
+    },
+    /// Asks whether it's been approved. A token comes back only once it's passed `readeck::check`.
+    PollReadeck {
+        attempt: u64,
+        url: String,
+        ticket: Ticket,
+    },
+    /// Stores an approved token, and nothing else of what's in the form.
+    KeepReadeck {
+        attempt: u64,
+        url: String,
+        token: Token,
+    },
     /// Whatever `config.toml` leaves to the stores. They can take a while, so this never holds up the start.
     ReadSecrets,
     LoadSettings,
@@ -756,6 +781,25 @@ pub enum Outcome {
         problem: Option<String>,
     },
     SettingsSaved(Result<Saved, String>),
+    ReadeckAsked {
+        attempt: u64,
+        answer: Asked,
+    },
+    ReadeckPollDue {
+        attempt: u64,
+    },
+    ReadeckPolled {
+        attempt: u64,
+        answer: Poll,
+        /// How long it took, which comes off the time the code has left.
+        took_ms: u64,
+    },
+    /// This one counts whatever became of the attempt: it's in the store by now.
+    ReadeckKept {
+        attempt: u64,
+        token: Token,
+        result: Result<Saved, String>,
+    },
     Probed {
         probe: u64,
         found: Detected,
@@ -928,6 +972,8 @@ pub struct App {
     connect: Connect,
     /// A new address, or stepping back, makes the probes still in flight no-ops: each remembers this and compares.
     latest_probe: u64,
+    /// Connecting Readeck through a browser.
+    grant: Grant,
     /// The row the arrows are on, in `Welcome` and `NoServer`.
     step_cursor: usize,
     /// The last link opened from first run or the form. Whether a browser really opened is more than `xdg-open`
@@ -996,6 +1042,7 @@ impl App {
             step: Step::Welcome,
             connect: Connect::default(),
             latest_probe: 0,
+            grant: Grant::default(),
             step_cursor: 0,
             shown_link: None,
             samples: None,
@@ -2870,6 +2917,7 @@ impl App {
         let first_run = self.overlay == Overlay::Onboarding;
         let in_window = std::mem::take(&mut self.settings_window_open);
         self.shown_link = None;
+        let kept = self.grant.closed();
         if let Some(saved) = saved {
             self.readeck = saved.status.readeck;
             self.capabilities = saved.status.capabilities;
@@ -2882,16 +2930,18 @@ impl App {
             self.clear_queue();
             self.picker_list = PickerList::Loading;
             self.open_picker(None, fx);
-            self.tell_where(saved.place, fx);
+            self.tell_where(saved.place.or(kept), fx);
         } else if in_window {
             // The reader behind it never stopped.
             self.settings = None;
+            self.tell_where(kept, fx);
         } else if !first_run {
             self.settings = None;
             self.overlay = Overlay::None;
             if self.queue.is_empty() {
                 self.open_picker(None, fx);
             }
+            self.tell_where(kept, fx);
         }
     }
 
@@ -2961,8 +3011,93 @@ impl App {
         form.error.clear();
         form.checking = true;
         values.miniflux_password.clear();
+        // What the browser got is saved, and the field never heard of it. Something typed there since is another matter.
+        let untouched = values.readeck_token == form.values.readeck_token;
+        let kept = self.grant.token_for(&clean_url(&values.readeck_url)).filter(|_| untouched);
+        let token = kept.map(|token| token.as_str().to_string());
         form.values = values.clone();
+        values.readeck_token = token.unwrap_or(values.readeck_token);
+        self.grant.saving();
         vec![Effect::SaveSettings(SettingsValuesBox(values))]
+    }
+
+    // ---- Readeck through a browser ------------------------------------------
+
+    fn settings_open(&self) -> bool {
+        self.overlay == Overlay::Settings || self.settings_window_open
+    }
+
+    /// The browser way in, for under Readeck's fields.
+    pub fn readeck_view(&self) -> GrantView {
+        self.grant.view(self.settings.as_ref().is_some_and(|form| form.checking))
+    }
+
+    /// A row of `readeck_view`. `address` is what's in the Readeck URL field now.
+    pub fn readeck_row(&mut self, row: usize, address: &str) -> Vec<Effect> {
+        let checking = self.settings.as_ref().is_some_and(|form| form.checking);
+        if !self.settings_open() {
+            return Vec::new();
+        }
+        match self.grant.row(row, checking) {
+            Some(Does::Open(url)) => vec![Effect::OpenInBrowser { url, then: AfterOpen::Nothing }],
+            Some(Does::Start) => self.ask_readeck(address),
+            None => Vec::new(),
+        }
+    }
+
+    fn ask_readeck(&mut self, address: &str) -> Vec<Effect> {
+        let url = clean_url(address);
+        let bad = if url.is_empty() {
+            Some("Enter your Readeck's address first.".to_string())
+        } else {
+            crate::config::validate_url(&url).err().map(|e| e.message())
+        };
+        let attempt = self.grant.start(url.clone());
+        if let Some(why) = bad {
+            self.grant.fail(why);
+            return Vec::new();
+        }
+        vec![Effect::AskReadeck { attempt, url }]
+    }
+
+    /// Any change to the Readeck URL field, typed or filled in. That's what stops a wait for the old address.
+    pub fn readeck_edited(&mut self, text: &str) {
+        self.grant.address_edited(&clean_url(text));
+    }
+
+    fn readeck_polled(&mut self, attempt: u64, answer: Poll, took_ms: u64, fx: &mut Vec<Effect>) {
+        match self.grant.polled(attempt, answer, took_ms) {
+            Some(Next::Wait(millis)) => fx.push(Effect::AwaitReadeck { attempt, millis }),
+            Some(Next::Keep(token)) => {
+                if let Some(form) = self.settings.as_mut() {
+                    form.checking = true;
+                }
+                fx.push(Effect::KeepReadeck { attempt, url: self.grant.url().to_string(), token });
+            }
+            None => {}
+        }
+    }
+
+    /// It's in the store, or it isn't. If the form went away meanwhile, there's nothing left to say that on.
+    fn readeck_kept(&mut self, attempt: u64, token: Token, result: Result<Saved, String>, fx: &mut Vec<Effect>) {
+        let current = self.grant.current(attempt);
+        if current && let Some(form) = self.settings.as_mut() {
+            form.checking = false;
+        }
+        match result {
+            Ok(saved) => {
+                self.readeck = saved.status.readeck;
+                self.grant.kept(attempt, token);
+                if current {
+                    self.grant.keep_place(saved.place);
+                } else {
+                    self.toast_info("Readeck is connected");
+                    self.tell_where(saved.place, fx);
+                }
+            }
+            Err(why) if current => self.grant.fail(why),
+            Err(why) => self.toast_error(why),
+        }
     }
 
     /// The form's Cancel button: Esc.
@@ -3315,6 +3450,7 @@ impl App {
         }
         self.settings_window_open = false;
         self.settings = None;
+        self.grant.stop();
         self.overlay = Overlay::Onboarding;
         self.connect = Connect { from_settings: true, ..Connect::default() };
         self.go_to_step(Step::Connect, 0);
@@ -3397,6 +3533,7 @@ impl App {
         fresh.settings_in_window = self.settings_in_window;
         fresh.latest_load = self.latest_load + 1;
         fresh.latest_probe = self.latest_probe + 1;
+        fresh.grant = Grant::after(&self.grant);
         fresh.latest_transfer = self.latest_transfer + 1;
         fresh.latest_manage = self.latest_manage + 1;
         fresh.latest_list = self.latest_list + 1;
@@ -3661,6 +3798,20 @@ impl App {
                         Some(SettingsForm { values, problem, error: String::new(), checking: false, refill });
                 }
             }
+            Outcome::ReadeckAsked { attempt, answer } => {
+                if let Some(millis) = self.grant.asked(attempt, answer) {
+                    fx.push(Effect::AwaitReadeck { attempt, millis });
+                }
+            }
+            Outcome::ReadeckPollDue { attempt } => {
+                if let Some(ticket) = self.grant.due(attempt) {
+                    fx.push(Effect::PollReadeck { attempt, url: self.grant.url().to_string(), ticket });
+                }
+            }
+            Outcome::ReadeckPolled { attempt, answer, took_ms } => {
+                self.readeck_polled(attempt, answer, took_ms, &mut fx);
+            }
+            Outcome::ReadeckKept { attempt, token, result } => self.readeck_kept(attempt, token, result, &mut fx),
             Outcome::SettingsSaved(result) => match result {
                 Ok(saved) => self.close_settings(Some(saved), &mut fx),
                 Err(message) => self.save_failed(message),

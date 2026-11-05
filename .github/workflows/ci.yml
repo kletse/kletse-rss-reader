@@ -58,8 +58,12 @@ jobs:
           empty=$(mktemp -d)
           mkdir "$empty/config" "$empty/state"
           export XDG_CONFIG_HOME="$empty/config" XDG_STATE_HOME="$empty/state"
-          for keys in " " "ArrowDown ArrowDown" "ArrowDown Enter" "ArrowDown Enter Escape" "ArrowUp Enter" \
-              "ArrowUp Enter ArrowDown Enter" "Enter" "Enter Enter" "Enter Enter ," "Enter Enter , Escape"; do
+          for keys in " " "ArrowDown ArrowDown" "ArrowDown Enter" "ArrowDown Enter Escape" "ArrowDown Enter j j j" \
+              "ArrowDown Enter row:0" "ArrowDown Enter row:1" "ArrowDown Enter row:2" "ArrowDown Enter row:3" \
+              "ArrowDown Enter row:0 Escape" "ArrowDown Enter row:2 Escape" "ArrowDown Enter row:3 Escape" \
+              "ArrowDown Enter row:1 Escape Escape" "ArrowUp Enter" \
+              "ArrowUp Enter ArrowDown Enter" "Enter" "Enter Enter" "Enter Enter ," "Enter Enter , Escape" \
+              "Enter Enter , row:0"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
@@ -70,14 +74,36 @@ jobs:
           fake=$!
           trap 'kill $fake' EXIT
           sleep 1
-          look="ArrowDown Enter type:127.0.0.1:18399"
-          for keys in "ArrowDown Enter row:0" "ArrowDown Enter row:0 Escape" "ArrowDown Enter type:rss accept" \
+          look="ArrowDown Enter row:3 type:127.0.0.1:18399"
+          for keys in "ArrowDown Enter row:3 row:0" "ArrowDown Enter row:3 row:0 Escape" \
+              "ArrowDown Enter row:3 type:rss accept" \
               "$look/miniflux accept x x" "$look/miniflux accept x x Escape" "$look/miniflux accept x x row:0" \
               "$look/miniflux accept x x row:0 row:1" \
               "$look/miniflux accept x x type:someone tab type:wrong accept x x" \
               "$look/old accept x x type:someone tab type:wrong accept x x" "$look/no-passwords accept x x" \
               "$look/freshrss accept x x" "$look/freshrss-off accept x x" "$look/freshrss-stripped accept x x" \
               "$look/commafeed accept x x" "$look/gate accept x x" "$look/nothing accept x x"; do
+            echo "== $keys"
+            rm -f /tmp/shot.png
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
+            test -s /tmp/shot.png
+          done
+          # Each service from the list: the right address, a wrong pick each way and the switch, by row and by Enter, an
+          # address that's nothing, and back with Esc.
+          service() { echo "ArrowDown Enter row:$1 type:127.0.0.1:18399/$2 accept x x"; }
+          for keys in "$(service 0 miniflux)" "$(service 0 miniflux) type:someone tab type:wrong accept x x" \
+              "$(service 1 freshrss)" "$(service 1 freshrss-off)" "$(service 1 freshrss-stripped)" \
+              "$(service 0 freshrss)" "$(service 0 freshrss) row:0" "$(service 0 freshrss) accept" \
+              "$(service 0 freshrss-off) row:0" "$(service 0 freshrss) row:1" "$(service 0 freshrss) Escape Escape" \
+              "$(service 1 miniflux)" "$(service 1 miniflux) row:0" "$(service 1 miniflux) accept" \
+              "$(service 1 no-passwords) row:0" "$(service 1 miniflux) Escape Escape Escape" \
+              "$(service 2 freshrss)" "$(service 2 miniflux)" "$(service 2 miniflux) row:0" "$(service 2 commafeed)" \
+              "$(service 2 nothing)" "$(service 2 nothing) row:0" "$(service 2 nothing) row:0 Escape Escape" \
+              "$(service 0 nothing)" "$(service 0 nothing) row:0" "$(service 1 nothing) row:0" "$(service 0 gate)" \
+              "ArrowDown Enter row:0 type:127.0.0.1:1 accept x x" "ArrowDown Enter row:0 type:127.0.0.1:1 accept x x row:0" \
+              "ArrowDown Enter row:1 type:127.0.0.1:1 accept x x row:0" \
+              "ArrowDown Enter row:2 type:127.0.0.1:1 accept x x row:0" \
+              "ArrowDown Enter row:0 type:127.0.0.1:1 accept x x row:0 Escape Escape Escape"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
@@ -207,7 +233,7 @@ jobs:
           # A broken config file still says so.
           mkdir "$empty/config/onward"
           echo "server = miniflux" > "$empty/config/onward/config.toml"
-          for keys in " " "ArrowDown Enter"; do
+          for keys in " " "ArrowDown Enter" "ArrowDown Enter row:0"; do
             echo "== broken config: $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward

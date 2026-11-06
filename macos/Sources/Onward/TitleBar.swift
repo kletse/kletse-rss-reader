@@ -28,9 +28,30 @@ enum TitleBar {
         case "Minimize": window.performMiniaturize(nil)
         case nil where defaults.bool(forKey: "AppleMiniaturizeOnDoubleClick"): window.performMiniaturize(nil)
         // "Fill" has no API of its own; zooming fills the screen too.
-        default: window.performZoom(nil)
+        default: zoom(window)
         }
         return true
+    }
+
+    /// The frame before the last zoom, and the one it zoomed to.
+    private static var lastZoom: (window: NSWindow, from: NSRect, to: NSRect)?
+
+    /// Zooms, or goes back the second time. Not by `isZoomed`: a real double-click starts a drag with its first click,
+    /// and the system may move the zoomed window a little, after which it no longer counts as zoomed and a zoom does
+    /// nothing. So it remembers, and goes back while the window is about where it zoomed to.
+    private static func zoom(_ window: NSWindow) {
+        if let last = lastZoom, last.window === window, near(window.frame, last.to) {
+            lastZoom = nil
+            window.setFrame(last.from, display: true, animate: true)
+            return
+        }
+        let from = window.frame
+        window.performZoom(nil)
+        lastZoom = window.frame == from ? nil : (window, from, window.frame)
+    }
+
+    private static func near(_ a: NSRect, _ b: NSRect) -> Bool {
+        abs(a.minX - b.minX) < 24 && abs(a.minY - b.minY) < 24 && abs(a.maxX - b.maxX) < 24 && abs(a.maxY - b.maxY) < 24
     }
 
     /// A button or another item in the toolbar, which has the click to itself.

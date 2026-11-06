@@ -65,6 +65,17 @@ Item {
             width: parent.width
         }
 
+        Item {
+            width: parent.width
+            height: find.height + 12
+            Button {
+                id: find
+                ui: s.ui
+                text: JSON.parse(s.model.firstRun).find_server
+                onClicked: s.model.findServer()
+            }
+        }
+
         ServerForm {
             ui: s.ui
             width: parent.width

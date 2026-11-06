@@ -5,7 +5,7 @@
 
 use super::draw;
 use super::images::{self, Job};
-use super::ui::{Inline, Ui};
+use super::ui::{Focus, Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status, Step};
 use crate::backend::Backend;
 use crate::config::Server;
@@ -72,6 +72,15 @@ impl Screenful {
         s.key(KeyCode::Down).key(KeyCode::Enter);
         s.settle();
         assert_eq!(s.ui.app.step(), Step::Connect);
+        s
+    }
+
+    /// At Connect, with the whole form.
+    fn by_hand(width: u16, height: u16) -> Self {
+        let mut s = Self::at_connect(width, height);
+        s.key(KeyCode::Tab).key(KeyCode::Enter);
+        s.settle();
+        assert_eq!(s.ui.app.connect_view().stage, "by_hand");
         s
     }
 
@@ -313,28 +322,29 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
     s.keys(",");
     s.settle();
     assert!(s.shows("● Miniflux") && s.shows("Miniflux URL") && !s.shows("Username"), "{}", s.text());
-    s.ui.form.as_mut().unwrap().focus = None;
+    s.ui.form.as_mut().unwrap().focus = Focus::Choice;
     s.keys("x"); // typing on the choice does nothing
     s.key(KeyCode::Right);
     s.settle();
     assert!(s.shows("● Google Reader API (FreshRSS, …)") && s.shows("Username"), "{}", s.text());
     assert!(s.shows("FreshRSS: https://your-freshrss/api/greader.php."), "the hint: {}", s.text());
     assert!(!s.shows("Miniflux URL"), "{}", s.text());
-    s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::GreaderUrl));
+    s.key(KeyCode::Tab).key(KeyCode::Tab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::GreaderUrl));
     s.keys("x");
     let form = s.ui.form.as_ref().unwrap();
     assert!(form.text(FieldKey::GreaderUrl).ends_with('x'));
     let shown = [
-        None,
-        Some(FieldKey::GreaderUrl),
-        Some(FieldKey::GreaderUsername),
-        Some(FieldKey::GreaderPassword),
-        Some(FieldKey::ReadeckUrl),
-        Some(FieldKey::ReadeckToken),
+        Focus::Choice,
+        Focus::Row(0),
+        Focus::Field(FieldKey::GreaderUrl),
+        Focus::Field(FieldKey::GreaderUsername),
+        Focus::Field(FieldKey::GreaderPassword),
+        Focus::Field(FieldKey::ReadeckUrl),
+        Focus::Field(FieldKey::ReadeckToken),
     ];
-    assert_eq!(form.shown(), shown);
-    s.key(KeyCode::BackTab).key(KeyCode::Left);
+    assert_eq!(form.shown(None), shown);
+    s.key(KeyCode::BackTab).key(KeyCode::BackTab).key(KeyCode::Left);
     s.settle();
     assert!(s.shows("● Miniflux"), "{}", s.text());
 }
@@ -345,16 +355,16 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     s.keys(",");
     assert_eq!(s.ui.app.screen(), Screen::Settings);
     let form = s.ui.form.as_mut().unwrap();
-    form.focus = Some(FieldKey::ReadeckToken);
+    form.focus = Focus::Field(FieldKey::ReadeckToken);
     s.keys("j");
     s.ui.paste("-pasted\n");
     s.settle();
     assert!(s.ui.form.as_ref().unwrap().text(FieldKey::ReadeckToken).ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, None, "round to the top: the server choice");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Choice, "round to the top: the server choice");
     s.key(KeyCode::BackTab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::ReadeckToken));
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckToken));
     s.key(KeyCode::Esc);
     assert!(s.ui.form.is_none());
     assert!(s.shows("1 / 8"), "back on the article: {}", s.text());
@@ -362,12 +372,14 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
 
 #[test]
 fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
-    let mut s = Screenful::at_connect(80, 24);
-    s.key(KeyCode::BackTab).key(KeyCode::Right);
+    let mut s = Screenful::by_hand(80, 24);
+    s.key(KeyCode::BackTab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Choice);
+    s.key(KeyCode::Right);
     for _ in 0..3 {
         s.key(KeyCode::Tab);
     }
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, Some(FieldKey::GreaderPassword));
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::GreaderPassword));
     s.keys("secret");
     assert!(s.shows("the API password from your profile"), "{}", s.text());
     s.ui.app.apply(Outcome::SettingsSaved(Err(crate::greader::LOGIN_REJECTED.into())));
@@ -418,9 +430,10 @@ fn connecting_from_the_samples_drops_them() {
 
 #[test]
 fn first_run_has_no_readeck_and_settings_does() {
-    let s = Screenful::at_connect(100, 40);
+    let s = Screenful::by_hand(100, 40);
     assert!(s.shows("Miniflux URL") && !s.shows("Readeck"), "{}", s.text());
-    assert!(!s.ui.form.as_ref().unwrap().shown().contains(&Some(FieldKey::ReadeckUrl)));
+    let view = s.ui.app.connect_view();
+    assert!(!s.ui.form.as_ref().unwrap().shown(Some(&view)).contains(&Focus::Field(FieldKey::ReadeckUrl)));
     let mut s = Screenful::reading(100, 40);
     s.keys(",");
     s.settle();
@@ -431,16 +444,156 @@ fn first_run_has_no_readeck_and_settings_does() {
 fn a_field_takes_what_only_the_first_run_keys_would_otherwise_take() {
     let mut s = Screenful::at_connect(100, 30);
     s.keys("jk");
-    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk");
     s.ui.paste("-pasted");
-    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk-pasted");
     s.key(KeyCode::Esc);
     s.ui.paste("elsewhere");
-    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted", "no field on this step");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk-pasted", "no field on this step");
     s.key(KeyCode::Enter);
     s.settle();
     assert_eq!(s.ui.app.step(), Step::Connect, "the cursor is on Connect, and what was typed is still there");
-    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUrl), "jk-pasted");
+    assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::Address), "jk-pasted");
+}
+
+mod connecting {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    const UNAUTHORIZED: &str = r#"{"error_message":"access unauthorized"}"#;
+    const SIGN_IN: &str = r#"<html><title>Sign In - Miniflux</title><input type="password" name="password"></html>"#;
+
+    fn page(status: u16, body: &str, kind: &str) -> ResponseTemplate {
+        ResponseTemplate::new(status).set_body_raw(body.as_bytes().to_vec(), kind)
+    }
+
+    /// A first run against a real backend, saving to a folder of its own, at the address box.
+    fn with_config(dir: &std::path::Path, routes: Routes) -> (Screenful, MockServer) {
+        let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
+        let backend = Backend::with_config_dir(false, dir);
+        let mut s = Screenful::on(100, 32, unset, backend, false);
+        let server = s.runtime.block_on(async {
+            let server = MockServer::start().await;
+            for (verb, at, response) in routes {
+                Mock::given(method(verb)).and(path(at)).respond_with(response).mount(&server).await;
+            }
+            server
+        });
+        s.key(KeyCode::Down).key(KeyCode::Enter);
+        s.settle();
+        (s, server)
+    }
+
+    type Routes = Vec<(&'static str, &'static str, ResponseTemplate)>;
+
+    fn miniflux(extra: Routes) -> Routes {
+        let mut routes = vec![
+            ("GET", "/", page(200, SIGN_IN, "text/html")),
+            ("GET", "/v1/me", page(401, UNAUTHORIZED, "application/json")),
+        ];
+        routes.extend(extra);
+        routes
+    }
+
+    fn sent(s: &Screenful, server: &MockServer) -> Vec<Request> {
+        s.runtime.block_on(server.received_requests()).unwrap()
+    }
+
+    #[test]
+    fn typing_an_address_sends_nothing_and_enter_finds_miniflux_and_a_password_makes_a_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let minted = page(201, r#"{"id":1,"token":"minted-key","description":"x"}"#, "application/json");
+        let me = page(200, r#"{"username":"ward"}"#, "application/json");
+        let routes = miniflux(vec![("POST", "/v1/api-keys", minted)]);
+        let (mut s, server) = with_config(dir.path(), routes);
+        s.keys(&server.uri());
+        assert!(sent(&s, &server).is_empty(), "typing asks nothing of the server");
+        s.key(KeyCode::Enter);
+        assert!(s.shows("This is Miniflux") && s.shows("Username") && s.shows("Password"), "{}", s.text());
+        assert!(s.shows("plain http://"), "{}", s.text());
+        assert!(!s.text().to_lowercase().contains("api key"), "{}", s.text());
+        assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::MinifluxUsername));
+        s.keys("ward").key(KeyCode::Tab).keys("hunter2");
+        assert!(!s.shows("hunter2"), "{}", s.text());
+        s.runtime.block_on(server.reset());
+        s.runtime.block_on(async {
+            let token = wiremock::matchers::header("X-Auth-Token", "minted-key");
+            Mock::given(method("GET")).and(path("/v1/me")).and(token).respond_with(me).mount(&server).await;
+            let minted = page(201, r#"{"id":1,"token":"minted-key","description":"x"}"#, "application/json");
+            Mock::given(method("POST")).and(path("/v1/api-keys")).respond_with(minted).mount(&server).await;
+        });
+        s.key(KeyCode::Enter);
+        let saved = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+        assert!(saved.contains("minted-key"), "{saved}");
+        assert!(!saved.contains("hunter2") && !saved.contains("username"), "{saved}");
+        let requests = sent(&s, &server);
+        let body = String::from_utf8_lossy(&requests[0].body).to_string();
+        assert!(body.contains("Onward "), "{body}");
+        assert_ne!(s.ui.app.overlay(), Overlay::Onboarding);
+    }
+
+    #[test]
+    fn a_refused_password_is_gone_from_the_field_and_the_way_to_a_key_is_on_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = page(401, UNAUTHORIZED, "application/json");
+        let (mut s, server) = with_config(dir.path(), miniflux(vec![("POST", "/v1/api-keys", refused)]));
+        s.keys(&server.uri()).key(KeyCode::Enter);
+        s.keys("ward").key(KeyCode::Tab).keys("wrong").key(KeyCode::Enter);
+        assert!(s.shows("didn't accept that"), "{}", s.text());
+        assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxPassword), "");
+        assert_eq!(s.ui.form.as_ref().unwrap().text(FieldKey::MinifluxUsername), "ward");
+        assert!(s.shows(providers::NO_PASSWORD_ROW) && s.shows("/keys/create"), "{}", s.text());
+        s.key(KeyCode::Tab);
+        assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Row(0));
+        s.key(KeyCode::Enter);
+        assert_eq!(s.opened, [format!("{}/keys/create", server.uri())]);
+        assert!(s.shows("API key"), "{}", s.text());
+        assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::MinifluxApiKey));
+        assert!(!dir.path().join("config.toml").exists());
+    }
+
+    #[test]
+    fn a_server_onward_cant_read_is_named_and_asks_for_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let yarr = page(200, "<html><title>yarr!</title></html>", "text/html");
+        let (mut s, server) = with_config(dir.path(), vec![("GET", "/", yarr)]);
+        s.keys(&server.uri()).key(KeyCode::Enter);
+        assert!(s.shows("This is yarr, and Onward can't read it yet."), "{}", s.text());
+        assert_eq!(s.ui.app.connect_view().fields, []);
+    }
+
+    #[test]
+    fn freshrss_fits_at_the_smallest_size_with_the_focus_in_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let check = "/api/greader.php/check/compatibility";
+        let (mut s, server) = with_config(dir.path(), vec![("GET", check, page(200, "PASS", "text/plain"))]);
+        s.keys(&server.uri()).key(KeyCode::Enter);
+        s.terminal.backend_mut().resize(80, 24);
+        s.settle();
+        assert!(s.shows("Username"), "{}", s.text());
+        s.key(KeyCode::Tab);
+        assert!(s.shows("API password") && s.shows("isn't your login password"), "{}", s.text());
+        s.key(KeyCode::Tab);
+        assert!(s.shows("/i/"), "the row with the focus and its address: {}", s.text());
+    }
+
+    #[test]
+    fn settings_has_a_row_to_the_address_box_and_esc_comes_back() {
+        let mut s = Screenful::reading(100, 40);
+        s.keys(",");
+        s.settle();
+        assert!(s.shows(providers::TO_ADDRESS_ROW), "{}", s.text());
+        s.ui.form.as_mut().unwrap().focus = Focus::Row(0);
+        s.key(KeyCode::Enter);
+        s.settle();
+        assert!(s.shows("Connect your server") && s.shows("Server address"), "{}", s.text());
+        assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::Address));
+        s.key(KeyCode::Esc);
+        s.settle();
+        assert_eq!(s.ui.app.overlay(), Overlay::Settings);
+        assert!(s.shows("Readeck URL"), "{}", s.text());
+    }
 }
 
 #[test]

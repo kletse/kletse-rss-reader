@@ -1,8 +1,8 @@
 //! Draws the state in `Ui`, the way the QML does: a top bar, the reader under it, and the overlays over that.
 
 use super::article::{self, ACCENT, DIM, Row};
-use super::ui::{Form, Inline, Picture, Ui};
-use crate::app::{Overlay, PickerList, Screen, Step, ToastKind};
+use super::ui::{Focus, Form, Inline, Picture, Ui};
+use crate::app::{ConnectRow, ConnectView, Overlay, PickerList, Screen, Step, ToastKind};
 use crate::paging::Mode;
 use crate::providers::{self, Field};
 use ratatui::Frame;
@@ -214,7 +214,7 @@ impl Page {
     }
 
     fn field(&mut self, form: &Form, field: &Field, width: usize) {
-        let focused = form.focus == Some(field.key);
+        let focused = form.focus == Focus::Field(field.key);
         let start = self.rows.len();
         let label = format!("  {}", field.label);
         self.rows
@@ -238,10 +238,41 @@ impl Page {
         }
     }
 
+    /// A row to press, with where it goes printed in full: a terminal may have no browser to open.
+    fn row(&mut self, row: &ConnectRow, focused: bool, width: usize) {
+        let start = self.rows.len();
+        self.rows.push(Row {
+            line: Line::from(vec![Span::raw("  "), mark(focused), Span::styled(row.label.clone(), BOLD)]),
+            ..Row::default()
+        });
+        if let Some(url) = &row.url {
+            self.indented(url, DIM, width);
+        }
+        if focused {
+            self.focused = start..self.rows.len();
+        }
+    }
+
+    /// The address box, what it found, and what that server needs. Once there's a server, the box needs no help.
+    fn connect(&mut self, form: &Form, view: &ConnectView, width: usize) {
+        let quiet = Field { help: "", ..providers::ADDRESS };
+        self.field(form, if view.fields.is_empty() { &providers::ADDRESS } else { &quiet }, width);
+        for said in [&view.text, &view.note] {
+            if !said.is_empty() {
+                self.blank();
+                self.indented(said, Style::new(), width);
+            }
+        }
+        for field in &view.fields {
+            self.blank();
+            self.field(form, field, width);
+        }
+    }
+
     /// The server choice, the chosen server's fields and links, and Readeck when it's on the form.
     fn form(&mut self, form: &Form, width: usize) {
         self.section("Server", "← → to switch");
-        let mut choice = vec![Span::raw("  "), mark(form.focus.is_none())];
+        let mut choice = vec![Span::raw("  "), mark(form.focus == Focus::Choice)];
         for (n, provider) in providers::PROVIDERS.iter().enumerate() {
             if n > 0 {
                 choice.push(Span::raw("   "));
@@ -260,12 +291,12 @@ impl Page {
             }
             self.field(form, field, width);
         }
-        let last = provider.fields.last().map(|f| f.key);
+        let last = provider.fields.last().map(|f| Focus::Field(f.key));
         for link in provider.links {
             self.blank();
             self.indented(&format!("{}: {}", link.label, link.url), DIM, width);
             // They can't take the focus, so on a small screen they come into view with the field above them.
-            if form.focus == last {
+            if Some(form.focus) == last {
                 self.focused.end = self.rows.len();
             }
         }
@@ -316,6 +347,20 @@ fn form_foot(error: &str, hint: &str, width: usize) -> Vec<Row> {
     foot
 }
 
+/// Connect's foot. Its rows are here rather than with the fields, as they're the way out of what the foot says went
+/// wrong: on a small screen, that's what mustn't scroll away.
+fn connect_foot(form: Option<&Form>, view: &ConnectView, error: &str, hint: &str, width: usize) -> Vec<Row> {
+    let mut rows = Page::default();
+    for (n, row) in view.rows.iter().enumerate() {
+        rows.row(row, form.is_some_and(|f| f.focus == Focus::Row(n)), width);
+    }
+    let mut foot = form_foot(error, hint, width);
+    let at = foot.len().saturating_sub(article::plain(hint, DIM, width).len());
+    rows.blank();
+    foot.splice(at..at, rows.rows);
+    foot
+}
+
 fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let Some(state) = ui.app.settings() else { return };
     let Some(form) = &ui.form else { return };
@@ -324,6 +369,9 @@ fn settings(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let mut page = Page::default();
     let intro = "Changes are checked against your servers before they are saved.";
     page.head("Settings", intro, state.problem.as_deref(), w);
+    let find = ConnectRow { label: providers::TO_ADDRESS_ROW.to_string(), url: None };
+    page.row(&find, form.focus == Focus::Row(0), w);
+    page.blank();
     page.form(form, w);
     let hint = if state.checking { "Checking…" } else { "Enter to save · Esc to cancel · Tab for the next field" };
     page.draw(frame, &form_foot(&state.error, hint, w), column, !state.checking);
@@ -371,14 +419,29 @@ fn onboarding(ui: &mut Ui, frame: &mut Frame, area: Rect) {
             page.draw(frame, &form_foot("", "↑ ↓ and Enter to open · Esc to go back", w), column, false);
         }
         Step::Connect => {
-            page.head(providers::CONNECT_TITLE, providers::CONNECT_TEXT, problem, w);
+            let view = ui.app.connect_view();
+            let by_hand = view.stage == "by_hand";
+            let text = if by_hand { providers::BY_HAND_TEXT } else { providers::CONNECT_TEXT };
+            page.head(providers::CONNECT_TITLE, text, problem, w);
             let (error, checking) = state.map_or(("", false), |s| (s.error.as_str(), s.checking));
             if let Some(form) = &ui.form {
-                page.form(form, w);
+                if by_hand {
+                    page.form(form, w);
+                } else {
+                    page.connect(form, &view, w);
+                }
             }
-            let hint =
-                if checking { "Checking…" } else { "Enter to connect · Esc to go back · Tab for the next field" };
-            page.draw(frame, &form_foot(error, hint, w), column, !checking);
+            let hint = if checking {
+                "Checking…".to_string()
+            } else if view.probing {
+                "Looking at that address…".to_string()
+            } else {
+                let on_row = ui.form.as_ref().is_some_and(|f| matches!(f.focus, Focus::Row(_)));
+                let enter = if on_row { "choose".to_string() } else { view.action.to_lowercase() };
+                format!("Enter to {enter} · Esc to go back · Tab for the next field")
+            };
+            let foot = connect_foot(ui.form.as_ref(), &view, error, &hint, w);
+            page.draw(frame, &foot, column, !checking);
         }
     }
 }

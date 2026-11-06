@@ -216,7 +216,8 @@ ApplicationWindow {
 
     // ONWARD_SNAPSHOT=/path.png: once the feeds are in, press ONWARD_SNAPSHOT_KEYS (Enter: open the first
     // row), give images a moment, render the window to a PNG and quit. Screenshots, and CI's check that the QML
-    // loads and draws.
+    // loads and draws. Besides keys: type:text goes into the field with the focus, accept is Enter in that field, tab
+    // moves to the next one, row:n presses a row of first run, and find is Settings' way to the address box.
     Timer {
         id: snapshotKeys
         property var pending: null
@@ -231,7 +232,17 @@ ApplicationWindow {
             if (pending === null)
                 pending = model.snapshotKeys.split(" ").filter(k => k !== "")
             const name = pending.shift()
-            if (name !== undefined)
+            if (name?.startsWith("type:"))
+                win.activeFocusItem.insert(0, name.slice(5))
+            else if (name === "accept")
+                win.activeFocusItem.accepted()
+            else if (name === "tab")
+                win.activeFocusItem.nextItemInFocusChain().forceActiveFocus()
+            else if (name?.startsWith("row:"))
+                model.chooseOnboarding(Number(name.slice(4)))
+            else if (name === "find")
+                model.findServer()
+            else if (name !== undefined)
                 model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
             if (pending.length === 0) {
                 done = true

@@ -2,6 +2,7 @@
 //! `src/styles/syntax.css` colours highlight.js classes. Output is HTML with inline colours, which Qt's rich text
 //! understands.
 
+use super::convert::escape;
 use crate::theme::Palette;
 use std::{str::FromStr, sync::LazyLock};
 use syntect::{
@@ -101,20 +102,6 @@ pub fn to_html(code: &str, syntax: Option<&SyntaxReference>, theme: &Theme) -> S
         {
             Some(html) => out.push_str(&html),
             None => out.push_str(&escape(line)),
-        }
-    }
-    out
-}
-
-pub fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(c),
         }
     }
     out

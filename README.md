@@ -51,9 +51,9 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 ### In a terminal
 
-| Feeds picker                                                                                     | Code, in the terminal's own colours                                                                        | Keys (<kbd>?</kbd>)                                                                     |
+| Feeds picker                                                                                     | An article, in the terminal's own colours                                                                      | Keys (<kbd>?</kbd>)                                                                     |
 | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| <img src="docs/screenshots/terminal/picker.png" alt="Feeds and categories picker in a terminal"> | <img src="docs/screenshots/terminal/code.png" alt="Article with a syntax-highlighted code block in a terminal"> | <img src="docs/screenshots/terminal/help.png" alt="Keyboard shortcut overlay in a terminal"> |
+| <img src="docs/screenshots/terminal/picker.png" alt="Feeds and categories picker in a terminal"> | <img src="docs/screenshots/terminal/code.png" alt="Article with a code block in a terminal"> | <img src="docs/screenshots/terminal/help.png" alt="Keyboard shortcut overlay in a terminal"> |
 
 <sub>Screenshots use the built-in demo data (`ONWARD_DEMO=1`): Omarchy with the Tokyo Night theme, and the terminal version in foot with the same colours. The colours follow the active theme on Omarchy, the system appearance on macOS, and the terminal's palette in a terminal.</sub>
 
@@ -176,7 +176,7 @@ Font size is your terminal's business, so the app has no keys for it. <kbd>[</kb
 
 **The mouse.** The wheel scrolls, and a click opens a link, an image or a picker row. The app has the mouse to do that, so to select text hold <kbd>Shift</kbd> while you drag (<kbd>⌥</kbd> in iTerm2).
 
-**Colours** are your terminal's own, so it follows your theme, dark or light, on Omarchy and on macOS.
+**Colours** are your terminal's own, so it follows your theme, dark or light, on Omarchy and on macOS. Code blocks are plain text here: only the windows colour them.
 
 **Images** appear in the article, as in the window: at their natural size, no wider than the column, and those of the next article load ahead. Press <kbd>v</kbd>, or click one, to see it full screen. Terminals with sixel, kitty or iTerm2 graphics (foot, Ghostty, kitty, WezTerm, iTerm2) show the image itself; others, such as Alacritty and Terminal, and anything inside tmux, draw it in half-block characters. JPEG, PNG, GIF and WebP work. An SVG or AVIF stays a line in the article, `▣` and its description: open that with <kbd>v</kbd>, then <kbd>o</kbd> for your browser.
 
@@ -279,7 +279,7 @@ src/
   picker.rs          feed counts → picker rows
   prefs.rs           font size, column width and the order of unread items, remembered
   content/convert.rs feed HTML → blocks of native layout (paragraphs, images, code, quotes, lists, tables, embeds)
-  content/highlight.rs  code blocks highlighted with syntect, in theme colours
+  content/highlight.rs  code blocks highlighted with syntect, in theme colours (windows only)
   content/native.rs  the blocks' inline HTML → styled runs, for Swift and the terminal
   theme/             the Omarchy theme (watched live), the macOS appearance or the logo's colours, as a palette
   feeds.rs           what every feed server deals in: entries, feeds, counts, selections
@@ -304,7 +304,7 @@ packaging/           PKGBUILD, .desktop entry, icon, macOS app bundle script, re
 - Iframes, videos and audio become a plain _▶ Embedded media_ link. Inline SVG and MathML aren't shown (run with `ONWARD_DEBUG=1` to see on stderr when an article had some).
 - Images load (through Miniflux's media proxy if you have it enabled). While you read, the next article is already converted and its images loaded, so <kbd>j</kbd> doesn't wait for them.
 - Every link opens in your default browser, never inside the app.
-- Code blocks are highlighted with syntect using the theme's own colours.
+- Code blocks are highlighted with syntect using the theme's own colours, in the windows. The terminal version leaves it out and shows them plain, which keeps its binary smaller.
 - Text can be selected within a paragraph, and <kbd>Ctrl</kbd>+<kbd>C</kbd> (<kbd>⌘</kbd><kbd>C</kbd>) copies it.
 
 ## Not (yet) in scope

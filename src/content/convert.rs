@@ -5,6 +5,7 @@
 //!
 //! Nothing here runs scripts or loads anything; only the whitelisted tags and attributes reach the output.
 
+#[cfg(feature = "highlight")]
 use super::highlight;
 use crate::theme::Palette;
 use base64::Engine as _;
@@ -101,6 +102,7 @@ const MAX_LIST_START: i64 = 1_000_000_000;
 pub const MAX_SPAN: u32 = 1000;
 /// Code longer than this is shown plain: syntect takes tens of microseconds a line, and the article on screen
 /// is converted on the window's thread, so a dump of eighty thousand lines would hold it for seconds.
+#[cfg(feature = "highlight")]
 const HIGHLIGHT_LIMIT: usize = 100 * 1024;
 /// Where a link may point, an image may come from, and an embed may be from. Anything else (javascript:, file:,
 /// blob:…) is left out; the backend refuses to open anything but these as well.
@@ -146,6 +148,20 @@ fn collect_images(blocks: &[Block], found: &mut Vec<ImageRef>) {
     }
 }
 
+pub(super) fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// `plain`: code isn't highlighted.
 fn convert_with(html: &str, base_url: &str, palette: &Palette, plain: bool) -> Rendered {
     let doc = Html::parse_fragment(html);
@@ -154,6 +170,7 @@ fn convert_with(html: &str, base_url: &str, palette: &Palette, plain: bool) -> R
         base,
         palette,
         plain,
+        #[cfg(feature = "highlight")]
         syntax_theme: None,
         stats: Stats::default(),
         link: None,
@@ -181,7 +198,7 @@ impl Para {
         if text.chars().any(|c| !c.is_whitespace()) {
             self.visible = true;
         }
-        self.html.push_str(&highlight::escape(text));
+        self.html.push_str(&escape(text));
     }
 
     fn take(&mut self) -> Option<String> {
@@ -195,6 +212,7 @@ struct Converter<'a> {
     palette: &'a Palette,
     /// Leave code plain: only the images are wanted.
     plain: bool,
+    #[cfg(feature = "highlight")]
     syntax_theme: Option<syntect::highlighting::Theme>,
     stats: Stats,
     /// The link we are inside of, so an image in a link stays clickable.
@@ -332,7 +350,7 @@ impl Converter<'_> {
                 Some(href) => {
                     // Qt's rich text colours links from the palette unless the anchor says otherwise.
                     let accent = &self.palette.accent;
-                    para.html.push_str(&format!("<a href=\"{}\" style=\"color:{accent}\">", highlight::escape(&href)));
+                    para.html.push_str(&format!("<a href=\"{}\" style=\"color:{accent}\">", escape(&href)));
                     let outer = self.link.replace(href);
                     self.walk_children(node, out, para);
                     self.link = outer;
@@ -430,7 +448,7 @@ impl Converter<'_> {
                     }
                 }
                 Node::Text(t) if !t.trim().is_empty() => {
-                    items.push(vec![Block::Paragraph { html: highlight::escape(t.trim()) }]);
+                    items.push(vec![Block::Paragraph { html: escape(t.trim()) }]);
                 }
                 _ => {}
             }
@@ -463,7 +481,7 @@ impl Converter<'_> {
             }
         }
         if self.plain {
-            out.push(Block::Code { html: highlight::escape(&text), lang: None });
+            out.push(Block::Code { html: escape(&text), lang: None });
             return;
         }
         let hint_refs: Vec<&str> = hints.iter().map(String::as_str).collect();
@@ -471,13 +489,24 @@ impl Converter<'_> {
             .iter()
             .find_map(|h| h.strip_prefix("language-").or_else(|| h.strip_prefix("lang-")))
             .map(str::to_string);
+        out.push(self.code_block(&text, &hint_refs, lang_hint));
+    }
+
+    /// Without the `highlight` feature code stays plain: only the windows colour it.
+    #[cfg(not(feature = "highlight"))]
+    fn code_block(&mut self, text: &str, _hints: &[&str], lang_hint: Option<String>) -> Block {
+        self.stats.code_plain += 1;
+        Block::Code { html: escape(text), lang: lang_hint }
+    }
+
+    #[cfg(feature = "highlight")]
+    fn code_block(&mut self, text: &str, hints: &[&str], lang_hint: Option<String>) -> Block {
         if text.len() > HIGHLIGHT_LIMIT {
             self.stats.code_plain += 1;
             *self.stats.dropped.entry("highlighting of a code block too long for it".into()).or_default() += 1;
-            out.push(Block::Code { html: highlight::escape(&text), lang: lang_hint });
-            return;
+            return Block::Code { html: escape(text), lang: lang_hint };
         }
-        let syntax = highlight::find_syntax(&hint_refs, &text);
+        let syntax = highlight::find_syntax(hints, text);
         if syntax.is_some() {
             self.stats.code_highlighted += 1;
         } else {
@@ -488,8 +517,8 @@ impl Converter<'_> {
         }
         let palette = self.palette;
         let theme = self.syntax_theme.get_or_insert_with(|| highlight::theme(palette));
-        let html = highlight::to_html(&text, syntax, theme);
-        out.push(Block::Code { html, lang: syntax.map(|s| s.name.clone()).or(lang_hint) });
+        let html = highlight::to_html(text, syntax, theme);
+        Block::Code { html, lang: syntax.map(|s| s.name.clone()).or(lang_hint) }
     }
 
     /// A table as Qt rich-text table HTML; cell content is flattened to inline text (images become links).
@@ -561,17 +590,17 @@ impl Converter<'_> {
                     let label = if alt.is_empty() { "image".to_string() } else { alt };
                     parts.push(format!(
                         "<a href=\"{}\" style=\"color:{}\">[{}]</a>",
-                        highlight::escape(&src),
+                        escape(&src),
                         self.palette.accent,
-                        highlight::escape(&label)
+                        escape(&label)
                     ));
                 }
                 Block::Code { html, .. } => parts.push(format!("<code>{html}</code>")),
                 Block::Embed { href, label } => parts.push(format!(
                     "<a href=\"{}\" style=\"color:{}\">{}</a>",
-                    highlight::escape(&href),
+                    escape(&href),
                     self.palette.accent,
-                    highlight::escape(&label)
+                    escape(&label)
                 )),
                 Block::Quote { .. } | Block::List { .. } | Block::Table { .. } | Block::Rule => {
                     *self.stats.dropped.entry("nested block in table cell".into()).or_default() += 1;
@@ -733,16 +762,17 @@ mod tests {
         assert!(r.stats.dropped.is_empty(), "{:?}", r.stats.dropped);
     }
 
+    #[cfg(feature = "highlight")]
     #[test]
     fn a_code_block_too_long_to_highlight_is_shown_plain() {
         let line = "let x = \"<a&b>\"; // comment\n";
         let long = line.repeat(HIGHLIGHT_LIMIT / line.len() + 1);
-        let html = format!("<pre><code class='language-rust'>{}</code></pre>", highlight::escape(&long));
+        let html = format!("<pre><code class='language-rust'>{}</code></pre>", escape(&long));
         let r = convert(&html, "https://example.com/", &Palette::default());
-        assert_eq!(r.blocks, vec![Block::Code { html: highlight::escape(long.trim_end()), lang: Some("rust".into()) }]);
+        assert_eq!(r.blocks, vec![Block::Code { html: escape(long.trim_end()), lang: Some("rust".into()) }]);
         assert_eq!((r.stats.code_plain, r.stats.code_highlighted), (1, 0));
         // A block within the limit is highlighted as before.
-        let html = format!("<pre><code class='language-rust'>{}</code></pre>", highlight::escape(&line.repeat(10)));
+        let html = format!("<pre><code class='language-rust'>{}</code></pre>", escape(&line.repeat(10)));
         let r = convert(&html, "https://example.com/", &Palette::default());
         assert!(
             matches!(&r.blocks[..], [Block::Code { html, lang: Some(l) }] if l == "Rust" && html.contains("<span"))
@@ -817,6 +847,18 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "highlight"))]
+    #[test]
+    fn without_highlighting_code_is_plain_and_keeps_its_language() {
+        let r =
+            convert("<pre><code class='language-rust'>fn a() -> B&lt;C&gt; {}\n</code></pre>", "", &Palette::default());
+        let [Block::Code { html, lang }] = &r.blocks[..] else { panic!("{:?}", r.blocks) };
+        assert_eq!(html, "fn a() -&gt; B&lt;C&gt; {}");
+        assert_eq!(lang.as_deref(), Some("rust"));
+        assert_eq!((r.stats.code_plain, r.stats.code_highlighted), (1, 0));
+    }
+
+    #[cfg(feature = "highlight")]
     #[test]
     fn code_blocks_keep_their_text_and_get_highlighted() {
         let r = convert("<pre><code class='language-rust'>fn main() {}\n</code></pre>", "", &Palette::default());

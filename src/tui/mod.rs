@@ -215,7 +215,6 @@ pub fn run() -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let (events, inbox) = mpsc::channel();
     read_terminal(events.clone());
-    std::thread::spawn(crate::content::highlight::warm_up);
 
     let mut ui = Ui::new(prefs::load(), demo, picker.clone());
     ui.start(backend.status());

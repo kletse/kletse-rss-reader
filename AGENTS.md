@@ -11,7 +11,8 @@ and how to build it is in the [README](README.md).
   The `qt` feature (default) brings in cxx-qt and `bridge.rs`, which lives in the library because cxx-qt links its
   C++ into every target of the crate; the `ffi` feature builds the C interface the Mac app links (`src/ffi.rs`); the
   `tui` feature builds the terminal version. Build `tui` with `--no-default-features`, or with `cargo tui`: with
-  `qt` on as well, the terminal binary links Qt for nothing.
+  `qt` on as well, the terminal binary links Qt for nothing. `qt` and `ffi` turn on `highlight`, which is syntect and
+  `content/highlight.rs`; `tui` doesn't, so code blocks are plain there and the binary is much smaller.
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.

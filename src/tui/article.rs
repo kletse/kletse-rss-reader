@@ -644,12 +644,12 @@ mod tests {
     }
 
     #[test]
-    fn code_keeps_its_indentation_and_is_coloured_from_the_terminal() {
+    fn code_keeps_its_indentation_and_stays_plain() {
         let html = "<pre><code class='language-rust'>fn main() {\n    let x = 1;\n}\n</code></pre>";
         let rows = laid(html, 40);
-        assert_eq!(text(&rows), ["┃ Rust", "┃ fn main() {", "┃     let x = 1;", "┃ }"]);
-        let colours: Vec<_> = rows[1].line.spans.iter().filter_map(|s| s.style.fg).collect();
-        assert!(colours.contains(&Color::Magenta), "{colours:?}");
+        assert_eq!(text(&rows), ["┃ rust", "┃ fn main() {", "┃     let x = 1;", "┃ }"]);
+        let colours: Vec<_> = rows[1].line.spans.iter().skip(1).filter_map(|s| s.style.fg).collect();
+        assert!(colours.is_empty(), "{colours:?}");
     }
 
     #[test]

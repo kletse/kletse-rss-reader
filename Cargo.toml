@@ -12,13 +12,16 @@ publish = false
 [features]
 default = ["qt"]
 # The Qt Quick window (main.rs, bridge.rs, qml/): the Linux app, and `cargo run` anywhere.
-qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build"]
+qt = ["dep:cxx", "dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx-qt-build", "highlight"]
 # The terminal version (src/tui/, the onward-tui binary), on Linux and macOS, without Qt. Build it with
 # `--no-default-features --features tui`, or `cargo tui`: with `qt` on as well, it would link Qt for nothing.
 tui = ["dep:ratatui", "dep:ratatui-image", "dep:image", "dep:unicode-width"]
 # The C interface the native macOS app (macos/) links against, as a static library:
 # `cargo rustc --lib --release --no-default-features --features ffi --crate-type staticlib`.
-ffi = []
+ffi = ["highlight"]
+# Code blocks in colour, with syntect: the windows have it, the terminal shows code plain. About a quarter of the
+# binary is syntect, its regex engine and its grammars.
+highlight = ["dep:syntect"]
 
 [lib]
 name = "onward"
@@ -52,13 +55,13 @@ thiserror = "2"
 tempfile = "3" # the config is saved through a temporary file
 toml = "1"
 dirs = "7"
-# Articles: feed HTML to native blocks, code highlighted.
+# Articles: feed HTML to native blocks, code highlighted in the windows.
 scraper = "0.29"
 ego-tree = "0.11" # the node type scraper hands out
 url = "2"
 base64 = "0.22"
 percent-encoding = "2"
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+syntect = { version = "5", default-features = false, features = ["default-fancy"], optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "8" # follows the Omarchy theme directory

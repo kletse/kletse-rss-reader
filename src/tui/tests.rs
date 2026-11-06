@@ -977,7 +977,8 @@ fn resizing_fits_the_picture_again() {
     assert_eq!(s.ui.visible_pictures()[0].0.size.width, 80);
     s.terminal.backend_mut().resize(40, 50);
     s.settle();
-    assert_eq!(s.ui.visible_pictures()[0].0.size.width, 38);
+    // 38 columns give it 9.5 rows, and it ends on a whole row.
+    assert_eq!(s.ui.visible_pictures()[0].0.size.width, 36);
     assert!(coloured_cells(&s) > 0);
 }
 

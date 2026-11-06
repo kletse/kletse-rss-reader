@@ -725,7 +725,7 @@ impl Ui {
             let size_of = |src: &str, width: usize| match pictures.get(src) {
                 Some(Inline::Here { dimensions, .. }) => {
                     let available = Size::new(u16::try_from(width).unwrap_or(u16::MAX), room);
-                    Some(images::fit(*dimensions, font, available))
+                    Some(images::fit_rows(*dimensions, font, available))
                 }
                 _ => None,
             };

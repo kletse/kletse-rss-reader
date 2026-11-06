@@ -22,16 +22,20 @@ ffi = []
 
 [lib]
 name = "onward"
+# A doctest links the library as it ships, real keyring and all. There are none, and `cargo test` can't start one.
+doctest = false
 
 [[bin]]
 name = "onward"
 path = "src/main.rs"
 required-features = ["qt"]
+test = false # no tests of its own, and its harness would link the real keyring
 
 [[bin]]
 name = "onward-tui"
 path = "src/tui_main.rs"
 required-features = ["tui"]
+test = false
 
 [dependencies]
 # The window: Qt Quick, driven from Rust.
@@ -63,6 +67,13 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "8" # follows the Omarchy theme directory
+
+# Where secrets go. Rust all the way down, and on tokio: no C library, no system package, no second runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", default-features = false, features = ["rt-tokio-crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [build-dependencies]
 cxx-qt-build = { version = "0.10", optional = true }

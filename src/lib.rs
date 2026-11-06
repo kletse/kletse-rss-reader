@@ -28,6 +28,7 @@ pub mod picker;
 pub mod prefs;
 pub mod providers;
 pub mod readeck;
+pub mod secrets;
 pub mod server;
 pub mod theme;
 #[cfg(feature = "tui")]

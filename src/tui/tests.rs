@@ -37,7 +37,7 @@ impl Screenful {
         Self::starting(
             width,
             height,
-            Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING },
+            Status { looking: false, configured: true, readeck: true, capabilities: Capabilities::EVERYTHING },
         )
     }
 
@@ -47,7 +47,8 @@ impl Screenful {
 
     /// With nothing set up and no `ONWARD_DEMO`: a first run, on the first screen.
     fn first_run(width: u16, height: u16) -> Self {
-        let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
+        let unset =
+            Status { looking: false, configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
         Self::on(width, height, unset, Backend::unconfigured(false), false)
     }
 
@@ -479,7 +480,8 @@ mod connecting {
 
     /// A first run against a real backend, saving to a folder of its own, at the address box.
     fn with_config(dir: &std::path::Path, routes: Routes) -> (Screenful, MockServer) {
-        let unset = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
+        let unset =
+            Status { looking: false, configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
         let backend = Backend::with_config_dir(false, dir);
         let mut s = Screenful::on(100, 32, unset, backend, false);
         let server = s.runtime.block_on(async {
@@ -534,7 +536,7 @@ mod connecting {
         });
         s.key(KeyCode::Enter);
         let saved = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
-        assert!(saved.contains("minted-key"), "{saved}");
+        assert!(!saved.contains("minted-key"), "it's in the store: {saved}");
         assert!(!saved.contains("hunter2") && !saved.contains("username"), "{saved}");
         let requests = sent(&s, &server);
         let body = String::from_utf8_lossy(&requests[0].body).to_string();
@@ -770,7 +772,8 @@ fn the_help_says_how_it_works_here() {
 
 #[test]
 fn the_help_leaves_out_what_the_server_cant_do() {
-    let on_greader = Status { configured: true, readeck: false, capabilities: Server::GReader.capabilities() };
+    let on_greader =
+        Status { looking: false, configured: true, readeck: false, capabilities: Server::GReader.capabilities() };
     let s = Screenful::starting(100, 30, on_greader);
     let lines = s.ui.help_lines();
     let keys: Vec<&str> = lines.iter().map(|(keys, _)| keys.as_str()).collect();
@@ -1013,7 +1016,7 @@ fn only_pixels_on_screen_make_a_repaint() {
     let mut sixel = Picker::halfblocks();
     sixel.set_protocol_type(ProtocolType::Sixel);
     let mut pixels = Ui::new(Prefs::default(), true, sixel);
-    pixels.start(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING });
+    pixels.start(Status { looking: false, configured: true, readeck: true, capabilities: Capabilities::EVERYTHING });
     let area = Rect::new(0, 0, 100, 60);
     let settle = |ui: &mut Ui, s: &Screenful| {
         loop {
@@ -1132,7 +1135,7 @@ fn nothing_breaks_in_a_tiny_terminal() {
         let mut s = Screenful::starting(
             width,
             height,
-            Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING },
+            Status { looking: false, configured: false, readeck: false, capabilities: Capabilities::EVERYTHING },
         );
         s.keys("x");
     }
@@ -1213,7 +1216,7 @@ fn a_good_file_on_the_samples_is_read_and_goes_nowhere() {
 
 #[test]
 fn the_samples_keep_their_keys_and_say_why_nothing_happens() {
-    let status = Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
+    let status = Status { looking: false, configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
     let mut s = Screenful::starting(100, 32, status);
     s.keys("i");
     assert_eq!(s.ui.app.overlay(), Overlay::Picker);
@@ -1250,7 +1253,7 @@ fn feed_list() -> FeedList {
 
 /// The picker of a server that can do everything, with the panel open on `feed_list`.
 fn managing(width: u16, height: u16) -> Screenful {
-    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
+    let status = Status { looking: false, configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
     let mut s = Screenful::starting(width, height, status);
     s.keys("m");
     assert_eq!(s.ui.app.overlay(), Overlay::Manage);
@@ -1370,9 +1373,54 @@ fn the_panel_scrolls_keeps_a_long_report_in_view_and_clicks_pick_rows() {
 
 #[test]
 fn the_samples_keep_to_the_picker_and_say_why() {
-    let status = Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
+    let status = Status { looking: false, configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
     let mut s = Screenful::starting(100, 32, status);
     s.keys("m");
     assert_eq!(s.ui.app.overlay(), Overlay::Picker);
     assert!(s.shows("their feeds can't be changed"), "{}", s.text());
+}
+
+mod secrets {
+    use super::*;
+    use crate::secrets::tests::{Act, Scripted, scripted};
+    use crate::secrets::{Failure, Kind, SecretId};
+
+    fn stuck(dir: &std::path::Path, store: &Scripted) -> Screenful {
+        let config = "[miniflux]\nurl = \"http://127.0.0.1:9/nothing\"\n";
+        std::fs::write(dir.join("config.toml"), config).unwrap();
+        let backend = Backend::with_secrets(false, dir, scripted(dir, store));
+        let status = backend.status();
+        Screenful::on(100, 32, status, backend, false)
+    }
+
+    #[test]
+    fn a_locked_keyring_is_said_on_the_feeds_list_and_r_tries_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Scripted::default();
+        store.set(Act::Fails(Failure::Locked));
+        let mut s = stuck(dir.path(), &store);
+        assert!(s.shows("is locked"), "{}", s.text());
+        assert_eq!(s.ui.app.overlay(), Overlay::Picker, "not first run");
+        s.key(KeyCode::Char('r'));
+        assert!(s.shows("is locked"), "{}", s.text());
+        store.set(Act::Works);
+        store.put_in(
+            &SecretId { kind: Kind::Miniflux, url: "http://127.0.0.1:9/nothing".into(), username: String::new() },
+            "the key",
+        );
+        s.key(KeyCode::Char('r'));
+        assert!(!s.shows("is locked"), "{}", s.text());
+        assert!(s.shows("Could not reach Miniflux"), "it went on to the server: {}", s.text());
+    }
+
+    #[test]
+    fn a_keyring_that_is_gone_leaves_settings_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Scripted::default();
+        store.set(Act::Fails(Failure::Unreachable));
+        let mut s = stuck(dir.path(), &store);
+        s.key(KeyCode::Char(','));
+        assert_eq!(s.ui.app.overlay(), Overlay::Settings);
+        assert!(s.shows("can't reach your"), "{}", s.text());
+    }
 }

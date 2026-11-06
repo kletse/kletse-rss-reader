@@ -256,6 +256,7 @@ struct State {
     confirm_hint: &'static str,
     confirm_action: &'static str,
     confirm_lasting: bool,
+    confirm_told: bool,
     /// Importing or exporting a feed list.
     transfer: Option<TransferView>,
     /// The feeds panel, while it's open or a change from it is under way.
@@ -618,6 +619,7 @@ impl Core {
             confirm_hint: app.confirm_hint(),
             confirm_action: app.confirm_action(),
             confirm_lasting: app.confirm_lasting(),
+            confirm_told: app.confirm_told(),
             transfer: app.transfer_view(),
             manage: app.manage_view(),
             manage_shown: app.manage_shown(),

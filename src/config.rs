@@ -1,5 +1,9 @@
 //! `~/.config/onward/config.toml`: the feed server, Miniflux or a Google Reader API server (one is
 //! required), and Readeck (optional). Written by the onboarding/settings screen; can also be edited by hand.
+//!
+//! The secrets themselves are in `secrets.rs`'s care, and a save leaves them out of this file. One that's written here
+//! by hand still works, and wins. So a section with an address and no secret isn't incomplete yet: `missing` says what
+//! to look for, and only once that's been looked for does the app know what it has.
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,6 +13,7 @@ use std::{
 
 use crate::error::Error;
 use crate::feeds::{Capabilities, FeedOps};
+use crate::secrets::{Kind, SecretId};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -85,7 +90,7 @@ const _: () = {
 pub struct Miniflux {
     #[serde(default)]
     pub url: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
 }
 
@@ -108,7 +113,7 @@ pub struct GReader {
     #[serde(default)]
     pub username: String,
     /// The API password, which FreshRSS keeps apart from the one you log in to the web page with.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
 }
 
@@ -141,8 +146,14 @@ pub(crate) fn is_freshrss(url: &str) -> bool {
 pub struct Readeck {
     #[serde(default)]
     pub url: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token: String,
+}
+
+impl Readeck {
+    pub fn is_complete(&self) -> bool {
+        !self.url.is_empty() && !self.token.is_empty()
+    }
 }
 
 impl fmt::Debug for Miniflux {
@@ -184,8 +195,9 @@ pub fn path() -> Option<PathBuf> {
 }
 
 impl Config {
-    /// Trims values, drops trailing slashes, and treats a half-empty Readeck section, or an empty Google Reader
-    /// one, as "not set up". (A half-filled Google Reader section is kept, for `validate` to say what's missing.)
+    /// Trims values, drops trailing slashes, and treats a Readeck section with no address, or an empty Google Reader
+    /// one, as "not set up". (A half-filled Google Reader section is kept, for `validate` to say what's missing, and
+    /// a Readeck address with no token, as the token may be stored.)
     pub fn normalized(mut self) -> Self {
         self.miniflux.url = clean_url(&self.miniflux.url);
         self.miniflux.api_key = self.miniflux.api_key.trim().to_string();
@@ -196,7 +208,7 @@ impl Config {
         });
         self.readeck = self.readeck.and_then(|r| {
             let r = Readeck { url: clean_url(&r.url), token: r.token.trim().to_string() };
-            (!r.url.is_empty() && !r.token.is_empty()).then_some(r)
+            (!r.url.is_empty()).then_some(r)
         });
         self
     }
@@ -220,6 +232,73 @@ impl Config {
         let kind = server.capabilities();
         let feeds = if freshrss { FeedOps::FRESHRSS } else { kind.feeds };
         Capabilities { import_feeds: freshrss || kind.import_feeds, feeds, ..kind }
+    }
+
+    /// Every secret this config has a place for, with what's in memory for it, which may be nothing.
+    fn slots(&self) -> Vec<(SecretId, &str)> {
+        let id =
+            |kind, url: &str, username: &str| SecretId { kind, url: url.to_string(), username: username.to_string() };
+        let mut slots = Vec::with_capacity(3);
+        if !self.miniflux.url.is_empty() {
+            slots.push((id(Kind::Miniflux, &self.miniflux.url, ""), self.miniflux.api_key.as_str()));
+        }
+        if let Some(g) = self.greader.as_ref().filter(|g| !g.url.is_empty() && !g.username.is_empty()) {
+            slots.push((id(Kind::GReader, &g.url, &g.username), g.password.as_str()));
+        }
+        if let Some(r) = self.readeck.as_ref().filter(|r| !r.url.is_empty()) {
+            slots.push((id(Kind::Readeck, &r.url, ""), r.token.as_str()));
+        }
+        slots
+    }
+
+    /// Which secrets belong to this config, held or not.
+    pub(crate) fn secret_ids(&self) -> Vec<SecretId> {
+        self.slots().into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// The secrets in memory, to store.
+    pub(crate) fn secrets(&self) -> Vec<(SecretId, String)> {
+        let held = self.slots().into_iter().filter(|(_, secret)| !secret.is_empty());
+        held.map(|(id, secret)| (id, secret.to_string())).collect()
+    }
+
+    /// The secrets not in memory, to look for.
+    pub(crate) fn missing(&self) -> Vec<SecretId> {
+        self.slots().into_iter().filter(|(_, secret)| secret.is_empty()).map(|(id, _)| id).collect()
+    }
+
+    /// Puts a secret that was found in its place. If that section now belongs to another server or username, it
+    /// doesn't go in: this is what keeps a secret with the server it's for.
+    pub(crate) fn fill(&mut self, id: &SecretId, secret: String) {
+        if !self.secret_ids().contains(id) {
+            return;
+        }
+        match id.kind {
+            Kind::Miniflux => self.miniflux.api_key = secret,
+            Kind::GReader => {
+                if let Some(greader) = self.greader.as_mut() {
+                    greader.password = secret;
+                }
+            }
+            Kind::Readeck => {
+                if let Some(readeck) = self.readeck.as_mut() {
+                    readeck.token = secret;
+                }
+            }
+        }
+    }
+
+    /// As it goes in the file.
+    pub(crate) fn without_secrets(&self) -> Self {
+        let mut config = self.clone();
+        config.miniflux.api_key.clear();
+        if let Some(greader) = config.greader.as_mut() {
+            greader.password.clear();
+        }
+        if let Some(readeck) = config.readeck.as_mut() {
+            readeck.token.clear();
+        }
+        config
     }
 
     /// True when the chosen server's settings are all there.
@@ -308,12 +387,13 @@ fn parse(bytes: &[u8]) -> Result<Config, String> {
         }
         None => e.message().trim_end_matches('.').to_string(),
     })?;
-    // Said here rather than left to `validate`, so it shows when the app starts, above the form that fixes it.
+    // Said here rather than left to `validate`, so it shows when the app starts, above the form that fixes it. The
+    // password can be elsewhere; these two are what says where to look.
     if let Some(greader) = &config.greader
         && greader.filled() > 0
-        && !greader.is_complete()
+        && (greader.url.is_empty() || greader.username.is_empty())
     {
-        return Err("The [greader] section needs a url, a username and a password".into());
+        return Err("The [greader] section needs a url and a username".into());
     }
     Ok(config)
 }
@@ -325,7 +405,7 @@ fn broken_name(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Writes the config (mode 600: it holds API keys).
+/// Writes the config (mode 600: what a person wrote in by hand may be secret, until a save takes it out).
 pub fn save(config: &Config, path: Option<&Path>) -> Result<(), Error> {
     let path = path.ok_or_else(|| Error::Setup("Could not find your home directory to save the settings in".into()))?;
     save_to(config, path)
@@ -368,7 +448,7 @@ fn keep_if_broken(path: &Path) -> Result<(), Error> {
 ///
 /// The price of replacing rather than overwriting: the directory must be writable, not just the file, and the
 /// new file is a new inode (hard links to the old one keep the old contents).
-fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let path = resolve_symlinks(path);
     let dir = path.parent().unwrap_or(Path::new(""));
@@ -386,7 +466,7 @@ fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 
 /// Where a symlinked config (a dotfiles repo, say) really lives, so a save replaces the target and the link
 /// stays. Unlike `canonicalize` this also follows a link whose target doesn't exist yet.
-fn resolve_symlinks(path: &Path) -> PathBuf {
+pub(crate) fn resolve_symlinks(path: &Path) -> PathBuf {
     let mut path = path.to_path_buf();
     // The same limit Linux puts on a chain of links; a loop then fails at the write, as it should.
     for _ in 0..40 {
@@ -447,11 +527,15 @@ mod tests {
 
     #[test]
     fn half_empty_readeck_means_not_set_up() {
-        for (url, token) in [("", "tok"), ("https://r.example.com", ""), ("  ", " ")] {
+        for (url, token) in [("", "tok"), ("  ", " ")] {
             let readeck = Some(Readeck { url: url.into(), token: token.into() });
             let cfg = Config { miniflux: full().miniflux, readeck, ..Config::default() }.normalized();
             assert_eq!(cfg.readeck, None, "url={url:?} token={token:?}");
         }
+        // An address with no token may have one stored, which `is_complete` tells apart.
+        let readeck = Some(Readeck { url: "https://r.example.com".into(), token: String::new() });
+        let cfg = Config { miniflux: full().miniflux, readeck, ..Config::default() }.normalized();
+        assert!(!cfg.readeck.is_some_and(|r| r.is_complete()));
     }
 
     #[test]
@@ -764,10 +848,13 @@ mod tests {
     fn a_half_filled_greader_section_is_an_error_that_says_what_is_missing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
+        fs::write(&path, "[greader]\nurl = \"https://rss.example.com/api/greader.php\"\npassword = \"x\"\n").unwrap();
+        let message = read_from(&path).unwrap_err().message();
+        assert!(message.contains("The [greader] section needs a url and a username"), "{message}");
+        // The password is the part that may be stored.
         fs::write(&path, "[greader]\nurl = \"https://rss.example.com/api/greader.php\"\nusername = \"ward\"\n")
             .unwrap();
-        let message = read_from(&path).unwrap_err().message();
-        assert!(message.contains("The [greader] section needs a url, a username and a password"), "{message}");
+        assert_eq!(read_from(&path).unwrap().missing().len(), 1);
 
         let mut cfg = greader();
         cfg.greader.as_mut().unwrap().password.clear();

@@ -161,7 +161,22 @@ jobs:
           api_key = "key"
           EOF
           walk m a
-          rm "$empty/config/onward/config.toml"
+          # There's no D-Bus here, so a save has no keyring: the secret goes to the file, once, and out of config.toml.
+          curl -fsS -X POST http://127.0.0.1:18399/reset > /dev/null
+          secrets="$empty/state/onward/secrets.toml"
+          grep -q 'api_key = "key"' "$empty/config/onward/config.toml"
+          walk ", accept x x" ", accept x x"
+          if grep -qE 'api_key|"key"' "$empty/config/onward/config.toml"; then exit 1; fi
+          grep -q 'value = "key"' "$secrets"
+          test "$(stat -c %a "$secrets")" = 600
+          grep -q 'told_file = true' "$empty/state/onward/prefs.toml"
+          # And from there on it's found without a word, after a restart.
+          walk x m
+          # With neither, the app says so, and it's the picker that does, not first run.
+          mv "$secrets" "$secrets.kept"
+          walk x ", x"
+          mv "$secrets.kept" "$secrets"
+          rm "$empty/config/onward/config.toml" "$secrets"
           rmdir "$empty/config/onward"
           # A broken config file still says so.
           mkdir "$empty/config/onward"

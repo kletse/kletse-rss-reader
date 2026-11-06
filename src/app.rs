@@ -29,6 +29,7 @@ use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
 use crate::providers::{self, Choice, Field, FieldKey, Provider};
+use crate::secrets::{self, Place};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -392,6 +393,8 @@ pub struct Toast {
 /// What the backend reports about the configured servers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Status {
+    /// `config.toml` leaves a secret to be looked for, and that hasn't been done: nothing else here means much yet.
+    pub looking: bool,
     /// The feed server's settings are present; otherwise show onboarding.
     pub configured: bool,
     /// Readeck is set up; otherwise hide the bookmark button.
@@ -408,6 +411,8 @@ pub struct Saved {
     pub username: Option<String>,
     /// Why the Readeck values weren't saved: the Readeck saved before them stays.
     pub readeck_problem: Option<String>,
+    /// Where the secrets went, when anything was stored.
+    pub place: Option<Place>,
 }
 
 /// The settings form, flat: which server, the fields of both kinds (only the chosen one's are used, the other's
@@ -612,6 +617,8 @@ pub enum Effect {
     /// Serves the sample articles, or stops. It's an answered effect so that nothing is asked of the backend before
     /// it has switched: the backend's answer is what opens the picker.
     UseSamples(bool),
+    /// Whatever `config.toml` leaves to the stores. They can take a while, so this never holds up the start.
+    ReadSecrets,
     LoadSettings,
     SaveSettings(SettingsValuesBox),
     /// Looks at an address, with no credentials. `probe` is compared when the answer comes, as tasks can't be stopped.
@@ -784,6 +791,12 @@ pub enum Outcome {
         on: bool,
         status: Status,
     },
+    /// The stores have answered, or failed to. `problem`: at least one gave no answer, which says nothing about what's
+    /// in it, so the app mustn't take this for a server that isn't set up.
+    SecretsRead {
+        status: Status,
+        problem: Option<String>,
+    },
 }
 
 impl std::fmt::Debug for Outcome {
@@ -826,6 +839,8 @@ enum Pending {
     ReplaceFile {
         path: String,
     },
+    /// Something to read and no question: whichever way it's closed, that's that.
+    Told,
     /// A change to the feeds, once it's been said what it costs. `lasting`: what goes can't be brought back, so only
     /// `y` says yes, and Enter pressed once too often doesn't.
     Change {
@@ -903,6 +918,10 @@ pub struct App {
     latest_manage: u64,
     /// A change, or asking again, makes a list in flight a no-op.
     latest_list: u64,
+    /// Waiting for the stores, on the picker's "Loading…": nothing can open that needs what they hold.
+    looking: bool,
+    /// They gave no answer about the feed server's secret. The picker says so and the next load asks them again.
+    secrets_stuck: bool,
     /// See `Step`; means nothing outside `Overlay::Onboarding`.
     step: Step,
     /// How far `Step::Connect` has got.
@@ -972,6 +991,8 @@ impl App {
             manage: None,
             latest_manage: 0,
             latest_list: 0,
+            looking: false,
+            secrets_stuck: false,
             step: Step::Welcome,
             connect: Connect::default(),
             latest_probe: 0,
@@ -986,14 +1007,54 @@ impl App {
     /// The first screen: the picker, or onboarding when Miniflux isn't set up yet.
     pub fn start(&mut self, status: Status) -> Vec<Effect> {
         let mut fx = Vec::new();
+        if status.looking {
+            self.overlay = Overlay::Picker;
+            self.look_for_secrets(&mut fx);
+        } else {
+            self.open_first_screen(status, &mut fx);
+        }
+        fx
+    }
+
+    fn open_first_screen(&mut self, status: Status, fx: &mut Vec<Effect>) {
         if status.configured {
             self.readeck = status.readeck;
             self.capabilities = status.capabilities;
-            self.open_picker(Some(Mode::Unread), &mut fx);
+            self.open_picker(Some(Mode::Unread), fx);
         } else {
-            self.open_settings(true, &mut fx);
+            self.open_settings(true, fx);
         }
-        fx
+    }
+
+    fn look_for_secrets(&mut self, fx: &mut Vec<Effect>) {
+        self.looking = true;
+        self.secrets_stuck = false;
+        self.picker_list = PickerList::Loading;
+        fx.push(Effect::ReadSecrets);
+    }
+
+    /// With the feed server's secret out of reach the app stays on the picker, which says so and tries again with `r`,
+    /// and doesn't open first run: that would look like nothing was ever set up. Anything else out of reach is no
+    /// reason to stop reading.
+    fn secrets_read(&mut self, status: Status, problem: Option<String>, fx: &mut Vec<Effect>) {
+        if !self.looking {
+            return;
+        }
+        self.looking = false;
+        match problem {
+            Some(problem) if !status.configured => {
+                self.secrets_stuck = true;
+                self.picker_list = PickerList::Error(problem);
+            }
+            problem => {
+                if status.configured
+                    && let Some(problem) = problem
+                {
+                    self.toast_error(problem);
+                }
+                self.open_first_screen(status, fx);
+            }
+        }
     }
 
     // ---- Reading the state (for the window, and the tests) --------------
@@ -1252,7 +1313,9 @@ impl App {
 
     /// How to answer the question on screen. Where the answer can't be taken back, Enter isn't one.
     pub fn confirm_hint(&self) -> &'static str {
-        if self.confirm_lasting() {
+        if self.confirm_told() {
+            "Enter to carry on"
+        } else if self.confirm_lasting() {
             "y to go ahead · Esc / n to cancel"
         } else {
             "Enter / y to confirm · Esc / n to cancel"
@@ -1265,6 +1328,7 @@ impl App {
             Some(Pending::Change { change: FeedChange::RemoveFeed { .. }, .. }) => "Remove",
             Some(Pending::Change { .. }) => "Delete",
             Some(Pending::ReplaceFile { .. }) => "Replace",
+            Some(Pending::Told) => "OK",
             _ => "Mark Read",
         }
     }
@@ -1272,6 +1336,11 @@ impl App {
     /// The answer can't be taken back, and the windows make its button look it.
     pub fn confirm_lasting(&self) -> bool {
         matches!(self.pending, Some(Pending::Change { lasting: true, .. }))
+    }
+
+    /// There's nothing to answer, and a window with buttons has one.
+    pub fn confirm_told(&self) -> bool {
+        matches!(self.pending, Some(Pending::Told))
     }
 
     /// The picker is on screen: open, or behind the question Shift+A on a row asks.
@@ -1888,6 +1957,12 @@ impl App {
     }
 
     fn load_picker(&mut self, fx: &mut Vec<Effect>) {
+        if self.looking {
+            return;
+        }
+        if self.secrets_stuck {
+            return self.look_for_secrets(fx);
+        }
         if !matches!(self.picker_list, PickerList::Ready(_)) {
             self.picker_list = PickerList::Loading;
         }
@@ -2773,7 +2848,8 @@ impl App {
 
     /// Opens the settings form, or on first run the steps that lead up to it.
     fn open_settings(&mut self, first_run: bool, fx: &mut Vec<Effect>) {
-        if self.in_settings() {
+        // Not until the stores have answered: it would show what's in them as empty.
+        if self.in_settings() || self.looking {
             return;
         }
         if self.settings_in_window && !first_run {
@@ -2797,6 +2873,7 @@ impl App {
         if let Some(saved) = saved {
             self.readeck = saved.status.readeck;
             self.capabilities = saved.status.capabilities;
+            self.secrets_stuck = false;
             self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
@@ -2805,6 +2882,7 @@ impl App {
             self.clear_queue();
             self.picker_list = PickerList::Loading;
             self.open_picker(None, fx);
+            self.tell_where(saved.place, fx);
         } else if in_window {
             // The reader behind it never stopped.
             self.settings = None;
@@ -2826,6 +2904,23 @@ impl App {
             None if name.is_some() || !first_run => self.toast_info(done),
             None => {}
         }
+    }
+
+    /// Where secrets went, once for each thing there is to say. A keyring that's what it seems is nothing to say.
+    fn tell_where(&mut self, place: Option<Place>, fx: &mut Vec<Effect>) {
+        let text = match place {
+            Some(Place::File(path)) if !self.prefs.told_file => {
+                self.prefs.told_file = true;
+                secrets::told_file(&path)
+            }
+            Some(Place::Keyring { omarchy: true }) if !self.prefs.told_omarchy => {
+                self.prefs.told_omarchy = true;
+                secrets::TOLD_OMARCHY.to_string()
+            }
+            _ => return,
+        };
+        fx.push(Effect::SavePrefs(self.prefs));
+        self.confirm(text, Pending::Told);
     }
 
     /// The kind of server a window's form names. One the core doesn't know stops the save, and the form says so:
@@ -3495,6 +3590,7 @@ impl App {
             Action::ManageMove => self.manage_move(),
             Action::ManageDelete => self.manage_delete(fx),
             Action::ManageFetch => self.manage_fetch(fx),
+            Action::PickerRefresh if self.secrets_stuck => self.load_picker(fx),
             Action::PickerRefresh if !self.capabilities.refresh => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
@@ -3604,6 +3700,7 @@ impl App {
                     self.feeds_changed(&change, result, &mut fx);
                 }
             }
+            Outcome::SecretsRead { status, problem } => self.secrets_read(status, problem, &mut fx),
             Outcome::SamplesSwitched { on, status } => {
                 if on && !self.samples() {
                     self.samples_on(status, &mut fx);

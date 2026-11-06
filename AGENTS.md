@@ -77,6 +77,21 @@ and how to build it is in the [README](README.md).
   dropped (`new_load`), and a mark-all question about the old list goes (`forget_pending_about`). There's no "create a category"
   anywhere, as FreshRSS has no call for one: it comes to be when a feed moves to a new name. `tag/list` and `/v1/categories`
   are what show the empty ones, so they're only asked for on the panel (`Server::feed_list`), not on each picker load.
+- **Secrets are `src/secrets.rs`,** and `src/secrets/system.rs` is the only file that can reach a real store (`secret-service` on tokio on Linux, `security-framework` on macOS; `keyring` brings a second runtime and libdbus or async-io). Read
+  **Keyrings** below before running anything. A secret is keyed on `SecretId`: kind, address, username. `config.toml`
+  wins, then the file, then the store, and the last two are only asked for what `Config::missing` lists: a section with
+  an address and no secret. That can't happen at startup, as a keyring can hang, so `Status::looking` makes `App::start`
+  sit on the picker's "Loading…" and send `Effect::ReadSecrets`, and `load_picker` and `open_settings` wait for
+  `Outcome::SecretsRead`. No windows code knows about any of it.
+- **No answer from a store is not "no secret".** `read` keeps `Ok(None)` and `Err(Failure)` apart all the way up: with no
+  answer the app is `secrets_stuck` on the picker, with `r` as the retry, and never on first run. `Backend::left_alone`
+  is why a save doesn't throw away what couldn't be read: an empty field there means nothing, so a section the stores
+  didn't answer for stays as it is, and its stored copy with it. Keep that in mind for any new secret, which also needs a
+  row in `Config::slots`.
+- **A secret leaves `config.toml` only at a save**, in this order: stored and read back (`Secrets::save`, which on any
+  failure sends the rest to the file; if the file fails too it's an error, and nothing else happens), then
+  `config.toml` from `without_secrets`, then `forget` for the addresses no longer in use. Every store call has `WAIT`.
+  What's said about it is `App::tell_where`, a `Pending::Told` in the confirm panel, remembered in `Prefs::told_*`.
 - **`src/bridge.rs` is the only QObject.** It runs effects on a tokio runtime, queues the outcomes back onto the
   Qt thread (`qt_thread().queue`), and after every change `sync()` copies state into properties. Setters only
   notify on a real change, so syncing everything each time is fine. The article is re-rendered only when its id,
@@ -112,6 +127,25 @@ and how to build it is in the [README](README.md).
   server, FreshRSS runs in Docker; on macOS point the app at a throwaway config with `HOME=<dir>` (`dirs` ignores
   `XDG_CONFIG_HOME` there).
 
+## Keyrings
+
+This machine may have a real keyring, and a test must never touch it. It has already been touched by accident once.
+
+- **`packaging/no-bus.sh` goes in front of everything**: `cargo test`, the QML snapshots, tmux runs, any built binary. It
+  points both D-Bus addresses at nothing, unsets `GNOME_KEYRING_CONTROL`, and gives the run empty `XDG_CONFIG_HOME`,
+  `XDG_STATE_HOME` and `XDG_RUNTIME_DIR` unless you set your own throwaway ones.
+- **Tests can't reach a store, whatever they do.** `mod system` is `#[cfg(not(test))]`, `Secrets::system()` in a test
+  gives `NoStoreInTests`, which panics, and `Backend::with_config_dir` gives a `Scripted` store in memory: tell it to
+  `Fails`, `Hangs` or `Forgets` with `Act`, and hand it in with `with_secrets`. `doctest = false` is there because a doctest
+  and anything in `tests/` link the library as it ships; `only_system_rs_names_the_keyring_crates` fails if `tests/` appears.
+- **Never run `secret-tool`, `busctl`, `gdbus` or `dbus-send` on the session bus, or read `~/.local/share/keyrings`.**
+- **The real store runs only in `packaging/keyring-sandbox.sh`:** `packaging/keyring-sandbox.sh <state> <command…>`, with
+  `<state>` one of `unlocked`, `locked`, `none`, `omarchy`, `hung` or `nobus-name`. It uses `bwrap` to hide the real `/run/user` and home, a private
+  bus with no activatable services, and a throwaway everything, and refuses to go on unless the owner of
+  `org.freedesktop.secrets` is the PID it started. Keep it that way. On a real session bus, activation can start a daemon
+  that finds the real one's control directory through `/run/user/1000/keyring`. Don't call Unlock outside it.
+- **A real store can't be tested on CI,** which has no D-Bus: there it fails at once, so CI walks the fallback.
+
 ## The old name
 
 The app was Kletse RSS until 5.2. `src/moved.rs` moves the `kletse-rss` config and state folders to `onward` on first
@@ -120,8 +154,10 @@ old package. Keep these for a while; everything else uses the new name.
 
 ## Commands
 
+Put `packaging/no-bus.sh` in front of these wherever the machine has a real keyring.
+
 ```bash
-cargo test                                   # ~600 tests, no window
+packaging/no-bus.sh cargo test              # ~700 tests, no window, and no keyring: see Keyrings
 cargo clippy --all-targets -- -D warnings    # CI is this strict
 cargo fmt
 ONWARD_DEMO=1 cargo run                  # sample data, no server, nothing marked read

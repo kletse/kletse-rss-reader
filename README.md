@@ -262,12 +262,12 @@ Both servers refuse a feed on a private address until they're told they may; see
 
 Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
-The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`), which you can also edit by hand:
+The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`). What Onward signs in with isn't: see [Where secrets live](#where-secrets-live). You can also edit the file by hand:
 
 ```toml
 [miniflux]
 url = "https://miniflux.example.com"
-api_key = "…"
+api_key = "…"      # optional: see below
 
 [readeck]          # optional
 url = "https://readeck.example.com"
@@ -284,6 +284,16 @@ url = "https://freshrss.example.com/api/greader.php"
 username = "…"
 password = "…"     # FreshRSS: the API password, not the one you log in with
 ```
+
+### Where secrets live
+
+The Miniflux API key, the Google Reader password and the Readeck token go in your system's store when you save the settings: Secret Service on Linux (GNOME Keyring, KeePassXC, KWallet with its Secret Service on), the Keychain on macOS. Each is kept under the kind of server, its address and the username, so a `config.toml` pointed at another server asks for another secret and finds none. Nothing of one server's reaches another.
+
+- **With no keyring,** as over SSH, the secret goes in `~/.local/state/onward/secrets.toml` (macOS: `~/Library/Application Support/be.kletse.onward/secrets.toml`), mode `600`, and Onward says so once. It's kept apart from `config.toml` because that whole folder may be a dotfiles repo. Each save tries the keyring again, and takes the copy out of the file when it works.
+- **A secret written in `config.toml` still works,** and wins over anything stored. Nothing moves it while you just use the app. Saving the settings moves it to the store and takes it out of the file, once it has been stored and read back. If it can't be stored anywhere, the save fails and `config.toml` stays exactly as it was.
+- **On Omarchy** the keyring comes with no password, so until you give it one, what's in it is unencrypted on disk: no safer than a file only you can read. Onward still uses it, and says so once.
+- **If the keyring is locked or doesn't answer,** Onward says that and <kbd>r</kbd> tries again. Your settings are still there, and <kbd>,</kbd> lets you enter them again if the keyring is gone for good.
+- When you change or remove a server, its old secret is deleted. If you edit the address in `config.toml` by hand, Onward can't know the old one, which stays in the store until you delete it there.
 
 **What a Google Reader API server can't do.** The protocol has no way to ask for a few things, so with one:
 
@@ -341,6 +351,7 @@ src/
   greader.rs         Google Reader API client (FreshRSS, Miniflux's integration)
   readeck.rs         Readeck "save bookmark"
   config.rs          ~/.config/onward/config.toml (macOS: ~/Library/Application Support/onward/)
+  secrets.rs         the keyring and the file behind it; secrets/system.rs is the real store
   moved.rs           moves the kletse-rss folders to onward on first use
   demo.rs            sample data, for the first screen and ONWARD_DEMO=1
   detect.rs          the forgiving address box, and what's at that address

@@ -23,7 +23,7 @@ Rectangle {
         o.model.submitSettings(o.server, JSON.stringify(o.values))
     }
     function back() {
-        o.model.key("Escape", false, false, false, false, false, false)
+        o.model.key("Escape", false, false, false, false, false, false, false)
     }
     // The saved values, once: see Settings.qml.
     function fill() {

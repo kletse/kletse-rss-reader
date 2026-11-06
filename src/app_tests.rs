@@ -170,8 +170,14 @@ impl Harness {
     }
 
     fn exec(&mut self, effect: Effect) -> Option<Outcome> {
-        let server =
-            !matches!(effect, Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings);
+        let server = !matches!(
+            effect,
+            Effect::SavePrefs(_)
+                | Effect::ScrollPage { .. }
+                | Effect::ScrollStep { .. }
+                | Effect::Quit
+                | Effect::ShowSettings
+        );
         if server {
             self.calls.push(effect.clone());
         }
@@ -255,6 +261,7 @@ impl Harness {
             Effect::ReloadPickerAfter { .. }
             | Effect::SavePrefs(_)
             | Effect::ScrollPage { .. }
+            | Effect::ScrollStep { .. }
             | Effect::Quit
             | Effect::ShowSettings => None,
             Effect::SaveToReadeck { index, id, .. } => {
@@ -758,9 +765,9 @@ fn f_finishing_after_moving_on_leaves_the_article_on_screen_alone() {
 }
 
 #[test]
-fn left_opens_the_picker_and_right_opens_the_chosen_row() {
+fn right_opens_the_chosen_row_of_the_picker() {
     let mut h = first_second();
-    h.key("ArrowLeft");
+    h.key("g");
     assert!(h.picker_loaded());
     h.key("ArrowRight");
     assert_eq!(h.app.overlay(), Overlay::None);
@@ -809,6 +816,44 @@ fn space_scrolls_and_at_the_end_moves_on() {
     h.press(KeyPress { key: " ".into(), at_bottom: true, ..KeyPress::default() });
     assert_eq!(h.title(), Some("Second"));
     assert_eq!(h.status_calls(), [(vec![1], EntryStatus::Read)]);
+}
+
+#[test]
+fn right_is_next_and_left_is_previous() {
+    let mut h = first_second();
+    h.key("ArrowRight");
+    assert_eq!(h.title(), Some("Second"));
+    assert_eq!(h.status_calls(), [(vec![1], EntryStatus::Read)]);
+    h.key("ArrowLeft");
+    assert_eq!(h.title(), Some("First"));
+    assert_eq!(h.app.overlay(), Overlay::None, "← no longer opens the picker");
+}
+
+#[test]
+fn down_scrolls_and_past_the_end_moves_on() {
+    let mut h = first_second();
+    let (used, fx) = h.app.key(&KeyPress { key: "ArrowDown".into(), at_top: true, ..KeyPress::default() });
+    assert!(used);
+    assert_eq!(fx, [Effect::ScrollStep { up: false }]);
+    assert_eq!(h.title(), Some("First"));
+    // An article that fits is at its top and its end at once.
+    h.press(KeyPress { key: "ArrowDown".into(), at_top: true, at_bottom: true, ..KeyPress::default() });
+    assert_eq!(h.title(), Some("Second"));
+    assert_eq!(h.status_calls(), [(vec![1], EntryStatus::Read)]);
+}
+
+#[test]
+fn up_scrolls_and_past_the_top_goes_back() {
+    let mut h = first_second();
+    h.key("n");
+    assert_eq!(h.title(), Some("Second"));
+    let (used, fx) = h.app.key(&KeyPress { key: "ArrowUp".into(), at_bottom: true, ..KeyPress::default() });
+    assert!(used);
+    assert_eq!(fx, [Effect::ScrollStep { up: true }]);
+    assert_eq!(h.title(), Some("Second"));
+    h.press(KeyPress { key: "ArrowUp".into(), at_top: true, at_bottom: true, ..KeyPress::default() });
+    assert_eq!(h.title(), Some("First"));
+    assert!(h.status_calls().is_empty(), "going back marks nothing");
 }
 
 #[test]

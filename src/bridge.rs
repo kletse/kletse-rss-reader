@@ -161,6 +161,7 @@ pub mod qobject {
             meta: bool,
             typing: bool,
             at_bottom: bool,
+            at_top: bool,
         ) -> bool;
         /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
         /// "search", "order".
@@ -208,6 +209,8 @@ pub mod qobject {
 
         #[qsignal]
         fn scroll_page(self: Pin<&mut Model>, up: bool);
+        #[qsignal]
+        fn scroll_step(self: Pin<&mut Model>, up: bool);
         #[qsignal]
         fn quit_requested(self: Pin<&mut Model>);
     }
@@ -538,8 +541,9 @@ impl qobject::Model {
         meta: bool,
         typing: bool,
         at_bottom: bool,
+        at_top: bool,
     ) -> bool {
-        let press = KeyPress { key: key.to_string(), shift, ctrl, alt, meta, typing, at_bottom };
+        let press = KeyPress { key: key.to_string(), shift, ctrl, alt, meta, typing, at_bottom, at_top };
         let (used, fx) = self.as_mut().state().app.key(&press);
         self.run(fx);
         used
@@ -633,6 +637,7 @@ impl qobject::Model {
                     }
                 }
                 Effect::ScrollPage { up } => self.as_mut().scroll_page(up),
+                Effect::ScrollStep { up } => self.as_mut().scroll_step(up),
                 Effect::Quit => self.as_mut().quit_requested(),
                 effect => {
                     let backend = Arc::clone(&self.as_mut().state().backend);

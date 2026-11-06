@@ -7,8 +7,10 @@ Flickable {
 
     required property var ui
     readonly property var model: ui.model
-    /// Scrolled to the end: Space moves on to the next article.
+    /// Scrolled to the end: Space and ↓ move on to the next article.
     readonly property bool atBottom: contentY + height >= contentHeight - 4
+    /// Scrolled to the top: ↑ goes back to the previous article.
+    readonly property bool atTop: contentY <= 4
     readonly property real gutter: width < 560 ? 16 : 24
     readonly property real topMargin: width < 560 ? 24 : 40
     /// An article that fits is centred, with nothing to scroll.
@@ -153,6 +155,11 @@ Flickable {
         scroll.to = clampY(target)
         scroll.duration = 180
         scroll.start()
+    }
+
+    /// ↓ and ↑ go as far as a wheel click.
+    function scrollStep(direction) {
+        smoothScrollBy(direction * Math.pow(height, 2 / 3))
     }
 
     NumberAnimation {

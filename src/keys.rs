@@ -8,7 +8,7 @@ use crate::paging::Mode;
 /// What a key does. Some depend on where you are (`Space`, `Enter`); the app decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// j / ↓: next article, marking this one read. n: next, keeping it unread.
+    /// j / →: next article, marking this one read. n: next, keeping it unread.
     Next {
         mark_read: bool,
     },
@@ -17,6 +17,10 @@ pub enum Action {
     Enter,
     /// Scroll a page; at the end of an article, the next one. Shift+Space scrolls up.
     Space {
+        up: bool,
+    },
+    /// ↓ / ↑: scroll a little; past the end of an article the next one, past its top the previous one.
+    Arrow {
         up: bool,
     },
     ToggleRead,
@@ -54,9 +58,11 @@ pub enum Action {
 type Keymap = &'static [(&'static [&'static str], Action)];
 
 pub const READER_KEYS: Keymap = &[
-    (&["j", "ArrowDown"], Action::Next { mark_read: true }),
+    (&["j", "ArrowRight"], Action::Next { mark_read: true }),
     (&["n"], Action::Next { mark_read: false }),
-    (&["k", "ArrowUp"], Action::Prev),
+    (&["k", "ArrowLeft"], Action::Prev),
+    (&["ArrowDown"], Action::Arrow { up: false }),
+    (&["ArrowUp"], Action::Arrow { up: true }),
     (&["Enter"], Action::Enter),
     (&[" "], Action::Space { up: false }),
     (&["m"], Action::ToggleRead),
@@ -69,7 +75,7 @@ pub const READER_KEYS: Keymap = &[
     (&["/"], Action::Search),
     (&["s"], Action::FlipOrder),
     (&["h"], Action::ToggleMode),
-    (&["g", "p", "Tab", "Escape", "ArrowLeft"], Action::OpenPicker),
+    (&["g", "p", "Tab", "Escape"], Action::OpenPicker),
     (&["["], Action::Narrower),
     (&["]"], Action::Wider),
     (&["?"], Action::Help),
@@ -184,9 +190,10 @@ use Chord::{Mod, Plain, Shift};
 
 /// The help overlay, in reading order.
 pub const HELP: &[HelpRow] = &[
-    row(&[Plain("j"), Plain("ArrowDown")], "next (marks read)"),
+    row(&[Plain("j"), Plain("ArrowRight")], "next (marks read)"),
     row(&[Plain("n")], "skip (keeps unread)"),
-    row(&[Plain("k"), Plain("ArrowUp")], "previous"),
+    row(&[Plain("k"), Plain("ArrowLeft")], "previous"),
+    row(&[Plain("ArrowDown"), Plain("ArrowUp")], "scroll; past the end = next, past the top = previous"),
     row(&[Plain("m")], "toggle read / unread"),
     row(&[Plain("*")], "star / unstar the article"),
     row(&[Plain("o")], "open original in browser"),
@@ -215,7 +222,7 @@ pub const HELP: &[HelpRow] = &[
         needs: Needs::Nothing,
     },
     HelpRow {
-        keys: &[Plain("g"), Plain("p"), Plain("Tab"), Plain("Escape"), Plain("ArrowLeft")],
+        keys: &[Plain("g"), Plain("p"), Plain("Tab"), Plain("Escape")],
         action: "feeds picker",
         place: Where::Reader,
         picker_note: Some((&[Plain("ArrowRight"), Plain("o")], "picks a row")),
@@ -350,11 +357,12 @@ mod tests {
     fn reads_as_before() {
         let lines = help_lines(false, Capabilities::EVERYTHING);
         let first: Vec<(&str, &str)> = lines.iter().take(3).map(|(k, a)| (k.as_str(), a.as_str())).collect();
-        assert_eq!(first, [("j / ↓", "next (marks read)"), ("n", "skip (keeps unread)"), ("k / ↑", "previous")]);
+        assert_eq!(first, [("j / →", "next (marks read)"), ("n", "skip (keeps unread)"), ("k / ←", "previous")]);
+        assert!(lines.contains(&("↓ / ↑".into(), "scroll; past the end = next, past the top = previous".into())));
         assert!(lines.contains(&("Shift+A".into(), "mark whole list read (in picker: the selected row)".into())));
         assert!(lines.contains(&("/".into(), "search all feeds, read and unread".into())));
         assert!(lines.contains(&("*".into(), "star / unstar the article".into())));
-        assert!(lines.contains(&("g / p / Tab / Esc / ←".into(), "feeds picker (→ / o picks a row)".into())));
+        assert!(lines.contains(&("g / p / Tab / Esc".into(), "feeds picker (→ / o picks a row)".into())));
         assert!(lines.contains(&("r".into(), "refresh feeds (in picker)".into())));
         assert!(lines.contains(&("Space / Shift+Space".into(), "scroll; Space at the end = next".into())));
         assert!(lines.contains(&("Ctrl + / Ctrl −".into(), "font size".into())));

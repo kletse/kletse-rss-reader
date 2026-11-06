@@ -138,6 +138,8 @@ enum Command {
         typing: bool,
         #[serde(default)]
         at_bottom: bool,
+        #[serde(default)]
+        at_top: bool,
     },
     /// A button: see `keys::button_action`.
     Press {
@@ -192,7 +194,7 @@ enum Command {
 struct Reply {
     /// Whether a key was used; Swift passes unused ones on (⌘Q, typing in a field).
     used: bool,
-    /// "scroll_up", "scroll_down", "quit".
+    /// "scroll_up", "scroll_down", "step_up", "step_down", "quit".
     events: Vec<&'static str>,
     state: State,
 }
@@ -380,8 +382,8 @@ impl Core {
                 self.set_theme(dark, accent.as_deref());
                 Vec::new()
             }
-            Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom } => {
-                let press = KeyPress { key, shift, ctrl, alt, meta, typing, at_bottom };
+            Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom, at_top } => {
+                let press = KeyPress { key, shift, ctrl, alt, meta, typing, at_bottom, at_top };
                 let (was_used, fx) = self.app.key(&press);
                 used = was_used;
                 fx
@@ -452,6 +454,7 @@ impl Core {
                     }
                 }
                 Effect::ScrollPage { up } => events.push(if up { "scroll_up" } else { "scroll_down" }),
+                Effect::ScrollStep { up } => events.push(if up { "step_up" } else { "step_down" }),
                 Effect::Quit => events.push("quit"),
                 Effect::ShowSettings => events.push("show_settings"),
                 effect => {
@@ -811,6 +814,8 @@ mod tests {
 
         let space = send(core, r#"{"cmd":"key","key":" "}"#);
         assert_eq!(space["events"][0], "scroll_down");
+        let down = send(core, r#"{"cmd":"key","key":"ArrowDown"}"#);
+        assert_eq!(down["events"][0], "step_down");
         assert_eq!(send(core, r#"{"cmd":"key","key":"x"}"#)["used"], false);
 
         // The first demo article has an image: the viewer, and Esc closes it.

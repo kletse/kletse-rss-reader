@@ -40,6 +40,7 @@ ApplicationWindow {
         id: model
         Component.onCompleted: start()
         onScrollPage: up => reader.scrollPage(up ? -1 : 1)
+        onScrollStep: up => reader.scrollStep(up ? -1 : 1)
         onQuitRequested: Qt.quit()
         // The search box takes the keyboard itself (SearchPanel.qml).
         onOverlayChanged: if (overlay !== "search") keys.forceActiveFocus()
@@ -124,7 +125,7 @@ ApplicationWindow {
                                        (event.modifiers & Qt.ControlModifier) !== 0,
                                        (event.modifiers & Qt.AltModifier) !== 0,
                                        (event.modifiers & Qt.MetaModifier) !== 0,
-                                       typing, reader.atBottom)
+                                       typing, reader.atBottom, reader.atTop)
         }
 
         TopBar {
@@ -243,7 +244,7 @@ ApplicationWindow {
             else if (name === "find")
                 model.findServer()
             else if (name !== undefined)
-                model.key(name === "Space" ? " " : name, false, false, false, false, false, false)
+                model.key(name === "Space" ? " " : name, false, false, false, false, false, reader.atBottom, reader.atTop)
             if (pending.length === 0) {
                 done = true
                 snapshotShot.start()

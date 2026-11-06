@@ -1,5 +1,5 @@
 // Everything under the toolbar but the settings: the article, "Loading…" or the end of the list, in one
-// scrolling area. Scrolling is the system's own; Space pages through the core (`scroll_up`/`scroll_down`).
+// scrolling area. Scrolling is the system's own; Space and the arrows go through the core (`scroll_up`, `step_up`…).
 import SwiftUI
 
 struct ReaderView: View {
@@ -25,14 +25,17 @@ struct ReaderView: View {
             }
             .scrollPosition($position)
             .onScrollGeometryChange(for: [CGFloat].self) { g in
-                [g.contentOffset.y, g.containerSize.height, g.contentSize.height, g.visibleRect.maxY]
+                [g.contentOffset.y, g.containerSize.height, g.contentSize.height, g.visibleRect.maxY,
+                 g.contentOffset.y + g.contentInsets.top]
             } action: { _, g in
                 scroll = (g[0], g[1], g[2])
                 // Not offset + height: the toolbar's inset is in neither.
                 model.atBottom = g[3] >= g[2] - 4
+                // The toolbar's inset again: at the top the offset is minus that.
+                model.atTop = g[4] <= 4
             }
         }
-        .onChange(of: model.scrollSerial) { page(up: model.scrollUp) }
+        .onChange(of: model.scrollSerial) { scrollBy(model.scrollStep, up: model.scrollUp) }
         .onChange(of: model.state?.article?.serial) { position.scrollTo(edge: .top) }
         .onChange(of: model.state?.screen) { position.scrollTo(edge: .top) }
     }
@@ -59,9 +62,10 @@ struct ReaderView: View {
         }
     }
 
-    /// A page, less a few lines to keep your place, as browsers scroll on Space.
-    private func page(up: Bool) {
-        let step = max(scroll.height - 80, scroll.height * 0.8)
+    /// A page, less a few lines to keep your place, as browsers scroll on Space; or, for ↓ and ↑, a wheel click as
+    /// the Qt window has it.
+    private func scrollBy(_ small: Bool, up: Bool) {
+        let step = small ? pow(scroll.height, 2.0 / 3.0) : max(scroll.height - 80, scroll.height * 0.8)
         let maxY = max(0, scroll.content - scroll.height)
         let y = min(maxY, max(0, scroll.y + (up ? -step : step)))
         withAnimation(.easeOut(duration: 0.18)) { position.scrollTo(y: y) }

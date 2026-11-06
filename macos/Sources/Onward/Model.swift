@@ -15,11 +15,15 @@ final class Model {
     private(set) var settingsValues: SettingsValues?
     /// Bumped each time the core asks for the Settings window.
     private(set) var settingsRequests = 0
-    /// Bumped for each page scroll the core asks for.
+    /// Bumped for each scroll the core asks for.
     private(set) var scrollSerial = 0
     private(set) var scrollUp = false
-    /// The article is scrolled to its end (Space then moves on).
+    /// A few lines, for ↓ and ↑, rather than a page.
+    private(set) var scrollStep = false
+    /// The article is scrolled to its end (Space and ↓ then move on).
     var atBottom = false
+    /// The article is scrolled to its top (↑ then goes back).
+    var atTop = true
 
     @ObservationIgnored private lazy var core = Core()
     @ObservationIgnored private var started = false
@@ -62,7 +66,7 @@ final class Model {
              typing: Bool = false) -> Bool {
         send([
             "cmd": "key", "key": name, "shift": shift, "ctrl": command, "alt": option, "meta": control,
-            "typing": typing, "at_bottom": atBottom,
+            "typing": typing, "at_bottom": atBottom, "at_top": atTop,
         ])?.used ?? false
     }
 
@@ -111,8 +115,9 @@ final class Model {
         RemoteImage.prefetch(reply.state.prefetchImages)
         for event in reply.events {
             switch event {
-            case "scroll_up", "scroll_down":
-                scrollUp = event == "scroll_up"
+            case "scroll_up", "scroll_down", "step_up", "step_down":
+                scrollUp = event.hasSuffix("up")
+                scrollStep = event.hasPrefix("step")
                 scrollSerial += 1
             case "show_settings":
                 settingsRequests += 1

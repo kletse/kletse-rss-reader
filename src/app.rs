@@ -439,6 +439,10 @@ pub enum Effect {
     ScrollPage {
         up: bool,
     },
+    /// A few lines, for ↓ and ↑.
+    ScrollStep {
+        up: bool,
+    },
     Quit,
 }
 
@@ -568,8 +572,10 @@ pub struct KeyPress {
     pub meta: bool,
     /// A text field has the keyboard: never treat typing as shortcuts.
     pub typing: bool,
-    /// The article is scrolled to its end (Space then moves on).
+    /// The article is scrolled to its end (Space and ↓ then move on).
     pub at_bottom: bool,
+    /// The article is scrolled to its top (↑ then goes back).
+    pub at_top: bool,
 }
 
 /// What a confirmed dialog goes on to do.
@@ -2349,6 +2355,7 @@ impl App {
         });
         match action {
             Some(Action::Space { .. }) => self.space(press.shift, press.at_bottom, fx),
+            Some(Action::Arrow { up }) => self.arrow(up, press, fx),
             Some(Action::Enter) => self.enter(fx),
             Some(action) => {
                 self.act(action, fx);
@@ -2366,6 +2373,20 @@ impl App {
             self.advance(true, fx);
         } else {
             fx.push(Effect::ScrollPage { up: false });
+        }
+        true
+    }
+
+    /// ↓ and ↑ scroll, and where there's no further to go, the next article, or the top of the previous one.
+    fn arrow(&mut self, up: bool, press: &KeyPress, fx: &mut Vec<Effect>) -> bool {
+        // Only an article scrolls: on the other screens what the window says about it means nothing.
+        let article = self.current().is_some();
+        if up && (press.at_top || !article) {
+            self.prev();
+        } else if !up && (press.at_bottom || !article) {
+            self.advance(true, fx);
+        } else {
+            fx.push(Effect::ScrollStep { up });
         }
         true
     }
@@ -2391,6 +2412,9 @@ impl App {
         match action {
             Action::Space { up } => {
                 fx.push(Effect::ScrollPage { up });
+            }
+            Action::Arrow { up } => {
+                fx.push(Effect::ScrollStep { up });
             }
             Action::Enter => {
                 self.enter(&mut fx);
@@ -2440,7 +2464,7 @@ impl App {
                     self.close_picker();
                 }
             }
-            Action::Space { .. } | Action::Enter => {}
+            Action::Space { .. } | Action::Arrow { .. } | Action::Enter => {}
         }
     }
 

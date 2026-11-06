@@ -399,9 +399,10 @@ cargo install --path . --no-default-features --features tui --locked</pre></div>
   <div class="panel-head"><span>Keys</span><button class="close" type="button" data-close aria-label="Close">esc</button></div>
   <p class="panel-note">The app’s keys. On this page j, n, k, m, g and ? work too, and o opens GitHub.</p>
   <dl class="keys">
-    <dt>j / ↓</dt><dd>next (marks read)</dd>
+    <dt>j / →</dt><dd>next (marks read)</dd>
     <dt>n</dt><dd>skip (keeps unread)</dd>
-    <dt>k / ↑</dt><dd>previous</dd>
+    <dt>k / ←</dt><dd>previous</dd>
+    <dt>↓ / ↑</dt><dd>scroll; past the end, next; past the top, previous</dd>
     <dt>m</dt><dd>toggle read / unread</dd>
     <dt>o</dt><dd>open original in browser</dd>
     <dt>b</dt><dd>save to Readeck, then next</dd>
@@ -544,6 +545,7 @@ cargo install --path . --no-default-features --features tui --locked</pre></div>
     }
     const act = {
       j: forward, n: skip, k: back, m: toggle,
+      ArrowRight: forward, ArrowLeft: back,
       g: openPicker, p: openPicker,
       '?': showKeys,
       o: () => { location.href = 'https://github.com/kletse/onward-rss-reader'; },

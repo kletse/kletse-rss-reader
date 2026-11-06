@@ -235,6 +235,36 @@ fn shift_space_scrolls_up_where_the_terminal_reports_it() {
     assert_eq!(s.ui.scroll, 0);
 }
 
+#[test]
+fn the_arrows_scroll_and_at_either_end_move_on() {
+    let mut s = Screenful::reading(100, 24);
+    let title = |s: &Screenful| s.ui.app.current().unwrap().title.clone();
+    let first = title(&s);
+    s.key(KeyCode::Up);
+    assert_eq!(title(&s), first, "there's nothing before the first");
+    s.key(KeyCode::Down);
+    assert_eq!((title(&s), s.ui.scroll), (first.clone(), 2));
+    s.key(KeyCode::Up);
+    assert_eq!((title(&s), s.ui.scroll), (first.clone(), 0));
+
+    while s.ui.scroll < s.ui.max_scroll() {
+        s.key(KeyCode::Down);
+    }
+    assert_eq!(title(&s), first);
+    s.key(KeyCode::Down);
+    let second = title(&s);
+    assert_ne!(second, first);
+    assert_eq!(s.ui.scroll, 0, "the next one starts at the top");
+
+    s.key(KeyCode::Up);
+    assert_eq!(title(&s), first);
+    assert_eq!(s.ui.scroll, 0, "the previous one starts at the top too");
+    s.key(KeyCode::Right);
+    assert_eq!(title(&s), second);
+    s.key(KeyCode::Left);
+    assert_eq!(title(&s), first);
+}
+
 /// Without mouse reporting a terminal sends the wheel as ↑ and ↓ on the alternate screen, and ↓ marks read.
 #[test]
 fn the_wheel_scrolls_and_never_changes_the_article() {

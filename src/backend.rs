@@ -493,7 +493,11 @@ impl Backend {
                 self.set_demo(on);
                 Outcome::SamplesSwitched { on, status: self.status() }
             }
-            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings => return None,
+            Effect::SavePrefs(_)
+            | Effect::ScrollPage { .. }
+            | Effect::ScrollStep { .. }
+            | Effect::Quit
+            | Effect::ShowSettings => return None,
         })
     }
 

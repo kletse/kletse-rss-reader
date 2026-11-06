@@ -309,6 +309,7 @@ impl Ui {
                     let page = isize::try_from(self.page).unwrap_or(1);
                     self.scroll_by(if up { -page } else { page });
                 }
+                Effect::ScrollStep { up } => self.scroll_by(if up { -LINE } else { LINE }),
                 Effect::Quit => self.quit = true,
                 effect => self.effects.push(effect),
             }
@@ -384,6 +385,7 @@ impl Ui {
             shift: event.modifiers.contains(KeyModifiers::SHIFT),
             alt: event.modifiers.contains(KeyModifiers::ALT),
             at_bottom: self.scroll >= self.max_scroll,
+            at_top: self.scroll == 0,
             ..KeyPress::default()
         };
         let (_, fx) = self.app.key(&press);

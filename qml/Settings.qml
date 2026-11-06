@@ -72,6 +72,7 @@ Item {
                 id: find
                 ui: s.ui
                 text: JSON.parse(s.model.firstRun).find_server
+                enabled: !s.model.settingsChecking
                 onClicked: s.model.findServer()
             }
         }

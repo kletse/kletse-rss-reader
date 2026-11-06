@@ -3177,6 +3177,80 @@ fn on_the_mac_finding_a_server_leaves_the_settings_window_for_the_main_one() {
 }
 
 #[test]
+fn a_server_b_key_isnt_kept_for_server_a_after_looking_at_both() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let saved = SettingsValues {
+        address: "b.example.com".into(),
+        miniflux_url: "https://a.example.com".into(),
+        miniflux_api_key: "a-key".into(),
+        ..SettingsValues::default()
+    };
+    h.submit(saved.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, Detected::Miniflux { base: "https://b.example.com".into(), sign_in: false });
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "");
+
+    h.app.address_edited("a.example.com");
+    h.submit(SettingsValues { address: "a.example.com".into(), miniflux_api_key: "b-key".into(), ..saved });
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, Detected::Miniflux { base: "https://a.example.com".into(), sign_in: false });
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "", "the form's address still says A");
+}
+
+#[test]
+fn looking_again_at_the_same_server_keeps_what_was_typed_for_it() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let values = SettingsValues {
+        address: "b.example.com".into(),
+        miniflux_url: "https://a.example.com".into(),
+        miniflux_api_key: "b-key".into(),
+        ..SettingsValues::default()
+    };
+    let b = Detected::Miniflux { base: "https://b.example.com".into(), sign_in: false };
+    h.submit(values.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, b.clone());
+    h.key("Escape");
+    h.submit(values);
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, b);
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "b-key");
+}
+
+#[test]
+fn on_the_mac_esc_out_of_finding_a_server_leaves_the_picker_as_it_was() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key("p");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let (_, fx) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert!(h.app.settings().is_some(), "and the window opened again");
+}
+
+#[test]
+fn a_save_being_checked_isnt_left_for_the_address_box() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    assert!(h.app.settings().unwrap().checking);
+    assert!(h.app.find_server().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Settings);
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+}
+
+#[test]
 fn outside_settings_there_is_no_finding_a_server() {
     let mut h = first_second();
     assert!(h.app.find_server().is_empty());

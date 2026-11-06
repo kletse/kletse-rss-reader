@@ -157,8 +157,11 @@ struct Connect {
     look_again: bool,
     /// Plain http is in use, on an address where that's expected.
     plain: bool,
-    /// Opened from Settings, which is where Esc goes back to.
-    from_settings: bool,
+    /// Opened from Settings, which is where Esc goes back to, with what was on screen behind it.
+    from_settings: Option<Overlay>,
+    /// The server each secret in the form is for, once a look has found one. The form's own address can't say: only
+    /// a save changes it, and the window's copy of it.
+    secret_is_for: HashMap<FieldKey, String>,
 }
 
 /// Where first run is. It opens on `Welcome`, and Esc comes back there from the others.
@@ -1973,8 +1976,8 @@ impl App {
     fn back_to_address(&mut self) {
         self.latest_probe += 1;
         let password = matches!(self.connect.stage, Stage::Miniflux { key: KeyRoute::Password, .. });
-        let Connect { address, from_settings, .. } = std::mem::take(&mut self.connect);
-        self.connect = Connect { address, from_settings, ..Connect::default() };
+        let Connect { address, from_settings, secret_is_for, .. } = std::mem::take(&mut self.connect);
+        self.connect = Connect { address, from_settings, secret_is_for, ..Connect::default() };
         self.shown_link = None;
         if password {
             self.forget_password();
@@ -2087,10 +2090,13 @@ impl App {
 
     /// The form may hold what was saved for the server before, from Settings. That's not to be sent to this one.
     fn forget_secret_of_another_server(&mut self, url: FieldKey, here: &str, secret: FieldKey) {
-        if let Some(form) = self.settings.as_mut()
-            && form.values.field(url) != here
-            && !form.values.field(secret).is_empty()
-        {
+        let Some(form) = self.settings.as_mut() else { return };
+        let owner = self.connect.secret_is_for.entry(secret).or_insert_with(|| form.values.field(url).to_string());
+        if owner == here {
+            return;
+        }
+        here.clone_into(owner);
+        if !form.values.field(secret).is_empty() {
             form.values.field_mut(secret).clear();
             form.refill += 1;
         }
@@ -2165,13 +2171,16 @@ impl App {
 
     /// Settings' way into the address box: everything first run does to find a server, for a change of server.
     pub fn find_server(&mut self) -> Vec<Effect> {
-        if self.overlay != Overlay::Settings && !self.settings_window_open {
+        let checking = self.settings.as_ref().is_some_and(|f| f.checking);
+        if (self.overlay != Overlay::Settings && !self.settings_window_open) || checking {
             return Vec::new();
         }
+        // With Settings in a window of its own, the overlay is whatever the reader has open.
+        let behind = if self.overlay == Overlay::Settings { Overlay::None } else { self.overlay };
         self.settings_window_open = false;
         self.settings = None;
         self.overlay = Overlay::Onboarding;
-        self.connect = Connect { from_settings: true, ..Connect::default() };
+        self.connect = Connect { from_settings: Some(behind), ..Connect::default() };
         self.go_to_step(Step::Connect, 0);
         vec![Effect::LoadSettings]
     }
@@ -2186,12 +2195,11 @@ impl App {
             Step::Connect if checking => return true,
             Step::Connect if self.connect.stage != Stage::Address => self.back_to_address(),
             Step::Connect => {
-                let from_settings = self.connect.from_settings;
+                let from_settings = self.connect.from_settings.take();
                 self.back_to_address();
-                self.connect.from_settings = false;
                 self.go_to_step(Step::Welcome, row(Choice::Connect));
-                if from_settings {
-                    self.overlay = Overlay::None;
+                if let Some(behind) = from_settings {
+                    self.overlay = behind;
                     self.settings = None;
                     self.open_settings(false, fx);
                 }

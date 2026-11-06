@@ -54,6 +54,7 @@ struct SettingsWindow: View {
                 pane(settings) {
                     Section {
                         Button(settings?.findServer ?? "") { model.findServer() }
+                            .disabled(settings?.checking == true)
                     }
                     FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
                 }

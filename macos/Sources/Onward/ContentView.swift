@@ -140,8 +140,12 @@ private struct Floating<Content: View>: View {
 
     var body: some View {
         ZStack {
+            // The dimming goes under the toolbar, but clicks there are left to the window, which is dragged from it.
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
+                .allowsHitTesting(false)
+            Color.clear
+                .contentShape(Rectangle())
                 .onTapGesture(perform: dismiss)
             content
                 .background(Brand.panel)

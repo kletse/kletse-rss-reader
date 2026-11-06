@@ -9,7 +9,7 @@ use super::ui::{Focus, Inline, Ui};
 use crate::app::{Effect, Outcome, Overlay, Screen, Status, Step};
 use crate::backend::Backend;
 use crate::config::Server;
-use crate::feeds::Capabilities;
+use crate::feeds::{Applied, Capabilities, Category, Changed, Counts, Feed, FeedChange, FeedCount, FeedList};
 use crate::prefs::Prefs;
 use crate::providers::{self, FieldKey};
 use base64::Engine as _;
@@ -103,6 +103,8 @@ impl Screenful {
             for effect in effects {
                 if let Effect::OpenInBrowser { url, .. } = &effect {
                     self.opened.push(url.clone());
+                } else if matches!(effect, Effect::ChangeFeeds { .. }) {
+                    // Answered by hand: the demo has nothing to change.
                 } else if let Some(mut outcome) = self.runtime.block_on(self.backend.run(effect)) {
                     if let (Outcome::Opened { result: Ok((page, _)), .. }, Some(html)) = (&mut outcome, &self.content) {
                         page.entries[0].content.clone_from(html);
@@ -778,7 +780,7 @@ fn the_help_leaves_out_what_the_server_cant_do() {
 
 #[test]
 fn the_help_fits_a_narrow_terminal_by_stacking() {
-    let mut s = Screenful::new(44, 60);
+    let mut s = Screenful::new(44, 80);
     s.keys("?");
     assert!(s.shows("scroll a page") && s.shows("skip (keeps unread)"), "{}", s.text());
     s.keys("?");
@@ -790,7 +792,7 @@ fn the_help_scrolls_on_a_short_terminal() {
     let mut s = Screenful::new(100, 10);
     s.keys("?");
     assert!(!s.shows("quit"));
-    for _ in 0..30 {
+    for _ in 0..50 {
         s.keys("j");
     }
     assert!(s.shows("quit"), "{}", s.text());
@@ -1230,4 +1232,147 @@ fn a_click_beside_the_panel_closes_it() {
     });
     s.settle();
     assert_eq!(s.ui.app.overlay(), Overlay::Picker);
+}
+
+// ---- The feeds panel ---------------------------------------------------------------------------------------------
+
+/// News has two feeds with an empty category beside it.
+fn feed_list() -> FeedList {
+    let news = Category { id: 1, title: "News".into() };
+    let feed = |id, title: &str| FeedCount {
+        feed: Feed { id, title: title.into(), category: news.clone() },
+        unread: Some(3),
+        read: Some(0),
+    };
+    let counts = Counts { feeds: vec![feed(10, "Alpha"), feed(11, "Beta")], starred: Some(0) };
+    FeedList::new(counts, vec![news.clone(), Category { id: 2, title: "Empty".into() }], None)
+}
+
+/// The picker of a server that can do everything, with the panel open on `feed_list`.
+fn managing(width: u16, height: u16) -> Screenful {
+    let status = Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
+    let mut s = Screenful::starting(width, height, status);
+    s.keys("m");
+    assert_eq!(s.ui.app.overlay(), Overlay::Manage);
+    s.list(feed_list());
+    s
+}
+
+impl Screenful {
+    fn list(&mut self, list: FeedList) {
+        self.ui.outcome(Outcome::FeedList { serial: self.ui.app.latest_list(), result: Ok(list) });
+        self.settle();
+    }
+
+    fn changed(&mut self, change: FeedChange, list: FeedList) {
+        let job = self.ui.app.latest_manage();
+        let result = Ok(Changed { applied: Applied::default(), list: Some(list), problem: None });
+        self.ui.outcome(Outcome::FeedsChanged { job, change, result });
+        self.settle();
+    }
+}
+
+#[test]
+fn the_panel_lists_every_category_and_says_what_can_be_done_at_either_size() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = managing(width, height);
+        assert!(s.shows("Manage feeds") && s.shows("Empty") && s.shows("0 feeds"), "{}", s.text());
+        assert!(s.shows("a add") && s.shows("r rename") && s.shows("d delete"), "{}", s.text());
+        s.key(KeyCode::Down).key(KeyCode::Down);
+        assert!(s.shows("m move") && s.shows("d remove"), "on a feed: {}", s.text());
+        s.key(KeyCode::Esc);
+        assert_eq!(s.ui.app.overlay(), Overlay::Picker);
+    }
+}
+
+#[test]
+fn adding_takes_typing_and_a_refusal_keeps_it() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = managing(width, height);
+        s.keys("a");
+        assert!(s.shows("Add a feed") && s.shows("Feed address"), "{}", s.text());
+        s.keys("jqd");
+        s.key(KeyCode::Left);
+        s.paste("http://feeds.example/");
+        assert_eq!(s.ui.app.overlay(), Overlay::Manage, "these are letters here");
+        assert_eq!(s.ui.manage_field.as_ref().unwrap().1.text(), "jqhttp://feeds.example/d");
+        s.key(KeyCode::Enter);
+        let job = s.ui.app.latest_manage();
+        let change = FeedChange::Add { url: "jqhttp://feeds.example/d".into(), category: None };
+        let result = Err("Miniflux says: Invalid feed URL.".to_string());
+        s.ui.outcome(Outcome::FeedsChanged { job, change, result });
+        s.settle();
+        assert!(s.shows("Miniflux says: Invalid feed URL."), "{}", s.text());
+        assert_eq!(s.ui.manage_field.as_ref().unwrap().1.text(), "jqhttp://feeds.example/d");
+        s.key(KeyCode::Esc);
+        assert!(s.ui.manage_field.is_none());
+        assert!(s.shows("News"), "{}", s.text());
+    }
+}
+
+#[test]
+fn renaming_starts_from_the_name_and_moving_is_a_list_of_categories() {
+    let mut s = managing(100, 32);
+    s.keys("jj");
+    s.keys("r");
+    assert_eq!(s.ui.manage_field.as_ref().unwrap().1.text(), "Alpha");
+    s.key(KeyCode::Esc);
+    s.keys("m");
+    assert!(s.shows("Move “Alpha”") && s.shows("New category…"), "{}", s.text());
+    s.key(KeyCode::Down);
+    s.key(KeyCode::Enter);
+    assert!(s.shows("Name of the new category"), "{}", s.text());
+    s.keys("Later");
+    s.key(KeyCode::Enter);
+    assert!(s.shows("Moving the feed"), "{}", s.text());
+}
+
+#[test]
+fn removing_asks_over_the_panel_and_only_y_says_yes() {
+    let mut s = managing(80, 24);
+    s.keys("jjd");
+    assert!(s.shows("Remove “Alpha”") && s.shows("y to go ahead"), "{}", s.text());
+    s.key(KeyCode::Enter);
+    assert_eq!(s.ui.app.overlay(), Overlay::Confirm);
+    s.keys("n");
+    assert_eq!(s.ui.app.overlay(), Overlay::Manage);
+    s.keys("dy");
+    assert!(s.shows("Removing the feed"), "{}", s.text());
+    let mut after = feed_list();
+    after.counts.feeds.remove(0);
+    s.changed(FeedChange::RemoveFeed { id: 10 }, after);
+    assert!(s.shows("Removed “Alpha” and its articles.") && !s.shows("Alpha  "), "{}", s.text());
+}
+
+#[test]
+fn the_panel_scrolls_keeps_a_long_report_in_view_and_clicks_pick_rows() {
+    let mut s = managing(80, 12);
+    let mut list = feed_list();
+    let news = list.categories[0].clone();
+    for id in 20..40 {
+        let feed = Feed { id, title: format!("Feed {id}"), category: news.clone() };
+        list.counts.feeds.push(FeedCount { feed, unread: Some(1), read: Some(0) });
+    }
+    s.list(list);
+    for _ in 0..15 {
+        s.key(KeyCode::Down);
+    }
+    let view = s.ui.app.manage_view().unwrap();
+    assert!(s.shows(&view.rows[view.cursor].label), "{}", s.text());
+    let (x, y) = (s.ui.manage_rows.x + 2, s.ui.manage_rows.y);
+    s.mouse(MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(s.ui.app.manage_view().unwrap().cursor, s.ui.manage_top);
+    s.mouse(MouseEventKind::ScrollDown, x, y);
+    assert_eq!(s.ui.app.manage_view().unwrap().cursor, s.ui.manage_top + 1);
+    s.mouse(MouseEventKind::Down(MouseButton::Left), 0, 0);
+    assert_eq!(s.ui.app.overlay(), Overlay::Picker, "a click beside it closes it");
+}
+
+#[test]
+fn the_samples_keep_to_the_picker_and_say_why() {
+    let status = Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
+    let mut s = Screenful::starting(100, 32, status);
+    s.keys("m");
+    assert_eq!(s.ui.app.overlay(), Overlay::Picker);
+    assert!(s.shows("their feeds can't be changed"), "{}", s.text());
 }

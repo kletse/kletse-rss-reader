@@ -14,7 +14,7 @@ pub struct PickerItem {
     pub depth: u8,
 }
 
-fn by_title(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn by_title(a: &str, b: &str) -> std::cmp::Ordering {
     a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
 }
 

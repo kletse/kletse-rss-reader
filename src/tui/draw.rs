@@ -28,6 +28,9 @@ pub fn draw(ui: &mut Ui, frame: &mut Frame) {
         if ui.app.picker_shown() {
             picker(ui, frame, area);
         }
+        if ui.app.manage_shown() {
+            manage(ui, frame, area);
+        }
     }
     match ui.app.overlay() {
         Overlay::Image => viewer(ui, frame, area),
@@ -493,12 +496,19 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
     let refresh = if ui.app.capabilities().refresh { " · r refresh" } else { "" };
+    // An empty account says what to press, and the line would run out of room.
+    let change = if ui.app.capabilities().feeds.any() && !ui.app.offers_add() { " · m manage" } else { "" };
     let settings = if ui.app.samples() { "connect" } else { "settings" };
-    // With nothing to search, the way to fill the list has its place. `?` lists both keys all the time.
-    let search = if ui.app.offers_import() { "i import" } else { "/ search" };
+    // With nothing to search, the way to fill the list has its place. `?` lists all the keys all the time.
+    let search = match (ui.app.offers_add(), ui.app.offers_import()) {
+        (true, true) => "a add · i import",
+        (true, false) => "a add",
+        (false, true) => "i import",
+        (false, false) => "/ search",
+    };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
-        .title_bottom(Line::styled(format!(" {swap} · {search}{refresh} · , {settings} · ? keys "), DIM));
+        .title_bottom(Line::styled(format!(" {swap} · {search}{refresh}{change} · , {settings} · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));
     }
@@ -603,6 +613,94 @@ fn transfer(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     }
 }
 
+/// The feeds panel: what the core says is on this stage, and the rows or the field under that.
+fn manage(ui: &mut Ui, frame: &mut Frame, area: Rect) {
+    let Some(view) = ui.app.manage_view() else { return };
+    let outer_width = area.width.saturating_sub(4).min(72);
+    let width = usize::from(outer_width.saturating_sub(4));
+    let mut top = Vec::new();
+    let mut cursor = None;
+    if !view.text.is_empty() {
+        top.extend(article::plain(&view.text, DIM, width));
+    }
+    if let (Some(field), Some((_, editor))) = (&view.field, &ui.manage_field) {
+        if !top.is_empty() {
+            top.push(Row::default());
+        }
+        top.extend(article::plain(field.label, BOLD, width));
+        let (text, at) = editor.view(width, false);
+        cursor = Some((u16::try_from(top.len()).unwrap_or(0), u16::try_from(at).unwrap_or(0)));
+        top.push(Row { line: Line::raw(text), ..Row::default() });
+    }
+    if view.stage == "loading" && view.error.is_empty() {
+        top.extend(article::plain("Loading…", DIM, width));
+    }
+    if !view.error.is_empty() {
+        top.push(Row::default());
+        top.extend(article::plain(&view.error, ERROR, width));
+    }
+    let mut below = Vec::new();
+    if !view.notice.is_empty() && matches!(view.stage, "list" | "working") {
+        below.extend(article::plain(&view.notice, if view.worrying { ERROR } else { DIM }, width));
+    }
+    let hint = match view.stage {
+        "field" => " Enter to go on · Esc to go back ".to_string(),
+        "choose" => " Enter to choose · Esc to go back ".to_string(),
+        "working" => " Esc to close: the server carries on ".to_string(),
+        "loading" => " Esc to close ".to_string(),
+        _ => {
+            // The first word will do beside its key: Fetch now is f fetch.
+            let word = |label: &str| label.split(' ').next().unwrap_or_default().to_lowercase();
+            let keys: Vec<String> = view.keys.iter().map(|k| format!("{} {}", k.key, word(k.label))).collect();
+            format!(" {} · Esc close · ? keys ", keys.join(" · "))
+        }
+    };
+    let block = Block::bordered()
+        .title(Line::styled(format!(" {} ", fitted(&view.title, width)), BOLD))
+        .title_bottom(Line::styled(fitted(&hint, usize::from(outer_width.saturating_sub(2))), DIM));
+    let others = top.len() + below.len();
+    let tallest = usize::from(area.height) * 4 / 5;
+    let room = view.rows.len().min(tallest.saturating_sub(2 + others).max(1).min(view.rows.len()));
+    let height = u16::try_from(others + room + 2).unwrap_or(u16::MAX);
+    let (outer, inner) = panel(frame, area, (outer_width, height), block);
+    let inner = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), inner.height);
+    ui.manage_panel = outer;
+    draw_rows(frame, &top, inner);
+    let top_rows = u16::try_from(top.len()).unwrap_or(u16::MAX);
+    let rows_at = Rect::new(inner.x, inner.y + top_rows, inner.width, u16::try_from(room).unwrap_or(0));
+    let rows_at = rows_at.intersection(inner);
+    ui.manage_rows = rows_at;
+    let room = usize::from(rows_at.height).max(1);
+    ui.manage_top = ui.manage_top.min(view.cursor).max((view.cursor + 1).saturating_sub(room));
+    ui.manage_top = ui.manage_top.min(view.rows.len().saturating_sub(room));
+    let width = usize::from(rows_at.width);
+    for (i, row) in view.rows.iter().enumerate().skip(ui.manage_top).take(room) {
+        let indent = if row.depth == 1 { "  " } else { "" };
+        let label = fitted(&row.label, width.saturating_sub(indent.width() + row.note.width() + 1));
+        let gap = width.saturating_sub(indent.width() + label.width() + row.note.width());
+        let selected = i == view.cursor;
+        let name = if row.depth == 0 || selected { BOLD } else { Style::new() };
+        let mut line = Line::from(vec![
+            Span::raw(indent),
+            Span::styled(label, name),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(row.note.as_str(), DIM),
+        ]);
+        if selected {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED));
+        }
+        frame.render_widget(line, row_at(rows_at.y + u16::try_from(i - ui.manage_top).unwrap_or(0), rows_at));
+    }
+    let under = rows_at.bottom();
+    draw_rows(frame, &below, Rect::new(inner.x, under, inner.width, inner.bottom().saturating_sub(under)));
+    solid(frame, outer);
+    if ui.app.overlay() == Overlay::Manage
+        && let Some((row, column)) = cursor.filter(|&(row, _)| row < inner.height)
+    {
+        frame.set_cursor_position(Position::new(inner.x + column, inner.y + row));
+    }
+}
+
 fn help(ui: &mut Ui, frame: &mut Frame, area: Rect) {
     let lines = ui.help_lines();
     let keys_width = lines.iter().map(|(keys, _)| keys.width()).max().unwrap_or(0);
@@ -637,7 +735,7 @@ fn help(ui: &mut Ui, frame: &mut Frame, area: Rect) {
 fn confirm(ui: &Ui, frame: &mut Frame, area: Rect) {
     let width = area.width.saturating_sub(4).min(56);
     let lines = article::plain(ui.app.confirm_text(), Style::new(), usize::from(width.saturating_sub(4)));
-    let block = Block::bordered().title_bottom(Line::styled(" Enter / y to confirm · Esc / n to cancel ", DIM));
+    let block = Block::bordered().title_bottom(Line::styled(format!(" {} ", ui.app.confirm_hint()), DIM));
     let height = u16::try_from(lines.len() + 2).unwrap_or(u16::MAX);
     let (outer, inner) = panel(frame, area, (width, height), block);
     draw_rows(frame, &lines, Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), inner.height));

@@ -190,6 +190,12 @@ pub struct Ui {
     pub picker_panel: Rect,
     /// The import and export panel, for clicks beside it.
     pub transfer_panel: Rect,
+    /// The first row of the feeds panel in view, where they are and the panel around them, for clicks.
+    pub manage_top: usize,
+    pub manage_rows: Rect,
+    pub manage_panel: Rect,
+    /// What's typed on the feeds panel, and which of its fields that's for.
+    pub manage_field: Option<(String, Editor)>,
     pub search: Option<Editor>,
     /// The path in the import and export panel, which takes the place of a window's file dialog.
     pub transfer_path: Option<Editor>,
@@ -252,6 +258,10 @@ impl Ui {
             picker_rows: Rect::default(),
             picker_panel: Rect::default(),
             transfer_panel: Rect::default(),
+            manage_top: 0,
+            manage_rows: Rect::default(),
+            manage_panel: Rect::default(),
+            manage_field: None,
             search: None,
             transfer_path: None,
             form: None,
@@ -342,6 +352,7 @@ impl Ui {
             (KeyCode::Char('l'), _) if ctrl => self.repaint = true,
             (_, Overlay::Search) => self.search_key(event),
             (_, Overlay::Transfer) => self.transfer_key(event),
+            (_, Overlay::Manage) => self.manage_key(event),
             (_, Overlay::Settings) => self.form_key(event),
             (_, Overlay::Onboarding) if self.app.step() == Step::Connect => self.form_key(event),
             (KeyCode::Char('j') | KeyCode::Down, Overlay::Help) => self.help_scroll += 1,
@@ -428,6 +439,21 @@ impl Ui {
         }
     }
 
+    /// The panel's field, where it has one; everything else is the core's.
+    fn manage_key(&mut self, event: KeyEvent) {
+        self.sync_manage_field();
+        match (event.code, &mut self.manage_field) {
+            (KeyCode::Esc, _) => self.forward(event),
+            (KeyCode::Enter, Some((_, editor))) => {
+                let text = editor.text().to_string();
+                let fx = self.app.submit_manage(&text);
+                self.run(fx);
+            }
+            (_, Some((_, editor))) => editor.key(event),
+            _ => self.forward(event),
+        }
+    }
+
     /// Connect as it stands, on that step.
     fn connect(&self) -> Option<ConnectView> {
         (self.app.overlay() == Overlay::Onboarding && self.app.step() == Step::Connect).then(|| self.app.connect_view())
@@ -493,6 +519,8 @@ impl Ui {
             editor.paste(text);
         } else if let Some(editor) = self.transfer_path.as_mut().filter(|_| self.app.overlay() == Overlay::Transfer) {
             editor.paste(text);
+        } else if let Some((_, editor)) = self.manage_field.as_mut().filter(|_| self.app.overlay() == Overlay::Manage) {
+            editor.paste(text);
         } else if let Some(form) = &mut self.form
             && !checking
             && (self.app.overlay() == Overlay::Settings || self.app.step() == Step::Connect)
@@ -516,6 +544,10 @@ impl Ui {
             Overlay::None => self.scroll_by(if down { WHEEL } else { -WHEEL }),
             Overlay::Picker => {
                 let fx = self.app.action(Action::PickerMove(if down { 1 } else { -1 }));
+                self.run(fx);
+            }
+            Overlay::Manage => {
+                let fx = self.app.action(Action::ManageCursor(if down { 1 } else { -1 }));
                 self.run(fx);
             }
             Overlay::Help if down => self.help_scroll += 1,
@@ -544,6 +576,20 @@ impl Ui {
                     }
                 } else if !self.picker_panel.contains(spot) {
                     self.app.picker_backdrop();
+                }
+            }
+            Overlay::Manage => {
+                let spot = ratatui::layout::Position::new(column, row);
+                let rows = self.app.manage_view().map_or(0, |view| view.rows.len());
+                if self.manage_rows.contains(spot) {
+                    let index = self.manage_top + usize::from(row - self.manage_rows.y);
+                    if index < rows {
+                        let fx = self.app.manage_row(index);
+                        self.run(fx);
+                    }
+                } else if !self.manage_panel.contains(spot) {
+                    let fx = self.app.cancel_manage();
+                    self.run(fx);
                 }
             }
             Overlay::Help => self.app.close_help_overlay(),
@@ -646,6 +692,19 @@ impl Ui {
         self.sync_stale();
     }
 
+    /// The field goes with the stage that has it, and starts from what the core says: after a refusal, what was typed.
+    fn sync_manage_field(&mut self) {
+        let view = self.app.manage_view().filter(|_| self.app.manage_shown());
+        let Some((title, field)) = view.and_then(|view| Some((view.title, view.field?))) else {
+            self.manage_field = None;
+            return;
+        };
+        let which = format!("{title} {}", field.label);
+        if self.manage_field.as_ref().is_none_or(|(known, _)| *known != which) {
+            self.manage_field = Some((which, Editor::new(&field.value)));
+        }
+    }
+
     fn sync_fields(&mut self) {
         let searching = self.app.overlay() == Overlay::Search;
         if searching && self.search.is_none() {
@@ -662,6 +721,7 @@ impl Ui {
             }
             Some(_) => {}
         }
+        self.sync_manage_field();
         if self.app.overlay() != Overlay::Help {
             self.help_scroll = 0;
         }

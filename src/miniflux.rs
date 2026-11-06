@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::config;
 use crate::error::{Error, Service, ok_status};
-use crate::feeds::{Counts, EntryPage, EntryStatus, Feed, FeedCount, Selection};
+use crate::feeds::{Category, Counts, EntryPage, EntryStatus, Feed, FeedCount, FeedList, Selection};
 use crate::paging::Order;
 
 /// Why a password didn't become a key.
@@ -330,6 +330,92 @@ impl Client {
             .body(opml.to_vec());
         self.send(request).await?;
         Ok(())
+    }
+
+    /// Every category, also those with no feed in them.
+    pub async fn categories(&self) -> Result<Vec<Category>, Error> {
+        self.get_json("/categories").await
+    }
+
+    /// The feeds and every category.
+    pub async fn feed_list(&self) -> Result<FeedList, Error> {
+        let (counts, categories) = tokio::try_join!(self.feed_counts(), self.categories())?;
+        Ok(FeedList::new(counts, categories, None))
+    }
+
+    /// Subscribes, which fetches the feed: a page that isn't one is turned down here. Miniflux takes no feed with no
+    /// category, and its last category can be deleted, so that's when one is made.
+    pub async fn add_feed(&self, url: &str, category: Option<i64>) -> Result<i64, Error> {
+        #[derive(Deserialize)]
+        struct Added {
+            feed_id: i64,
+        }
+        let category = match category {
+            Some(id) => Some(id),
+            None if self.categories().await?.is_empty() => Some(self.create_category(FIRST_CATEGORY).await?.id),
+            None => None,
+        };
+        let body = match category {
+            Some(id) => json!({ "feed_url": url, "category_id": id }),
+            None => json!({ "feed_url": url }),
+        };
+        let added: Added = self.json(self.req(reqwest::Method::POST, "/feeds").json(&body)).await.map_err(its_words)?;
+        Ok(added.feed_id)
+    }
+
+    pub async fn rename_feed(&self, id: i64, title: &str) -> Result<(), Error> {
+        self.update_feed(id, &json!({ "title": title })).await
+    }
+
+    pub async fn move_feed(&self, id: i64, category: i64) -> Result<(), Error> {
+        self.update_feed(id, &json!({ "category_id": category })).await
+    }
+
+    async fn update_feed(&self, id: i64, body: &serde_json::Value) -> Result<(), Error> {
+        let request = self.req(reqwest::Method::PUT, &format!("/feeds/{id}")).json(body);
+        self.send(request).await.map_err(its_words)?;
+        Ok(())
+    }
+
+    /// Its articles go with it.
+    pub async fn remove_feed(&self, id: i64) -> Result<(), Error> {
+        self.send(self.req(reqwest::Method::DELETE, &format!("/feeds/{id}"))).await.map_err(its_words)?;
+        Ok(())
+    }
+
+    pub async fn create_category(&self, title: &str) -> Result<Category, Error> {
+        let request = self.req(reqwest::Method::POST, "/categories").json(&json!({ "title": title }));
+        self.json(request).await.map_err(its_words)
+    }
+
+    pub async fn rename_category(&self, id: i64, title: &str) -> Result<(), Error> {
+        let request = self.req(reqwest::Method::PUT, &format!("/categories/{id}")).json(&json!({ "title": title }));
+        self.send(request).await.map_err(its_words)?;
+        Ok(())
+    }
+
+    /// Answers 204 and takes every feed in the category with it, articles and all: `app.rs` asks before this.
+    pub async fn delete_category(&self, id: i64) -> Result<(), Error> {
+        self.send(self.req(reqwest::Method::DELETE, &format!("/categories/{id}"))).await.map_err(its_words)?;
+        Ok(())
+    }
+}
+
+/// What a new account's category is called, for when the last one was deleted: Miniflux then has nowhere to put a feed.
+const FIRST_CATEGORY: &str = "All";
+
+/// Miniflux's reason, in its own words, where it gave one. Its errors are JSON with the text in `error_message`.
+fn its_words(error: Error) -> Error {
+    #[derive(Deserialize)]
+    struct Refusal {
+        error_message: String,
+    }
+    match &error {
+        Error::Http { body, .. } => match serde_json::from_str::<Refusal>(body) {
+            Ok(refusal) => Error::Refused(format!("Miniflux says: {}", refusal.error_message)),
+            Err(_) => error,
+        },
+        _ => error,
     }
 }
 

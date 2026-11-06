@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // the generated FFI; nothing hand-written here is unsafe
 #![allow(clippy::too_many_arguments)] // `key` takes one flag per modifier, as QML has them
 
-use crate::app::{App, Effect, FeedFile, KeyPress, PickerList, ToastKind};
+use crate::app::{App, Effect, FeedFile, KeyPress, Overlay, PickerList, ToastKind};
 use crate::backend::Backend;
 use crate::content::convert;
 use crate::keys;
@@ -88,14 +88,23 @@ pub mod qobject {
         // What the picker says with no rows, and whether it then offers to import.
         #[qproperty(QString, picker_empty)]
         #[qproperty(bool, picker_offers_import)]
+        #[qproperty(bool, picker_offers_add)]
         // Unread items come newest first.
         #[qproperty(bool, newest_first)]
         // Help, confirm, toast
         // JSON `[[keys, action], …]`.
         #[qproperty(QString, help_lines)]
         #[qproperty(QString, confirm_text)]
+        #[qproperty(QString, confirm_hint)]
         // The import and export panel: see `app::TransferView`, as JSON; "null" with nothing going on.
         #[qproperty(QString, transfer)]
+        // The feeds panel: see `manage::ManageView`, as JSON; "null" with nothing going on.
+        #[qproperty(QString, manage)]
+        #[qproperty(bool, manage_shown)]
+        // Its stage has a text field, which took the keyboard and gives it back when it goes.
+        #[qproperty(bool, manage_field)]
+        // Anything about the feeds can be changed here.
+        #[qproperty(bool, manages)]
         #[qproperty(QString, toast_message)]
         #[qproperty(bool, toast_error)]
         #[qproperty(i32, toast_serial)]
@@ -212,6 +221,15 @@ pub mod qobject {
         /// Its Cancel or Close, or a click beside it.
         #[qinvokable]
         fn cancel_transfer(self: Pin<&mut Model>);
+        /// A row of the feeds panel.
+        #[qinvokable]
+        fn manage_row(self: Pin<&mut Model>, row: i32);
+        /// Its field's Enter, or its button.
+        #[qinvokable]
+        fn submit_manage(self: Pin<&mut Model>, text: &QString);
+        /// A step back, or a click beside it.
+        #[qinvokable]
+        fn cancel_manage(self: Pin<&mut Model>);
         /// What the file dialog came up with: a `file:` URL, or a path.
         #[qinvokable]
         fn feed_file(self: Pin<&mut Model>, file: &QString);
@@ -306,6 +324,12 @@ pub struct ModelRust {
     help_lines: QString,
     confirm_text: QString,
     transfer: QString,
+    manage: QString,
+    manage_shown: bool,
+    manage_field: bool,
+    manages: bool,
+    confirm_hint: QString,
+    picker_offers_add: bool,
     toast_message: QString,
     toast_error: bool,
     toast_serial: i32,
@@ -419,6 +443,12 @@ impl Default for ModelRust {
             help_lines: QString::from("[]"),
             confirm_text: QString::default(),
             transfer: QString::from("null"),
+            manage: QString::from("null"),
+            manage_shown: false,
+            manage_field: false,
+            manages: false,
+            confirm_hint: QString::default(),
+            picker_offers_add: false,
             toast_message: QString::default(),
             toast_error: false,
             toast_serial: 0,
@@ -658,6 +688,21 @@ impl qobject::Model {
         self.run(fx);
     }
 
+    pub fn manage_row(mut self: Pin<&mut Self>, row: i32) {
+        let fx = self.as_mut().state().app.manage_row(usize::try_from(row).unwrap_or(0));
+        self.run(fx);
+    }
+
+    pub fn submit_manage(mut self: Pin<&mut Self>, text: &QString) {
+        let fx = self.as_mut().state().app.submit_manage(&text.to_string());
+        self.run(fx);
+    }
+
+    pub fn cancel_manage(mut self: Pin<&mut Self>) {
+        let fx = self.as_mut().state().app.cancel_manage();
+        self.run(fx);
+    }
+
     /// With `false`: `FileDialog` has been told not to ask about a file that's there, so that it's always asked in
     /// one place, by the core.
     pub fn feed_file(mut self: Pin<&mut Self>, file: &QString) {
@@ -729,6 +774,11 @@ impl qobject::Model {
         let refreshes = app.capabilities().refresh;
         let (imports, exports) = (app.capabilities().import_feeds, app.capabilities().export_feeds);
         let transfer = json(&app.transfer_view());
+        let manage_view = app.manage_view();
+        let manage_field = app.overlay() == Overlay::Manage && manage_view.as_ref().is_some_and(|v| v.field.is_some());
+        let manage = json(&manage_view);
+        let (manage_shown, manages) = (app.manage_shown(), app.capabilities().feeds.any());
+        let confirm_hint = app.confirm_hint();
         let help = serde_json::to_string(&app.help_lines()).unwrap_or_else(|_| "[]".into());
         let confirm = app.confirm_text().to_string();
         let toast = app.toast().cloned();
@@ -771,6 +821,12 @@ impl qobject::Model {
         self.as_mut().set_imports(imports);
         self.as_mut().set_exports(exports);
         self.as_mut().set_transfer(qs(&transfer));
+        // After the overlay, whose change gives the keyboard back: the field that's made here takes it.
+        self.as_mut().set_manage(qs(&manage));
+        self.as_mut().set_manage_shown(manage_shown);
+        self.as_mut().set_manage_field(manage_field);
+        self.as_mut().set_manages(manages);
+        self.as_mut().set_confirm_hint(qs(confirm_hint));
         self.as_mut().set_help_lines(qs(&help));
         self.as_mut().set_confirm_text(qs(&confirm));
         match toast {
@@ -877,9 +933,10 @@ impl qobject::Model {
         let rows = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into());
         let (cursor, history) = (to_i32(s.app.picker_cursor()), s.app.picker_mode() == Mode::History);
         let newest_first = s.app.newest_first();
-        let (empty, offers_import) = (s.app.picker_empty_text(), s.app.offers_import());
+        let (empty, offers_import, offers_add) = (s.app.picker_empty_text(), s.app.offers_import(), s.app.offers_add());
         self.as_mut().set_picker_empty(qs(&empty));
         self.as_mut().set_picker_offers_import(offers_import);
+        self.as_mut().set_picker_offers_add(offers_add);
         self.as_mut().set_picker_state(qs(state));
         self.as_mut().set_picker_error(qs(&error));
         self.as_mut().set_picker_rows(qs(&rows));

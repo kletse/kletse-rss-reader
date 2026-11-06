@@ -5,7 +5,7 @@
 //! A hosted service gets a row only once it has passed against a real account.
 
 use crate::config::Server;
-use crate::feeds::Capabilities;
+use crate::feeds::{Capabilities, FeedOps};
 use serde::Serialize;
 
 /// A value in the settings form, as the windows name it. `SettingsValues` has one slot for each.
@@ -175,6 +175,9 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
             search: None,
             import_feeds: false,
             export_feeds: true,
+            // On FreshRSS: see `Config::capabilities`. Elsewhere it can't be told which server this is, and they differ:
+            // CommaFeed takes a web page for a feed, says `OK`, and renames a feed it already has.
+            feeds: FeedOps::NONE,
             samples: false,
         },
     },
@@ -315,7 +318,7 @@ pub const NO_SERVER: NoServer = NoServer {
         },
     ],
     note: "Either way, Connect comes next. If you're leaving another reader, export an OPML file from it, and Onward \
-           imports that once you're connected. Otherwise you add feeds on the server's web page.",
+           imports that once you're connected. Otherwise you add feeds in Onward, by their address.",
     more: Link { label: "More on choosing", url: "https://onward.kletse.dev/no-server/" },
 };
 

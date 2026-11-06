@@ -9,8 +9,9 @@ use crate::dates;
 use crate::demo;
 use crate::detect::{self, Detected};
 use crate::error::{Error, RedirectRefused};
-use crate::feeds::{self, Capabilities, Counts, EntryPage, EntryStatus, Selection};
+use crate::feeds::{self, Capabilities, Changed, Counts, EntryPage, EntryStatus, FeedChange, FeedList, Selection};
 use crate::greader;
+use crate::manage;
 use crate::miniflux;
 use crate::opml::{self, ExportFailed};
 use crate::paging::PageRequest;
@@ -495,6 +496,16 @@ impl Backend {
             Effect::ExportFeeds { job, path, replace } => {
                 Outcome::FeedsExported { job, result: self.export_feeds(&path, replace).await }
             }
+            Effect::LoadFeedList { serial } => {
+                Outcome::FeedList { serial, result: self.feed_list().await.map_err(msg) }
+            }
+            Effect::CountCategory { job, category } => {
+                Outcome::CategoryCounted { job, category, result: self.feed_list().await.map_err(msg) }
+            }
+            Effect::ChangeFeeds { job, change } => {
+                let result = self.change_feeds(&change).await.map_err(msg);
+                Outcome::FeedsChanged { job, change, result }
+            }
             Effect::SavePrefs(_)
             | Effect::ScrollPage { .. }
             | Effect::Quit
@@ -547,6 +558,28 @@ impl Backend {
         let write = move || Ok(opml::write_file(&target, &bytes, replace));
         blocking(write).await??;
         Ok(Exported { path, feeds: count, left_out })
+    }
+
+    /// Every feed and category, from the server. The samples have none to change, and that's no call to one.
+    async fn feed_list(&self) -> Result<FeedList, Error> {
+        if self.demo() {
+            return Err(Error::Refused(feeds::SAMPLES_HAVE_NO_FEEDS.into()));
+        }
+        self.server()?.feed_list().await
+    }
+
+    /// Makes a change, then looks at the list: the server's yes isn't what gets reported. If the list won't come, the
+    /// change still happened.
+    async fn change_feeds(&self, change: &FeedChange) -> Result<Changed, Error> {
+        if self.demo() {
+            return Err(Error::Refused(feeds::SAMPLES_HAVE_NO_FEEDS.into()));
+        }
+        // The client stays the same for the whole of it, whatever happens to the config meanwhile.
+        let server = self.server()?;
+        let applied = server.change(change).await?;
+        let list = server.feed_list().await.ok();
+        let problem = list.as_ref().and_then(|list| manage::check(change, &applied, list));
+        Ok(Changed { applied, list, problem })
     }
 
     /// A key named for when it was made: Miniflux refuses a description it has seen, and people sign in more than once.

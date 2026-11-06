@@ -40,7 +40,7 @@ jobs:
           cargo build --locked
           for keys in "Enter" "Enter n n" "Enter ?" "Enter ," "h Enter" "Enter A" "Enter n n n n n n n n" \
               "Enter /" "Enter v" "Enter n p A" "j j j Enter j" "Enter *" "j Enter" "Enter , find" \
-              "Enter , find Escape" "i" "e"; do
+              "Enter , find Escape" "i" "e" "m" "a"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
@@ -120,7 +120,47 @@ jobs:
           username = "me"
           password = "password"
           EOF
-          walk x i e "e file:/tmp/onward-out-2.opml x x"
+          # What can't change here is left out, and m and a say why.
+          walk x i e "e file:/tmp/onward-out-2.opml x x" m a
+          # Changing feeds, on accounts that hold them. Each run starts from the same feeds, as an address is not an
+          # account: POST /reset puts them back.
+          manage() {
+            for keys in "$@"; do
+              curl -fsS -X POST http://127.0.0.1:18399/reset > /dev/null
+              walk "$keys"
+            done
+          }
+          add="a type:http://feeds.example"
+          cat > "$empty/config/onward/config.toml" <<EOF
+          [miniflux]
+          url = "http://127.0.0.1:18399/feeds-miniflux"
+          api_key = "key"
+          EOF
+          manage x m "m j j" "m Escape" "m ?" a "a accept x" "$add/new.xml accept x x" "$add/alpha.xml accept x x" \
+              "$add/page.html accept x x" "a type:notaurl accept x x" "$add.invalid/x.xml accept x x" \
+              "m j j a type:http://feeds.example/new.xml accept x x" "m j j r" "m j j r type:Renamed accept x x" \
+              "m j r type:Latest accept x x" "m j j m" "m j j m Enter x x" "m j j m ArrowUp Enter" \
+              "m j j m ArrowUp Enter type:Later accept x x" "m j j d" "m j j d Enter" "m j j d n" "m j j d y x x" \
+              "m j d x x" "m j d x n" "m j d x y x x" "m d x x" "m d x Enter x x" "m f" "m j j f Escape x"
+          cat > "$empty/config/onward/config.toml" <<EOF
+          server = "greader"
+          [greader]
+          url = "http://127.0.0.1:18399/feeds-freshrss/api/greader.php"
+          username = "me"
+          password = "password"
+          EOF
+          manage x m "$add/new.xml accept x x" "$add/alpha.xml accept x x" "$add/page.html accept x x" \
+              "a type:notaurl accept x x" "$add.invalid/x.xml accept x x" "m j j r type:Renamed accept x x" \
+              "m j r type:Latest accept x x" "m j j m Enter x x" "m j j m ArrowUp Enter type:Later accept x x" \
+              "m j r type:Tech accept x" "m j d x x" "m j d x Enter x x" "m j j d y x x" \
+              "m j j j j j j j r" "m j j j j j j j d"
+          # An account with nothing on it, where it starts from a feed's address.
+          cat > "$empty/config/onward/config.toml" <<EOF
+          [miniflux]
+          url = "http://127.0.0.1:18399/empty-miniflux"
+          api_key = "key"
+          EOF
+          walk m a
           rm "$empty/config/onward/config.toml"
           rmdir "$empty/config/onward"
           # A broken config file still says so.

@@ -14,6 +14,10 @@ struct PickerView: View {
             HStack(spacing: 8) {
                 modeSwitch(history)
                 Spacer()
+                if model.state?.manages == true {
+                    Button { model.press("manage") } label: { Image(systemName: "list.bullet.indent") }
+                        .help("Manage feeds and categories (m)")
+                }
                 if model.state?.capabilities.importFeeds == true {
                     Button { model.press("import") } label: { Image(systemName: "square.and.arrow.down") }
                         .help("Import feeds from an OPML file (i)")
@@ -41,12 +45,19 @@ struct PickerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14)
-                // An empty account's way forward.
-                if picker?.state == "ready", picker?.offersImport == true {
-                    Button("Import Feeds…") { model.press("import") }
-                        .buttonStyle(.borderedProminent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding([.horizontal, .bottom], 14)
+                // An empty account's ways forward.
+                if picker?.state == "ready", picker?.offersAdd == true || picker?.offersImport == true {
+                    HStack {
+                        if picker?.offersAdd == true {
+                            Button("Add a Feed…") { model.press("add_feed") }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        if picker?.offersImport == true {
+                            Button("Import Feeds…") { model.press("import") }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding([.horizontal, .bottom], 14)
                 }
             }
             Divider()

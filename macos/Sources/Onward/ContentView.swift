@@ -1,5 +1,5 @@
 // The window: the toolbar, the reader (an article or a message; on first run, onboarding), and what goes over it: the
-// feeds picker, the keys, the search box and importing feeds (`Floating`), the confirm dialog (an alert), the image viewer and toasts.
+// feeds picker, the keys, the search box, importing feeds and the feeds panel (`Floating`), the confirm dialog (an alert), the image viewer and toasts.
 // The floating ones aren't sheets: a sheet disables the window's red button, ignores clicks beside it and holds up a
 // quit from the Dock.
 import SwiftUI
@@ -11,7 +11,8 @@ struct ContentView: View {
 
     /// Something floats over the reader.
     private var floating: Bool {
-        model.state?.pickerShown == true || ["help", "search", "transfer"].contains(model.state?.overlay)
+        model.state?.pickerShown == true || model.state?.manageShown == true
+            || ["help", "search", "transfer"].contains(model.state?.overlay)
     }
 
     var body: some View {
@@ -31,6 +32,10 @@ struct ContentView: View {
                         PickerView(model: model)
                         ScrollView { PickerView(model: model) }
                     }
+                }
+            } else if state?.manageShown == true, let manage = state?.manage {
+                Floating(dismiss: model.cancelManage) {
+                    ManagePanel(model: model, manage: manage)
                 }
             } else if state?.overlay == "help" {
                 Floating(dismiss: model.closeHelp) {
@@ -172,10 +177,12 @@ struct ConfirmAlert: ViewModifier {
                 set: { _ in }
             ),
             actions: {
-                Button("Mark Read") { model.key("y") }
+                Button(model.state?.confirmAction ?? "OK", role: model.state?.confirmLasting == true ? .destructive : nil) {
+                    model.key("y")
+                }
                 Button("Cancel", role: .cancel) { model.key("n") }
             },
-            message: { Text("Enter or y to confirm, Esc or n to cancel.") }
+            message: { Text(model.state?.confirmHint ?? "") }
         )
     }
 }

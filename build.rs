@@ -7,6 +7,7 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 const QML: &[&str] = &[
     "qml/Main.qml",
     "qml/Transfer.qml",
+    "qml/FeedManager.qml",
     "qml/FeedFileDialog.qml",
     "qml/TopBar.qml",
     "qml/Reader.qml",

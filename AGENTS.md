@@ -57,6 +57,26 @@ and how to build it is in the [README](README.md).
 - **An import can't be stopped, and doesn't need to be.** Esc closes the panel and `Working` stays: its answer becomes a
   toast. A change of server bumps `latest_transfer`, as `latest_load` does for loads, so an old answer is a no-op; the
   client the task holds is the old server's, so its refresh goes to the right place too.
+- **Changing feeds is `Overlay::Manage`** with a `Manage` from `src/manage.rs` (`Stage`: List, Add, Rename, Move, NewCategory,
+  Working), drawn from `App::manage_view()`; the windows get the rows, the keys on offer and the field, and hand back
+  `press`, `manage_row`, `submit_manage` and `cancel_manage`. Keys are `MANAGE_KEYS`, reached with `m` and `a` in the picker.
+  `FeedChange` is one edit; `Server::change` makes it and `Backend::change_feeds` then lists the feeds and runs
+  `manage::check`, on every server: FreshRSS says `OK` to a rename onto a taken name and to an edit of a feed that's gone.
+  An answer the list doesn't bear out is reported as `Changed::problem`, and leaves what's open alone.
+- **Nothing is lost without an answer.** `manage_delete` only ever asks: a feed straight away, a category after
+  `Effect::CountCategory`, as the question names what's in it now. `Pending::Change { lasting }` is that question; with
+  `lasting`, only `y` says yes and Enter is swallowed, as on the Mac it would go on to the alert's default button. The words
+  go by `FeedOps::delete_category` and nothing else: `TakesFeeds` is Miniflux, which deletes the feeds and their articles with a
+  204, and `KeepsFeeds` FreshRSS. Keep it that way when adding a server, and find out by running it.
+- **`Capabilities::feeds` is per operation** (`FeedOps`), and what a server can't do isn't offered at all (`list_keys`). On a Google Reader server that isn't FreshRSS it's `NONE`: the config can't tell Miniflux's integration from
+  CommaFeed, which takes a web page for a feed and says `OK`. The samples are `NONE` too, and say so: a change there would be
+  to nothing. FreshRSS's default category can't be renamed or deleted (`FeedList::fixed`): it answers `OK` and does nothing.
+- **A category's id can change.** On FreshRSS it's the hash of `user/-/label/<name>`, so a rename makes a new one, and
+  `Applied::category` says which. `App::reconcile` keeps the reader sane after a change: the open list follows a rename, a
+  removed feed's articles leave the queue with your place kept, a list that's gone closes to the picker, a page on its way is
+  dropped (`new_load`), and a mark-all question about the old list goes (`forget_pending_about`). There's no "create a category"
+  anywhere, as FreshRSS has no call for one: it comes to be when a feed moves to a new name. `tag/list` and `/v1/categories`
+  are what show the empty ones, so they're only asked for on the panel (`Server::feed_list`), not on each picker load.
 - **`src/bridge.rs` is the only QObject.** It runs effects on a tokio runtime, queues the outcomes back onto the
   Qt thread (`qt_thread().queue`), and after every change `sync()` copies state into properties. Setters only
   notify on a real change, so syncing everything each time is fine. The article is re-rendered only when its id,
@@ -101,7 +121,7 @@ old package. Keep these for a while; everything else uses the new name.
 ## Commands
 
 ```bash
-cargo test                                   # ~170 tests, no window
+cargo test                                   # ~600 tests, no window
 cargo clippy --all-targets -- -D warnings    # CI is this strict
 cargo fmt
 ONWARD_DEMO=1 cargo run                  # sample data, no server, nothing marked read
@@ -147,6 +167,9 @@ space as `Space`). It then waits 3 s for images, saves the window to the PNG and
 Importing needs a server, as the samples have none to import into: `.github/fake-server.py` plays one, on a `config.toml`
 naming it. `"i"` (the panel), `"i file:/tmp/feeds.opml"` (`file:` is what the file dialog would hand over), `"i Enter"` (the
 dialog: Qt makes its own on the offscreen platform, over the window, so the PNG doesn't show it and a QML warning would).
+The feeds panel needs one too, with feeds on it: `/feeds-miniflux` and `/feeds-freshrss` hold state, and `POST /reset` puts them
+back. `"m"` (the panel), `"m j j"` (a feed's keys), `"a type:http://feeds.example/alpha.xml accept x x"` (a refusal), `"m j d x"` (the
+question about a category; `x` waits for the count), `"m j j m"` (where it can go), `"m j j m ArrowUp Enter"` (a new category).
 First run works the same with `XDG_CONFIG_HOME` and `XDG_STATE_HOME` on an empty folder and no `ONWARD_DEMO`: `" "` (the first
 screen), `"ArrowDown Enter"` (Connect), `"ArrowDown Enter row:0"` (the whole form), `"ArrowUp Enter"` (no server), `"ArrowUp
 Enter Enter"` (a link opened; that does run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the
@@ -185,6 +208,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
 - **Use `s.model` in `Settings.qml`, not a bare `model`.** A binding on the root's own properties with a bare `model`
   (`property var kinds: JSON.parse(model.serverKinds)`) crashed at startup with a null pointer and no message, on Qt
   6.10.2, even though the form wasn't on screen. Written as `s.model`, like the rest of the file, it's fine.
+- **A panel's field and the keyboard:** `sync_chrome` sets `overlay` before `manage`, as an overlay's change gives the keyboard
+  back to `keys` and the field that `manage` brings has to take it after that. `manageField` going false gives it back again.
 - **`grabToImage` doesn't work on `window.contentItem`** ("no QML engine"). Grab an item you declared instead
   (`Main.qml` grabs its root `FocusScope`, which paints the window colour).
 - **Components loaded with `sourceComponent`** are created in the declaring file's context. Inside them, `parent`
@@ -279,6 +304,8 @@ Traps here:
 - **Don't call `Terminal::clear`.** It asks the terminal for the cursor position, and the answer can't get past the
   thread blocked in `event::read`, which holds crossterm's lock: a 2 s stall, then an error that ends the app. Use
   `repaint` in `mod.rs`. `Terminal::resize` is fine.
+- **The feeds panel's field lives on `Ui` too** (`manage_field`), made from `ManageView::field` and kept for as long as the
+  title and label stay the same, which is what brings back what was typed after a refusal.
 - **The path field lives on `Ui`, not in the core**, like the search box. `transfer_view()` keeps it through the question
   about a file that's there, so the path survives a no.
 - **Mouse reporting is what stops the wheel marking articles read.** Without it terminals send the wheel as ↑ and ↓ on
@@ -326,6 +353,8 @@ Traps here:
 - **A field editor doesn't mean typing.** A click on `.textSelection(.enabled)` text makes an `NSTextView` field
   editor the first responder, a read-only one. `Keyboard.typing` also asks `isEditable`, or every key stops working
   until something else takes the focus.
+- **The feeds panel is `ManagePanel`, in a `Floating`**, and its buttons have no shortcuts: `Keyboard` hands the core every key,
+  and the core leaves the field's alone while `typing`. Its alert's Delete has the destructive role where nothing brings it back.
 - **Don't give menu items single-key shortcuts.** AppKit matches menu key equivalents before the text field
   sees the key, so typing `j` in the settings would go to the next article.
 - **The decoder's `.convertFromSnakeCase` rewrites an object's keys in a dictionary too,** so field values come as a list of

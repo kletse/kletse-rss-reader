@@ -75,6 +75,8 @@ final class Model {
     func openLink(_ url: String) { send(["cmd": "open_link", "url": url]) }
     func chooseOnboarding(_ row: Int) { send(["cmd": "choose_onboarding", "row": row]) }
     func addressEdited(_ text: String) { send(["cmd": "address_edited", "text": text]) }
+    func readeckRow(_ row: Int, address: String) { send(["cmd": "readeck_row", "row": row, "address": address]) }
+    func readeckEdited(_ text: String) { send(["cmd": "readeck_edited", "text": text]) }
     func findServer() { send(["cmd": "find_server"]) }
     func cancelSettings() { send(["cmd": "cancel_settings"]) }
     func search(_ query: String) { send(["cmd": "search", "query": query]) }

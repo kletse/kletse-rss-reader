@@ -206,6 +206,19 @@ struct ConnectInfo: Decodable {
     let probing: Bool
 }
 
+/// Connecting Readeck in a browser, as far as it's got (`grant::GrantView`). All of it is safe to show.
+struct GrantInfo: Decodable {
+    let stage: String
+    let text: String
+    /// `text` is bad news.
+    let failed: Bool
+    /// The code to enter, and where. They came from the server.
+    let code: String
+    let address: String
+    let note: String
+    let rows: [ConnectRowInfo]
+}
+
 struct ConnectRowInfo: Decodable {
     let label: String
     /// What it opens, if anything.
@@ -254,6 +267,8 @@ struct SettingsInfo: Decodable {
     /// What the form offers.
     let providers: [ProviderInfo]
     let readeckFields: [FieldInfo]
+    /// The way into Readeck that needs no token.
+    let readeckGrant: GrantInfo
     /// What the button that leads to the address box says.
     let findServer: String
     let problem: String

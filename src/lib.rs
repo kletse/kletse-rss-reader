@@ -17,6 +17,7 @@ pub mod error;
 pub mod feeds;
 #[cfg(all(feature = "ffi", target_os = "macos"))]
 pub mod ffi;
+pub mod grant;
 pub mod greader;
 pub mod keys;
 pub mod manage;

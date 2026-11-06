@@ -178,6 +178,32 @@ jobs:
           mv "$secrets.kept" "$secrets"
           rm "$empty/config/onward/config.toml" "$secrets"
           rmdir "$empty/config/onward"
+          # Readeck in a browser: approved, which is saved by itself, and out of config.toml; turned down; an address on
+          # another host, shown and not opened; and a server that doesn't offer it, which leaves the token field.
+          mkdir "$empty/config/onward"
+          plain_config() {
+            cat > "$empty/config/onward/config.toml" <<EOF
+          [miniflux]
+          url = "http://127.0.0.1:18399/empty-miniflux"
+          api_key = "key"
+          EOF
+          }
+          grant="tab type:http://127.0.0.1:18399/readeck"
+          plain_config
+          curl -fsS -X POST http://127.0.0.1:18399/reset > /dev/null
+          walk ", $grant-approve grant:0 x x x x x x x x"
+          grep -q 'url = "http://127.0.0.1:18399/readeck-approve"' "$empty/config/onward/config.toml"
+          if grep -q 'the-readeck-token' "$empty/config/onward/config.toml"; then exit 1; fi
+          grep -q 'value = "the-readeck-token"' "$secrets"
+          rm "$secrets"
+          for offer in deny elsewhere none; do
+            plain_config
+            walk ", $grant-$offer grant:0 x x x x x x"
+            if grep -q 'readeck' "$empty/config/onward/config.toml"; then exit 1; fi
+            rm -f "$secrets"
+          done
+          rm "$empty/config/onward/config.toml"
+          rmdir "$empty/config/onward"
           # A broken config file still says so.
           mkdir "$empty/config/onward"
           echo "server = miniflux" > "$empty/config/onward/config.toml"

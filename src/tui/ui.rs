@@ -73,6 +73,8 @@ pub enum Focus {
     Field(FieldKey),
     /// A row of Connect, or Settings' way there.
     Row(usize),
+    /// A row of Readeck's browser way in, under its fields.
+    Grant(usize),
 }
 
 /// The settings form, with an editor for every field the core has. The form starts from the saved values once, then
@@ -83,6 +85,8 @@ pub struct Form {
     pub focus: Focus,
     /// Readeck's fields are on screen: Settings has them, first run doesn't.
     pub readeck: bool,
+    /// How many rows the core offers under them.
+    grant_rows: usize,
     /// The refill these values came from.
     refill: u64,
     /// What Connect had on screen when the focus was last placed.
@@ -107,7 +111,10 @@ impl Form {
                 std::iter::once(Focus::Field(FieldKey::Address)).chain(fields).chain(rows(view)).collect()
             }
             Some(view) => std::iter::once(Focus::Choice).chain(self.whole()).chain(rows(view)).collect(),
-            None => [Focus::Choice, Focus::Row(0)].into_iter().chain(self.whole()).collect(),
+            None => {
+                let grant = (0..self.grant_rows).map(Focus::Grant);
+                [Focus::Choice, Focus::Row(0)].into_iter().chain(self.whole()).chain(grant).collect()
+            }
         }
     }
 
@@ -465,6 +472,7 @@ impl Ui {
         let fx = match form.focus {
             Focus::Row(_) if self.app.overlay() == Overlay::Settings => self.app.find_server(),
             Focus::Row(row) => self.app.choose_onboarding(row),
+            Focus::Grant(row) => self.app.readeck_row(row, form.text(FieldKey::ReadeckUrl)),
             _ => {
                 let values = form.values();
                 self.app.submit_settings(values)
@@ -473,13 +481,20 @@ impl Ui {
         self.run(fx);
     }
 
-    /// Tells the core what's in the address box. That's what makes an answer about the old address out of date.
+    /// Tells the core what's in the address box, or Readeck's. That's what makes an answer about the old address out of
+    /// date.
     fn address_changed(&mut self) {
-        if let Some(form) = &self.form
-            && form.focus == Focus::Field(FieldKey::Address)
-        {
-            let address = form.text(FieldKey::Address).to_string();
-            self.app.address_edited(&address);
+        let Some(form) = &self.form else { return };
+        match form.focus {
+            Focus::Field(FieldKey::Address) => {
+                let address = form.text(FieldKey::Address).to_string();
+                self.app.address_edited(&address);
+            }
+            Focus::Field(FieldKey::ReadeckUrl) => {
+                let address = form.text(FieldKey::ReadeckUrl).to_string();
+                self.app.readeck_edited(&address);
+            }
+            _ => {}
         }
     }
 
@@ -740,6 +755,7 @@ impl Ui {
                         fields: HashMap::new(),
                         focus,
                         readeck,
+                        grant_rows: 0,
                         refill: state.refill,
                         connect: ("", Vec::new()),
                     };
@@ -747,6 +763,18 @@ impl Ui {
                     form
                 });
                 form.readeck = readeck;
+                let grant = self.app.readeck_view();
+                form.grant_rows = if readeck { grant.rows.len() } else { 0 };
+                // The row under it went: a stage with fewer of them, or none. On the way to the next stage the focus
+                // stays, as that's what keeps what comes in view.
+                let passing = matches!(grant.stage, "asking" | "keeping");
+                if let Focus::Grant(row) = form.focus
+                    && row >= form.grant_rows
+                    && !passing
+                {
+                    let last = form.grant_rows.checked_sub(1);
+                    form.focus = last.map_or(Focus::Field(FieldKey::ReadeckToken), Focus::Grant);
+                }
                 if form.refill != state.refill {
                     form.refill = state.refill;
                     form.load(v);

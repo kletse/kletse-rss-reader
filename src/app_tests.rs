@@ -314,6 +314,11 @@ impl Harness {
             }
             // Answered by hand: see `changed`.
             Effect::ChangeFeeds { .. } => None,
+            // Run by `Connecting`, against a real Backend.
+            Effect::AskReadeck { .. }
+            | Effect::AwaitReadeck { .. }
+            | Effect::PollReadeck { .. }
+            | Effect::KeepReadeck { .. } => None,
             Effect::UseSamples(on) => {
                 let status =
                     Status { looking: false, configured: on, readeck: on, capabilities: Capabilities::EVERYTHING };
@@ -4640,4 +4645,589 @@ fn ctrl_0_keeps_what_has_been_said() {
     prefs.reset();
     assert!(prefs.told_file && prefs.told_omarchy);
     assert_eq!(prefs.font_size, Prefs::default().font_size);
+}
+
+// ---- Readeck through a browser -----------------------------------------------------------------------------------
+//
+// The app and a real Backend against a stand-in Readeck answering as 0.23.5 did. Waits don't wait: `tick` is the time
+// being up, and a poll that a test holds back is one still on its way.
+
+use crate::backend::Backend;
+use crate::secrets::tests::{Act, Scripted, id, scripted};
+use crate::secrets::{Failure, Kind};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const CODE_BODY: &str = r#""device_code":"the-device-code","user_code":"VSCZLVQJ","expires_in":300,"interval":5"#;
+const TOKEN_BODY: &str = r#"{"id":"x","access_token":"the-token","token_type":"Bearer","scope":"bookmarks:write"}"#;
+
+fn json_reply(code: u16, body: &str) -> ResponseTemplate {
+    ResponseTemplate::new(code).set_body_raw(body.to_string(), "application/json; charset=utf-8")
+}
+
+/// A Readeck with everything up to a code in place, at its own address, and polls to be answered.
+async fn readeck() -> MockServer {
+    let server = MockServer::start().await;
+    device_at(&server, &format!("{}/device", server.uri())).await;
+    server
+}
+
+async fn device_at(server: &MockServer, address: &str) {
+    let info = r#"{"version":{"canonical":"0.23.5","release":"0.23.5","build":""},"features":["oauth"]}"#;
+    Mock::given(method("GET")).and(path("/api/info")).respond_with(json_reply(200, info)).mount(server).await;
+    let client = r#"{"client_id":"urn:uuid:4c1d","token_endpoint_auth_method":"none"}"#;
+    let register = Mock::given(method("POST")).and(path("/api/oauth/client"));
+    register.respond_with(json_reply(201, client)).mount(server).await;
+    let device = format!(
+        r#"{{{CODE_BODY},"verification_uri":"{address}","verification_uri_complete":"{address}?user_code=VSCZLVQJ"}}"#
+    );
+    let ask = Mock::given(method("POST")).and(path("/api/oauth/device"));
+    ask.respond_with(json_reply(200, &device)).mount(server).await;
+    let profile = Mock::given(method("GET")).and(path("/api/profile"));
+    profile.respond_with(ResponseTemplate::new(403)).mount(server).await;
+}
+
+/// What the next polls are answered with, in order. The last one lasts.
+async fn polls_answer(server: &MockServer, answers: &[(u16, &str)]) {
+    server.reset().await;
+    device_at(server, &format!("{}/device", server.uri())).await;
+    for (n, (code, body)) in answers.iter().enumerate() {
+        let mock = Mock::given(method("POST")).and(path("/api/oauth/token")).respond_with(json_reply(*code, body));
+        let mock = if n + 1 == answers.len() { mock } else { mock.up_to_n_times(1) };
+        mock.mount(server).await;
+    }
+}
+
+async fn poll_count(server: &MockServer) -> usize {
+    let requests = server.received_requests().await.unwrap();
+    requests.iter().filter(|r| r.url.path() == "/api/oauth/token").count()
+}
+
+const PENDING: (u16, &str) = (400, r#"{"error":"authorization_pending"}"#);
+const SLOW_DOWN: (u16, &str) = (400, r#"{"error":"slow_down"}"#);
+const DENIED: (u16, &str) = (400, r#"{"error":"access_denied"}"#);
+const EXPIRED: (u16, &str) = (400, r#"{"error":"expired_token"}"#);
+const CLIENT_GONE: (u16, &str) = (401, r#"{"error":"invalid_client"}"#);
+const APPROVED: (u16, &str) = (201, TOKEN_BODY);
+
+struct Connecting {
+    app: App,
+    backend: Backend,
+    store: Scripted,
+    dir: tempfile::TempDir,
+    /// The feed server the config names: nothing there answers.
+    feeds: String,
+    /// What each wait was for.
+    waits: Vec<u64>,
+    due: Option<Outcome>,
+    /// Polls left on their way when `hold_polls` is set.
+    held: Vec<Effect>,
+    hold_polls: bool,
+    held_keep: Option<Effect>,
+    hold_keep: bool,
+    opened: Vec<String>,
+    /// What's in the Readeck URL field.
+    address: String,
+}
+
+impl Connecting {
+    /// With Settings open, on a config that has a working feed server and no Readeck.
+    async fn new(server: &MockServer) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let feeds = "http://127.0.0.1:1/feeds".to_string();
+        let config = format!("[miniflux]\nurl = \"{feeds}\"\napi_key = \"feed-key\"\n");
+        std::fs::write(dir.path().join("config.toml"), config).unwrap();
+        let store = Scripted::default();
+        let backend = Backend::with_secrets(false, dir.path(), scripted(dir.path(), &store));
+        let status = backend.status();
+        let mut app = App::new(Prefs::default(), false);
+        let fx = app.start(status);
+        let address = server.uri();
+        let mut h = Connecting {
+            app,
+            backend,
+            store,
+            dir,
+            feeds,
+            waits: Vec::new(),
+            due: None,
+            held: Vec::new(),
+            hold_polls: false,
+            held_keep: None,
+            hold_keep: false,
+            opened: Vec::new(),
+            address,
+        };
+        h.pump(fx).await;
+        h.key(",").await;
+        assert_eq!(h.app.overlay(), Overlay::Settings);
+        h
+    }
+
+    async fn key(&mut self, key: &str) {
+        let (_, fx) = self.app.key(&KeyPress { key: key.into(), ..KeyPress::default() });
+        self.pump(fx).await;
+    }
+
+    async fn pump(&mut self, fx: Vec<Effect>) {
+        let mut queue = VecDeque::from(fx);
+        while let Some(effect) = queue.pop_front() {
+            match effect {
+                Effect::AwaitReadeck { attempt, millis } => {
+                    self.waits.push(millis);
+                    self.due = Some(Outcome::ReadeckPollDue { attempt });
+                }
+                Effect::OpenInBrowser { url, .. } => self.opened.push(url),
+                Effect::PollReadeck { .. } if self.hold_polls => self.held.push(effect),
+                Effect::KeepReadeck { .. } if self.hold_keep => self.held_keep = Some(effect),
+                Effect::ReloadPickerAfter { .. } => {}
+                effect => {
+                    if let Some(outcome) = self.backend.run(effect).await {
+                        queue.extend(self.app.apply(outcome));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The wait's over.
+    async fn tick(&mut self) {
+        let due = self.due.take().expect("a wait");
+        let fx = self.app.apply(due);
+        self.pump(fx).await;
+    }
+
+    /// The first row.
+    async fn press(&mut self, row: usize) {
+        let fx = self.app.readeck_row(row, &self.address.clone());
+        self.pump(fx).await;
+    }
+
+    async fn run_held(&mut self) {
+        self.hold_polls = false;
+        for effect in std::mem::take(&mut self.held) {
+            self.pump(vec![effect]).await;
+        }
+    }
+
+    async fn run_held_keep(&mut self) {
+        self.hold_keep = false;
+        let effect = self.held_keep.take().expect("a token being kept");
+        self.pump(vec![effect]).await;
+    }
+
+    fn view(&self) -> GrantView {
+        self.app.readeck_view()
+    }
+
+    fn labels(&self) -> Vec<String> {
+        self.view().rows.into_iter().map(|row| row.label).collect()
+    }
+
+    fn config_text(&self) -> String {
+        std::fs::read_to_string(self.dir.path().join("config.toml")).unwrap()
+    }
+
+    fn stored(&self, url: &str) -> Option<String> {
+        self.store.holds(&id(Kind::Readeck, url, ""))
+    }
+
+    /// Everything the windows are handed, and what `Debug` makes of the rest.
+    fn everything_shown(&self) -> String {
+        format!("{:?} {:?} {}", self.view(), self.app.settings(), serde_json::to_string(&self.view()).unwrap())
+    }
+}
+
+#[tokio::test]
+async fn approving_in_the_browser_connects_with_nothing_to_paste_or_save() {
+    let server = readeck().await;
+    polls_answer(&server, &[PENDING, SLOW_DOWN, PENDING, APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    assert_eq!(h.view().stage, "idle");
+    assert_eq!(h.labels(), ["Connect in the browser"]);
+
+    h.press(0).await;
+    assert_eq!(h.view().stage, "waiting");
+    assert_eq!(h.view().code, "VSCZLVQJ");
+    assert_eq!(h.view().address, format!("{}/device", server.uri()));
+    assert_eq!(h.labels(), ["Open in browser", "Start again"]);
+
+    h.press(0).await;
+    assert_eq!(h.opened, [format!("{}/device?user_code=VSCZLVQJ", server.uri())], "with the code filled in");
+
+    for _ in 0..4 {
+        assert!(!h.everything_shown().contains("the-device-code"), "{}", h.everything_shown());
+        h.tick().await;
+    }
+    assert_eq!(h.waits, [5000, 5000, 10_000, 10_000], "the interval, and 5 s more from a slow_down on");
+    assert_eq!(h.view().stage, "kept");
+    assert!(h.view().text.contains(&server.uri()), "{}", h.view().text);
+    assert!(h.view().rows.is_empty());
+    assert!(!h.app.settings().unwrap().checking);
+    assert!(h.due.is_none(), "that's the end of the polling");
+
+    assert!(h.app.readeck(), "the bookmark button is there straight away");
+    assert_eq!(h.stored(&server.uri()).as_deref(), Some("the-token"));
+    let config = h.config_text();
+    assert!(config.contains(&server.uri()) && !config.contains("the-token"), "{config}");
+    assert!(!h.everything_shown().contains("the-token"), "{}", h.everything_shown());
+}
+
+#[tokio::test]
+async fn being_turned_down_is_said_and_the_polling_ends() {
+    let server = readeck().await;
+    polls_answer(&server, &[PENDING, DENIED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.tick().await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "failed");
+    assert!(h.view().failed && h.view().text.contains("turned down"), "{:?}", h.view());
+    assert_eq!(h.labels(), ["Start again"]);
+    assert!(h.due.is_none());
+    assert!(!h.config_text().contains("readeck"));
+}
+
+#[tokio::test]
+async fn a_code_or_a_client_that_ran_out_can_be_started_again() {
+    for (answer, says) in [(EXPIRED, "ran out"), (CLIENT_GONE, "10 minutes")] {
+        let server = readeck().await;
+        polls_answer(&server, &[answer]).await;
+        let mut h = Connecting::new(&server).await;
+        h.press(0).await;
+        h.tick().await;
+        assert!(h.view().text.contains(says), "{}", h.view().text);
+        assert_eq!(h.labels(), ["Start again"]);
+
+        polls_answer(&server, &[APPROVED]).await;
+        h.press(0).await;
+        assert_eq!(h.view().stage, "waiting", "a new client and a new code");
+        h.tick().await;
+        assert_eq!(h.view().stage, "kept");
+    }
+}
+
+#[tokio::test]
+async fn a_readeck_that_cant_look_up_public_addresses_points_at_the_token_field() {
+    let server = MockServer::start().await;
+    let info = Mock::given(method("GET")).and(path("/api/info"));
+    info.respond_with(json_reply(200, r#"{"features":["oauth"]}"#)).mount(&server).await;
+    let refused = r#"{"error":"invalid_client_metadata","error_description":"error on field \"client_uri\": invalid client URI"}"#;
+    let register = Mock::given(method("POST")).and(path("/api/oauth/client"));
+    register.respond_with(json_reply(400, refused)).mount(&server).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    assert_eq!(h.view().stage, "token_only");
+    let text = h.view().text;
+    assert!(text.contains("look up public") && text.contains("Profile → API Tokens"), "{text}");
+    assert!(h.view().rows.is_empty(), "another go would get the same answer");
+}
+
+#[tokio::test]
+async fn a_server_with_no_grant_is_left_to_the_token_field_until_the_address_changes() {
+    let server = MockServer::start().await;
+    let info = Mock::given(method("GET")).and(path("/api/info"));
+    info.respond_with(json_reply(200, r#"{"features":[]}"#)).mount(&server).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    assert_eq!(h.view().stage, "token_only");
+    assert!(h.view().text.contains("0.21"), "{}", h.view().text);
+    assert!(h.view().rows.is_empty());
+    h.app.readeck_edited("https://other.example.com");
+    assert_eq!(h.view().stage, "idle");
+    assert_eq!(h.labels(), ["Connect in the browser"]);
+}
+
+#[tokio::test]
+async fn not_reaching_the_server_is_said_and_can_be_tried_again() {
+    let server = readeck().await;
+    let mut h = Connecting::new(&server).await;
+    h.address = "http://127.0.0.1:1".into();
+    h.press(0).await;
+    assert_eq!(h.view().stage, "failed");
+    assert!(h.view().text.starts_with("Could not reach Readeck"), "{}", h.view().text);
+    assert_eq!(h.labels(), ["Start again"]);
+}
+
+#[tokio::test]
+async fn an_address_that_wont_do_goes_no_further() {
+    let server = MockServer::start().await;
+    let mut h = Connecting::new(&server).await;
+    for (address, says) in [("", "Enter your Readeck"), ("readeck.example.com", "not a valid URL")] {
+        h.address = address.into();
+        h.press(0).await;
+        assert_eq!(h.view().stage, "failed");
+        assert!(h.view().text.contains(says), "{}", h.view().text);
+        h.app.readeck_edited("something else");
+        assert_eq!(h.view().stage, "idle");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn one_failed_poll_isnt_the_end_and_the_code_running_out_is() {
+    let server = readeck().await;
+    polls_answer(&server, &[(502, "<html>Bad gateway</html>"), PENDING]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "waiting");
+    assert_eq!(h.view().note, "Readeck answered with HTTP 502. Still trying.");
+    h.tick().await;
+    assert_eq!(h.view().note, "", "an answer again");
+
+    polls_answer(&server, &[(502, "<html>Bad gateway</html>")]).await;
+    for _ in 2..60 {
+        assert_eq!(h.view().stage, "waiting");
+        h.tick().await;
+    }
+    assert_eq!(h.view().stage, "failed", "{:?}", h.view());
+    assert!(h.view().text.contains("ran out") && h.view().text.contains("HTTP 502"), "{}", h.view().text);
+    assert_eq!(h.labels(), ["Start again"]);
+    assert!(h.due.is_none());
+}
+
+#[tokio::test]
+async fn slow_polls_use_up_the_codes_time_too() {
+    let server = readeck().await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    let attempt = h.app.grant.attempt();
+    let answer = Poll::Failed("no".into());
+    let fx = h.app.apply(Outcome::ReadeckPolled { attempt, answer, took_ms: 295_000 });
+    assert!(fx.is_empty(), "{fx:?}");
+    assert_eq!(h.view().stage, "failed");
+}
+
+#[tokio::test]
+async fn closing_the_form_stops_the_polling_and_a_late_answer_changes_nothing() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.hold_polls = true;
+    h.tick().await;
+    assert_eq!(h.held.len(), 1, "one on its way");
+    h.key("Escape").await;
+    assert_ne!(h.app.overlay(), Overlay::Settings);
+    h.run_held().await;
+    assert!(h.due.is_none());
+    assert!(!h.app.readeck());
+    assert_eq!(h.stored(&server.uri()), None);
+    assert!(!h.config_text().contains("readeck"));
+    let polls = poll_count(&server).await;
+
+    // A wait that's over after the form closed sends nothing.
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.key("Escape").await;
+    h.tick().await;
+    assert_eq!(poll_count(&server).await, polls);
+    assert_eq!(h.view().stage, "idle");
+}
+
+#[tokio::test]
+async fn a_token_only_counts_for_the_address_it_was_asked_for() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.app.readeck_edited(&format!("  {}/ ", server.uri()));
+    assert_eq!(h.view().stage, "waiting", "the same address");
+    h.hold_polls = true;
+    h.tick().await;
+    h.app.readeck_edited("https://elsewhere.example.com");
+    assert_eq!(h.view().stage, "idle");
+    h.run_held().await;
+    assert_eq!(h.view().stage, "idle");
+    assert!(h.due.is_none());
+    assert_eq!(h.stored(&server.uri()), None);
+    assert_eq!(h.stored("https://elsewhere.example.com"), None);
+    assert!(!h.config_text().contains("readeck"));
+}
+
+#[tokio::test]
+async fn starting_again_leaves_the_old_attempts_answers_behind() {
+    let server = readeck().await;
+    polls_answer(&server, &[DENIED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.hold_polls = true;
+    h.tick().await;
+    h.hold_polls = false;
+    h.press(1).await;
+    assert_eq!(h.labels()[1], "Start again");
+    h.run_held().await;
+    assert_eq!(h.view().stage, "waiting", "the old attempt's no is about the old code");
+    assert_eq!(h.waits, [5000, 5000]);
+}
+
+#[tokio::test]
+async fn a_token_readeck_wont_take_isnt_kept() {
+    let server = MockServer::start().await;
+    device_at(&server, "http://x/").await;
+    server.reset().await;
+    let info = Mock::given(method("GET")).and(path("/api/info"));
+    info.respond_with(json_reply(200, r#"{"features":["oauth"]}"#)).mount(&server).await;
+    let register = Mock::given(method("POST")).and(path("/api/oauth/client"));
+    register.respond_with(json_reply(201, r#"{"client_id":"c"}"#)).mount(&server).await;
+    let device = format!(r#"{{{CODE_BODY},"verification_uri":"{}/device"}}"#, server.uri());
+    let ask = Mock::given(method("POST")).and(path("/api/oauth/device"));
+    ask.respond_with(json_reply(200, &device)).mount(&server).await;
+    let poll = Mock::given(method("POST")).and(path("/api/oauth/token"));
+    poll.respond_with(json_reply(201, TOKEN_BODY)).mount(&server).await;
+    let profile = Mock::given(method("GET")).and(path("/api/profile"));
+    profile.respond_with(ResponseTemplate::new(401)).mount(&server).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "failed");
+    assert!(h.view().text.contains("wouldn't take the token"), "{}", h.view().text);
+    assert_eq!(h.stored(&server.uri()), None);
+    assert!(!h.config_text().contains("readeck"));
+}
+
+#[tokio::test]
+async fn an_address_on_another_host_is_shown_and_not_opened() {
+    let server = MockServer::start().await;
+    device_at(&server, "https://evil.example.com/device").await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    assert_eq!(h.view().stage, "waiting");
+    assert_eq!(h.view().address, "https://evil.example.com/device");
+    assert!(h.view().note.contains("won't open"), "{}", h.view().note);
+    assert_eq!(h.labels(), ["Start again"]);
+    assert!(h.opened.is_empty());
+}
+
+#[tokio::test]
+async fn whats_half_typed_into_the_form_isnt_saved_along_with_the_token() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    let queue_before = h.app.settings().unwrap().values.clone();
+    h.press(0).await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "kept");
+    assert_eq!(h.app.overlay(), Overlay::Settings, "the form stays open, and the window keeps what's typed");
+    assert_eq!(h.app.settings().unwrap().values, queue_before);
+    assert_eq!(h.app.settings().unwrap().refill, 0, "the window's values aren't replaced");
+    let config = h.config_text();
+    assert!(config.contains(&h.feeds) && !config.contains("feed-key"), "the same save as any: {config}");
+    assert_eq!(h.store.holds(&id(Kind::Miniflux, &h.feeds, "")).as_deref(), Some("feed-key"));
+}
+
+#[tokio::test]
+async fn the_forms_save_goes_with_the_token_just_kept_unless_another_was_typed() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    for (typed, expected) in [("", "the-token"), ("pasted", "pasted")] {
+        let mut h = Connecting::new(&server).await;
+        h.press(0).await;
+        h.tick().await;
+        let values = SettingsValues {
+            miniflux_url: h.feeds.clone(),
+            miniflux_api_key: "feed-key".into(),
+            readeck_url: format!("{}/", server.uri()),
+            readeck_token: typed.into(),
+            ..SettingsValues::default()
+        };
+        let fx = h.app.submit_settings(values);
+        let [Effect::SaveSettings(sent)] = fx.as_slice() else { panic!("{fx:?}") };
+        assert_eq!(sent.0.readeck_token, expected);
+        assert_eq!(h.app.settings().unwrap().values.readeck_token, typed, "what the window has stays what it is");
+    }
+}
+
+#[tokio::test]
+async fn saving_the_form_ends_a_wait() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    let fx = h.app.submit_settings(SettingsValues::default());
+    assert!(matches!(fx.as_slice(), [Effect::SaveSettings(_)]), "{fx:?}");
+    assert_eq!(h.view().stage, "idle");
+    assert!(h.view().rows.is_empty(), "not while a save is on its way");
+    assert!(h.app.readeck_row(0, &h.address.clone()).is_empty());
+    h.tick().await;
+    assert_eq!(poll_count(&server).await, 0);
+}
+
+#[tokio::test]
+async fn a_save_waits_for_a_token_on_its_way_to_the_store() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.hold_keep = true;
+    h.tick().await;
+    assert_eq!(h.view().stage, "keeping");
+    assert!(h.app.settings().unwrap().checking);
+    assert!(h.app.submit_settings(SettingsValues::default()).is_empty());
+    h.app.readeck_edited("https://elsewhere.example.com");
+    assert_eq!(h.view().stage, "keeping");
+    h.run_held_keep().await;
+    assert_eq!(h.view().stage, "kept");
+    assert!(!h.app.settings().unwrap().checking);
+}
+
+#[tokio::test]
+async fn a_token_kept_after_the_form_closed_still_counts() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    h.hold_keep = true;
+    h.tick().await;
+    h.key("Escape").await;
+    h.run_held_keep().await;
+    assert!(h.app.readeck(), "it's in the store, whoever closed what");
+    assert_eq!(h.app.toast().unwrap().message, "Readeck is connected");
+    assert_eq!(h.stored(&server.uri()).as_deref(), Some("the-token"));
+}
+
+#[tokio::test]
+async fn a_keyring_that_says_no_is_told_about_when_the_form_closes() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    h.store.set(Act::Fails(Failure::Unreachable));
+    h.press(0).await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "kept");
+    assert_eq!(h.app.overlay(), Overlay::Settings, "a notice now would take the form's place");
+    assert!(!h.config_text().contains("the-token"));
+    h.key("Escape").await;
+    assert_eq!(h.app.overlay(), Overlay::Confirm);
+    assert!(h.app.confirm_text().contains("a file only you can read"), "{}", h.app.confirm_text());
+}
+
+#[tokio::test]
+async fn a_token_that_cant_be_stored_is_said_and_leaves_the_config_alone() {
+    let server = readeck().await;
+    polls_answer(&server, &[APPROVED]).await;
+    let mut h = Connecting::new(&server).await;
+    let before = h.config_text();
+    std::fs::write(h.dir.path().join("config.toml"), "not = [toml").unwrap();
+    h.press(0).await;
+    h.tick().await;
+    assert_eq!(h.view().stage, "failed");
+    assert!(h.view().text.contains("config.toml"), "{}", h.view().text);
+    assert_eq!(h.labels(), ["Start again"]);
+    assert!(!h.app.settings().unwrap().checking);
+    assert_eq!(h.stored(&server.uri()), None);
+    assert_ne!(before, h.config_text());
+    assert_eq!(h.config_text(), "not = [toml", "that file is someone's to fix, not this save's to replace");
+}
+
+#[tokio::test]
+async fn going_to_the_address_box_stops_a_wait() {
+    let server = readeck().await;
+    let mut h = Connecting::new(&server).await;
+    h.press(0).await;
+    let fx = h.app.find_server();
+    h.pump(fx).await;
+    h.tick().await;
+    assert_eq!(poll_count(&server).await, 0);
 }

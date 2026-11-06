@@ -60,7 +60,9 @@ struct SettingsWindow: View {
             }
             Tab("Readeck", systemImage: "bookmark") {
                 pane(settings) {
-                    ReadeckSection(fields: settings?.readeckFields ?? [], values: $values, focus: $focus)
+                    ReadeckSection(
+                        model: model, fields: settings?.readeckFields ?? [], grant: settings?.readeckGrant,
+                        values: $values, focus: $focus)
                 }
             }
             Tab("Appearance", systemImage: "paintpalette") {
@@ -357,7 +359,9 @@ private struct FeedServerSections: View {
 }
 
 private struct ReadeckSection: View {
+    let model: Model
     let fields: [FieldInfo]
+    let grant: GrantInfo?
     @Binding var values: SettingsValues
     var focus: FocusState<String?>.Binding
 
@@ -370,6 +374,27 @@ private struct ReadeckSection: View {
                 ForEach(fields.filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // As on Connect: a change of address is what makes an answer about the old one out of date.
+        .onChange(of: values[field: "readeck_url"]) { _, address in model.readeckEdited(address) }
+        if let grant {
+            Section {
+                Text(verbatim: grant.text)
+                    .foregroundStyle(grant.failed ? Color.red : Color.secondary)
+                if !grant.code.isEmpty {
+                    Text(verbatim: grant.code)
+                        .font(.title2.monospaced().weight(.bold))
+                        .textSelection(.enabled)
+                    Text(verbatim: grant.address)
+                        .textSelection(.enabled)
+                }
+                if !grant.note.isEmpty {
+                    Text(verbatim: grant.note).foregroundStyle(.secondary)
+                }
+                ForEach(Array(grant.rows.enumerated()), id: \.offset) { index, row in
+                    Button(row.label) { model.readeckRow(index, address: values[field: "readeck_url"]) }
+                }
+            }
         }
     }
 }

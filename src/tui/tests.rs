@@ -104,8 +104,8 @@ impl Screenful {
             for effect in effects {
                 if let Effect::OpenInBrowser { url, .. } = &effect {
                     self.opened.push(url.clone());
-                } else if matches!(effect, Effect::ChangeFeeds { .. }) {
-                    // Answered by hand: the demo has nothing to change.
+                } else if matches!(effect, Effect::ChangeFeeds { .. } | Effect::AwaitReadeck { .. }) {
+                    // Answered by hand: the demo has nothing to change, and a wait isn't one here.
                 } else if let Some(mut outcome) = self.runtime.block_on(self.backend.run(effect)) {
                     if let (Outcome::Opened { result: Ok((page, _)), .. }, Some(html)) = (&mut outcome, &self.content) {
                         page.entries[0].content.clone_from(html);
@@ -352,6 +352,7 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
         Focus::Field(FieldKey::GreaderPassword),
         Focus::Field(FieldKey::ReadeckUrl),
         Focus::Field(FieldKey::ReadeckToken),
+        Focus::Grant(0),
     ];
     assert_eq!(form.shown(None), shown);
     s.key(KeyCode::BackTab).key(KeyCode::BackTab).key(KeyCode::Left);
@@ -371,9 +372,9 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     s.settle();
     assert!(s.ui.form.as_ref().unwrap().text(FieldKey::ReadeckToken).ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
-    s.key(KeyCode::Tab);
+    s.key(KeyCode::Tab).key(KeyCode::Tab);
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Choice, "round to the top: the server choice");
-    s.key(KeyCode::BackTab);
+    s.key(KeyCode::BackTab).key(KeyCode::BackTab);
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckToken));
     s.key(KeyCode::Esc);
     assert!(s.ui.form.is_none());
@@ -1422,5 +1423,108 @@ mod secrets {
         s.key(KeyCode::Char(','));
         assert_eq!(s.ui.app.overlay(), Overlay::Settings);
         assert!(s.shows("can't reach your"), "{}", s.text());
+    }
+}
+
+/// A stand-in Readeck with a code to give. Polls stay unanswered: a wait isn't run here.
+fn readeck_with_a_code(s: &Screenful, device: impl FnOnce(&str) -> String) -> wiremock::MockServer {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    s.runtime.block_on(async {
+        let server = MockServer::start().await;
+        let info = ResponseTemplate::new(200).set_body_string(r#"{"features":["oauth"]}"#);
+        Mock::given(method("GET")).and(path("/api/info")).respond_with(info).mount(&server).await;
+        let client = ResponseTemplate::new(201).set_body_string(r#"{"client_id":"c"}"#);
+        Mock::given(method("POST")).and(path("/api/oauth/client")).respond_with(client).mount(&server).await;
+        let code = ResponseTemplate::new(200).set_body_string(device(&server.uri()));
+        Mock::given(method("POST")).and(path("/api/oauth/device")).respond_with(code).mount(&server).await;
+        server
+    })
+}
+
+/// In Settings, on a server that needs no window of its own, with the focus on the Readeck address.
+fn at_readeck(width: u16, height: u16) -> Screenful {
+    let status = Status { looking: false, configured: true, readeck: false, capabilities: Capabilities::EVERYTHING };
+    let mut s = Screenful::on(width, height, status, Backend::unconfigured(false), false);
+    s.keys(",");
+    s.settle();
+    s.ui.form.as_mut().unwrap().focus = Focus::Field(FieldKey::ReadeckUrl);
+    s
+}
+
+fn connect_to(s: &mut Screenful, url: &str) {
+    s.ui.paste(url);
+    s.key(KeyCode::Tab).key(KeyCode::Tab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Grant(0));
+    assert!(s.shows("Connect in the browser"), "{}", s.text());
+    s.key(KeyCode::Enter);
+    s.settle();
+}
+
+#[test]
+fn the_code_and_the_address_are_on_screen_even_a_small_one_with_a_way_to_open_it() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = at_readeck(width, height);
+        let server = readeck_with_a_code(&s, |uri| {
+            format!(
+                r#"{{"device_code":"secret-code","user_code":"VSCZLVQJ","verification_uri":"{uri}/device",
+                    "verification_uri_complete":"{uri}/device?user_code=VSCZLVQJ","expires_in":300,"interval":5}}"#
+            )
+        });
+        connect_to(&mut s, &server.uri());
+        assert!(s.shows("Code: VSCZLVQJ") && s.shows(&format!("{}/device", server.uri())), "{}", s.text());
+        assert!(s.shows("Open in browser") && s.shows("Start again"), "{}", s.text());
+        assert!(!s.shows("secret-code"), "{}", s.text());
+        s.key(KeyCode::Enter);
+        s.settle();
+        assert_eq!(s.opened, [format!("{}/device?user_code=VSCZLVQJ", server.uri())]);
+        s.key(KeyCode::Tab);
+        assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Grant(1));
+    }
+}
+
+#[test]
+fn an_address_on_another_host_is_shown_with_no_row_to_open_it() {
+    let mut s = at_readeck(100, 32);
+    let server = readeck_with_a_code(&s, |_| {
+        r#"{"device_code":"d","user_code":"AB","verification_uri":"https://evil.example.com/d"}"#.to_string()
+    });
+    connect_to(&mut s, &server.uri());
+    assert!(s.shows("https://evil.example.com/d") && s.shows("won't open"), "{}", s.text());
+    assert!(!s.shows("Open in browser"), "{}", s.text());
+}
+
+#[test]
+fn editing_the_readeck_address_stops_a_wait_and_the_focus_lands_somewhere() {
+    let mut s = at_readeck(100, 32);
+    let server = readeck_with_a_code(&s, |uri| {
+        format!(r#"{{"device_code":"d","user_code":"AB","verification_uri":"{uri}/d"}}"#)
+    });
+    connect_to(&mut s, &server.uri());
+    assert_eq!(s.ui.app.readeck_view().stage, "waiting");
+    s.key(KeyCode::BackTab).key(KeyCode::BackTab);
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckUrl));
+    s.keys("x");
+    assert_eq!(s.ui.app.readeck_view().stage, "idle");
+    assert!(s.shows("Connect in the browser") && !s.shows("Code:"), "{}", s.text());
+}
+
+#[test]
+fn a_row_that_goes_away_gives_the_focus_back() {
+    let mut s = at_readeck(100, 32);
+    let server = s.runtime.block_on(wiremock::MockServer::start());
+    connect_to(&mut s, &server.uri());
+    assert_eq!(s.ui.app.readeck_view().stage, "token_only");
+    assert!(s.shows("Profile → API Tokens") && !s.shows("Connect in the browser"), "{}", s.text());
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckToken));
+}
+
+#[test]
+fn what_came_of_it_is_on_screen_in_full_with_no_row_to_bring_it_there() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = at_readeck(width, height);
+        let server = s.runtime.block_on(wiremock::MockServer::start());
+        connect_to(&mut s, &server.uri());
+        assert!(s.shows("make one with") && s.shows("API token above"), "{}", s.text());
     }
 }

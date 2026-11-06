@@ -7,7 +7,10 @@ it holds no state, so an import finds nothing new afterwards, which is a screen 
 
 /feeds-miniflux and /feeds-freshrss do hold state, as changing feeds is nothing but that, and POST /reset puts both back.
 They keep to what those servers did: subscribing fails in the words each used, deleting a Miniflux category takes its feeds
-with it, FreshRSS's rename-tag onto a name that's taken answers OK and does nothing, and it keeps its default category."""
+with it, FreshRSS's rename-tag onto a name that's taken answers OK and does nothing, and it keeps its default category.
+
+/readeck-approve, /readeck-deny, /readeck-elsewhere and /readeck-none are Readeck 0.23.5 at each end of connecting in a
+browser, with a poll a second rather than one every five. The token is another thing a test can look for on disk."""
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -100,6 +103,45 @@ TEXT = "text/plain"
 OK = ("text/html", 200, b"OK")
 TAKEN_FEEDS = "http://feeds.example/alpha.xml"
 GONE = (JSON, 404, b'{"error_message":"resource not found"}')
+
+READECK_INFO = (JSON, 200, b'{"version":{"canonical":"0.23.5","release":"0.23.5","build":""},"features":["oauth"]}')
+READECK_PENDING = (JSON, 400, b'{"error":"authorization_pending"}')
+READECK_DENIED = (JSON, 400, b'{"error":"access_denied"}')
+READECK_TOKEN = (
+    JSON,
+    201,
+    b'{"id":"tok","access_token":"the-readeck-token","token_type":"Bearer","scope":"bookmarks:write"}',
+)
+READECK_POLLS = {}
+
+
+def readeck(name, route, verb):
+    """A Readeck, by what's after its path. /readeck-approve says yes at the second poll, /readeck-deny no at the first."""
+    if verb == "GET" and route == "/api/info":
+        return (JSON, 200, b'{"features":[]}') if name == "none" else READECK_INFO
+    if verb == "GET" and route == "/api/profile":
+        return (JSON, 200, b'{"user":{"username":"me"}}')
+    if verb != "POST" or name == "none":
+        return NOT_FOUND
+    if route == "/api/oauth/client":
+        return (JSON, 201, b'{"client_id":"urn:uuid:4c1dc763","token_endpoint_auth_method":"none"}')
+    if route == "/api/oauth/device":
+        host = "http://example.com" if name == "elsewhere" else "http://127.0.0.1:18399/readeck-" + name
+        code = {
+            "device_code": "the-device-code",
+            "user_code": "VSCZLVQJ",
+            "verification_uri": host + "/device",
+            "verification_uri_complete": host + "/device?user_code=VSCZLVQJ",
+            "expires_in": 300,
+            "interval": 1,
+        }
+        return (JSON, 200, json.dumps(code).encode())
+    if route == "/api/oauth/token":
+        READECK_POLLS[name] = READECK_POLLS.get(name, 0) + 1
+        if name == "deny":
+            return READECK_DENIED
+        return READECK_TOKEN if name == "approve" and READECK_POLLS[name] > 1 else READECK_PENDING
+    return NOT_FOUND
 
 
 def as_json(value, status=200):
@@ -258,7 +300,11 @@ class Fake(BaseHTTPRequestHandler):
         path = urlsplit(self.path)
         if path.path == "/reset":
             ACCOUNTS.update(fresh())
+            READECK_POLLS.clear()
             return OK
+        if path.path.startswith("/readeck-"):
+            name, _, route = path.path[len("/readeck-"):].partition("/")
+            return readeck(name, "/" + route, verb)
         if path.path.startswith("/feeds-miniflux"):
             route = path.path[len("/feeds-miniflux"):]
             return miniflux_get(route) if verb == "GET" else miniflux_change(verb, route, body)

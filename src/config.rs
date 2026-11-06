@@ -339,7 +339,7 @@ impl Config {
 
 pub(crate) const GREADER_INCOMPLETE: &str = "The Google Reader API server needs a URL, a username and a password.";
 
-fn clean_url(url: &str) -> String {
+pub(crate) fn clean_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
 }
 

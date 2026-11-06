@@ -13,6 +13,7 @@ use crate::app::{App, ConnectView, Effect, FeedFile, KeyPress, Outcome, Overlay,
 use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
+use crate::grant::GrantView;
 use crate::keys;
 use crate::manage::ManageView;
 use crate::paging::Mode;
@@ -167,6 +168,15 @@ enum Command {
     },
     /// The address box changed.
     AddressEdited {
+        text: String,
+    },
+    /// A row of Readeck's way in, with what's in its URL field.
+    ReadeckRow {
+        row: usize,
+        address: String,
+    },
+    /// The Readeck URL field changed.
+    ReadeckEdited {
         text: String,
     },
     /// Settings' way to the address box.
@@ -344,6 +354,8 @@ struct Settings {
     /// What the form offers.
     providers: &'static [Provider],
     readeck_fields: &'static [Field],
+    /// The way into Readeck that needs no token.
+    readeck_grant: GrantView,
     /// What the button that leads to the address box says.
     find_server: &'static str,
     problem: String,
@@ -440,6 +452,11 @@ impl Core {
             Command::ChooseOnboarding { row } => self.app.choose_onboarding(row),
             Command::AddressEdited { text } => {
                 self.app.address_edited(&text);
+                Vec::new()
+            }
+            Command::ReadeckRow { row, address } => self.app.readeck_row(row, &address),
+            Command::ReadeckEdited { text } => {
+                self.app.readeck_edited(&text);
                 Vec::new()
             }
             Command::FindServer => self.app.find_server(),
@@ -689,6 +706,7 @@ impl Core {
         let settings = Settings {
             providers: &PROVIDERS,
             readeck_fields: &READECK,
+            readeck_grant: self.app.readeck_view(),
             find_server: FIRST_RUN.find_server,
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
@@ -825,6 +843,10 @@ mod tests {
         assert_eq!((server.as_str(), fields["greader_url"].as_str()), ("greader", "u"));
         let choose = r#"{"cmd":"choose_onboarding","row":2}"#;
         assert!(matches!(serde_json::from_str(choose), Ok(Command::ChooseOnboarding { row: 2 })));
+        let row = r#"{"cmd":"readeck_row","row":1,"address":"https://r.example.com"}"#;
+        assert!(matches!(serde_json::from_str(row), Ok(Command::ReadeckRow { row: 1, .. })));
+        let readeck = r#"{"cmd":"readeck_edited","text":"r"}"#;
+        assert!(matches!(serde_json::from_str(readeck), Ok(Command::ReadeckEdited { .. })));
         let edited = r#"{"cmd":"address_edited","text":"rss"}"#;
         assert!(matches!(serde_json::from_str(edited), Ok(Command::AddressEdited { text }) if text == "rss"));
         assert!(matches!(serde_json::from_str(r#"{"cmd":"find_server"}"#), Ok(Command::FindServer)));

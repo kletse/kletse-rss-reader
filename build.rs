@@ -25,6 +25,7 @@ const QML: &[&str] = &[
     "qml/ServerForm.qml",
     "qml/FieldList.qml",
     "qml/Fieldset.qml",
+    "qml/ReadeckGrant.qml",
     "qml/Notice.qml",
     "qml/LinkLine.qml",
     "qml/Field.qml",

@@ -114,6 +114,29 @@ struct OnboardingInfo: Decodable {
     /// The row the arrows are on.
     let cursor: Int
     let words: FirstRunWords
+    let connect: ConnectInfo
+}
+
+/// Connect as it stands: the core says what's on screen, and this keeps what's typed (`app::ConnectView`).
+struct ConnectInfo: Decodable {
+    /// "address" for the address box with `fields` under it, or "by_hand" for the whole form.
+    let stage: String
+    /// What was found.
+    let text: String
+    /// About the connection itself.
+    let note: String
+    let fields: [FieldInfo]
+    let rows: [ConnectRowInfo]
+    /// What the main button says.
+    let action: String
+    /// Looking at an address. The fields stay open.
+    let probing: Bool
+}
+
+struct ConnectRowInfo: Decodable {
+    let label: String
+    /// What it opens, if anything.
+    let url: String?
 }
 
 struct FirstRunWords: Decodable {
@@ -122,6 +145,8 @@ struct FirstRunWords: Decodable {
     let welcome: [WelcomeRow]
     let connectTitle: String
     let connectText: String
+    let byHandText: String
+    let address: FieldInfo
     let noServer: NoServerInfo
 }
 
@@ -156,10 +181,12 @@ struct SettingsInfo: Decodable {
     /// What the form offers.
     let providers: [ProviderInfo]
     let readeckFields: [FieldInfo]
+    /// What the button that leads to the address box says.
+    let findServer: String
     let problem: String
     let error: String
     let checking: Bool
-    /// Bumped when `values` comes along: the form fills in from them once.
+    /// Bumped when `values` comes along: the form fills in from them once, and again if the core takes something back.
     let serial: Int
     let values: SettingsValues?
 }

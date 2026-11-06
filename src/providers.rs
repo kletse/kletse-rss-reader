@@ -12,8 +12,13 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldKey {
+    /// The box first run starts from, whatever the server turns out to be.
+    Address,
     MinifluxUrl,
     MinifluxApiKey,
+    /// Asked for once, to make a key with. It never reaches the config.
+    MinifluxUsername,
+    MinifluxPassword,
     GreaderUrl,
     GreaderUsername,
     GreaderPassword,
@@ -22,9 +27,12 @@ pub enum FieldKey {
 }
 
 impl FieldKey {
-    pub const ALL: [FieldKey; 7] = [
+    pub const ALL: [FieldKey; 10] = [
+        FieldKey::Address,
         FieldKey::MinifluxUrl,
         FieldKey::MinifluxApiKey,
+        FieldKey::MinifluxUsername,
+        FieldKey::MinifluxPassword,
         FieldKey::GreaderUrl,
         FieldKey::GreaderUsername,
         FieldKey::GreaderPassword,
@@ -35,8 +43,11 @@ impl FieldKey {
     /// As it goes to the windows and comes back: the same as its JSON.
     pub fn name(self) -> &'static str {
         match self {
+            FieldKey::Address => "address",
             FieldKey::MinifluxUrl => "miniflux_url",
             FieldKey::MinifluxApiKey => "miniflux_api_key",
+            FieldKey::MinifluxUsername => "miniflux_username",
+            FieldKey::MinifluxPassword => "miniflux_password",
             FieldKey::GreaderUrl => "greader_url",
             FieldKey::GreaderUsername => "greader_username",
             FieldKey::GreaderPassword => "greader_password",
@@ -74,10 +85,13 @@ pub struct Provider {
     pub label: &'static str,
     /// Where the help nearby names the servers: the Mac's picker, section titles.
     pub short_label: &'static str,
-    /// The address of a hosted service, which then needs no address field. No row has one yet.
+    /// The address of a hosted service, which then needs no address field: see `HOSTED`.
     pub fixed_url: Option<&'static str>,
     pub protocol: Server,
+    /// All of it, for filling in by hand.
     pub fields: &'static [Field],
+    /// What first run asks for, once it knows the address and that it's this kind of server.
+    pub asks: &'static [Field],
     pub links: &'static [Link],
     /// What it can do: what it can't, the keys only say so and the windows leave out their hints.
     pub capabilities: Capabilities,
@@ -102,6 +116,15 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
         fields: &[
             field(FieldKey::MinifluxUrl, "Miniflux URL", "https://miniflux.example.com", ""),
             secret(FieldKey::MinifluxApiKey, "API key", "", "In Miniflux: Settings → API Keys → Create a new API key."),
+        ],
+        asks: &[
+            field(FieldKey::MinifluxUsername, "Username", "", ""),
+            secret(
+                FieldKey::MinifluxPassword,
+                "Password",
+                "",
+                "Used once, to get Onward a key of its own on your server. It isn't kept.",
+            ),
         ],
         links: &[Link { label: "About API keys", url: "https://miniflux.app/docs/api.html#authentication" }],
         capabilities: Capabilities::EVERYTHING,
@@ -129,6 +152,17 @@ pub const PROVIDERS: [Provider; Server::ALL.len()] = [
                  Settings → Integrations.",
             ),
         ],
+        asks: &[
+            field(FieldKey::GreaderUsername, "Username", "", ""),
+            secret(
+                FieldKey::GreaderPassword,
+                "API password",
+                "",
+                "This isn't your login password. In FreshRSS, sign in, then go to Settings → Profile → External access \
+                 via API. If you never set one, or aren't sure of it, set one there: a new one can take a couple of \
+                 seconds to work.",
+            ),
+        ],
         links: &[Link {
             label: "Turn on FreshRSS's API",
             url: "https://freshrss.github.io/FreshRSS/en/users/06_Mobile_access.html",
@@ -149,6 +183,18 @@ const _: () = {
 pub fn provider(server: Server) -> &'static Provider {
     &PROVIDERS[server.place()]
 }
+
+/// Hosted services, offered under the address box: one row here, with its `fixed_url`, is all a new one takes. A row
+/// goes in only once it has passed against a real account, and none has.
+pub const HOSTED: &[Provider] = &[];
+
+/// The box first run opens with. What comes after it depends on what's there.
+pub const ADDRESS: Field = field(
+    FieldKey::Address,
+    "Server address",
+    "rss.example.com",
+    "The one you open in your browser. A short name, a port, a path or a page copied from the address bar will do.",
+);
 
 /// Readeck isn't a feed server, and it's not on the way to a first article: it's in Settings only.
 pub const READECK: [Field; 2] = [
@@ -183,7 +229,43 @@ pub const WELCOME: [WelcomeRow; 3] = [
 ];
 
 pub const CONNECT_TITLE: &str = "Connect your server";
-pub const CONNECT_TEXT: &str = "Onward checks these with your server before it saves anything.";
+pub const CONNECT_TEXT: &str = "Onward looks at the address and works out what your server needs.";
+pub const BY_HAND_TEXT: &str = "Onward checks these with your server before it saves anything.";
+
+// What Connect says about what it found. A Miniflux user sees "API key" only on the steps for accounts that need one.
+pub const MINIFLUX_FOUND: &str = "This is Miniflux. Sign in once and Onward gets a key of its own from your server.";
+pub const MINIFLUX_PASTE: &str =
+    "Make an API key on Miniflux's page: it asks you to sign in first if you need to. Then paste the key here.";
+pub const MINIFLUX_NO_PASSWORDS: &str = "This Miniflux doesn't sign in with passwords, so Onward needs an API key. \
+                                         Make one on its page, then paste it here.";
+pub const MINIFLUX_NO_MINTING: &str = "This Miniflux can't make a key for Onward: that came with version 2.2.9. Make \
+                                       one on its page, then paste it here.";
+pub const FRESHRSS_FOUND: &str = "This is FreshRSS. It needs your username and its API password.";
+pub const PLAIN_HTTP: &str = "This uses plain http://, unencrypted. That's normal at home or on a tailnet, and Onward \
+                              does it only on addresses like those.";
+pub const MINT_REFUSED: &str = "Miniflux didn't accept that. Either the username or password is wrong, or this \
+                                account doesn't sign in with a password (Google, OpenID Connect, a passkey), or a \
+                                proxy in front of Miniflux removes the login. For the last two, use the button below.";
+pub const MINT_REDIRECTED: &str = "Miniflux redirected the sign-in, so Onward stopped rather than send your password \
+                                   on. Use an address that reaches the server directly.";
+pub const BY_HAND_ROW: &str = "Enter the details yourself";
+pub const TO_ADDRESS_ROW: &str = "Find my server by its address";
+pub const NO_PASSWORD_ROW: &str = "I don't sign in with a password";
+pub const USE_PASSWORD_ROW: &str = "Use my username and password";
+pub const KEY_PAGE_ROW: &str = "Open Miniflux's API key page";
+pub const OPEN_FRESHRSS_ROW: &str = "Open FreshRSS";
+
+/// An unset API password and a wrong one look the same from here, so this covers both.
+pub fn freshrss_refused(web: &str) -> String {
+    format!(
+        "FreshRSS turned down that username and API password. If you've never set one, or aren't sure of it: sign in \
+         at {web}, then go to Settings → Profile → External access via API and set one. If you've only just set it, wait a \
+         couple of seconds and try again."
+    )
+}
+
+pub const DOCS_MOBILE: Link =
+    Link { label: "FreshRSS's API", url: "https://freshrss.github.io/FreshRSS/en/users/06_Mobile_access.html" };
 
 /// A way to get a server, on the no-server screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -236,6 +318,10 @@ pub struct FirstRun {
     pub welcome: [WelcomeRow; 3],
     pub connect_title: &'static str,
     pub connect_text: &'static str,
+    pub by_hand_text: &'static str,
+    pub address: Field,
+    /// Settings' way to the address box.
+    pub find_server: &'static str,
     pub no_server: NoServer,
 }
 
@@ -245,6 +331,9 @@ pub const FIRST_RUN: FirstRun = FirstRun {
     welcome: WELCOME,
     connect_title: CONNECT_TITLE,
     connect_text: CONNECT_TEXT,
+    by_hand_text: BY_HAND_TEXT,
+    address: ADDRESS,
+    find_server: TO_ADDRESS_ROW,
     no_server: NO_SERVER,
 };
 
@@ -261,12 +350,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_field_is_in_one_place_and_named_as_its_json() {
-        let shown = PROVIDERS.iter().flat_map(|p| p.fields).chain(&READECK);
+    fn every_field_is_on_some_form_and_named_as_its_json() {
+        let shown = std::iter::once(&ADDRESS)
+            .chain(PROVIDERS.iter().flat_map(|p| p.fields.iter().chain(p.asks)))
+            .chain(&READECK);
         let keys: Vec<FieldKey> = shown.map(|f| f.key).collect();
-        assert_eq!(keys, FieldKey::ALL);
         for key in FieldKey::ALL {
+            assert!(keys.contains(&key), "{key:?} is on no form");
             assert_eq!(serde_json::to_value(key).unwrap(), key.name());
+        }
+    }
+
+    /// Spike S3 hasn't run: a hosted row needs a real account first.
+    #[test]
+    fn no_hosted_service_has_passed_yet() {
+        assert!(HOSTED.is_empty());
+    }
+
+    #[test]
+    fn what_first_run_asks_a_miniflux_user_never_says_api_key() {
+        let words = provider(Server::Miniflux).asks.iter().flat_map(|f| [f.label, f.help, f.placeholder]);
+        for text in words.chain([ADDRESS.label, ADDRESS.help, CONNECT_TITLE, CONNECT_TEXT]) {
+            assert!(!text.to_lowercase().contains("api key"), "{text}");
         }
     }
 

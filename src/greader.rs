@@ -56,6 +56,11 @@ const UNREADABLE_IDS: &str = "The server sent item ids Onward can't read, so it 
 pub const LOGIN_REJECTED: &str = "The Google Reader API server turned down the username or API password. This isn't \
                                   your login password: FreshRSS has you set one in your profile, Miniflux under \
                                   Settings → Integrations.";
+/// The login worked, so the password is fine, and the next call didn't get through: FreshRSS reads the session from
+/// `Authorization`, which something in front of it removed.
+pub const AUTHORIZATION_STRIPPED: &str = "The server accepted the password, then didn't recognise the login on the \
+                                          next call. Something in front of it is removing the Authorization header: \
+                                          a proxy or web server has to pass that header on.";
 
 /// `Debug` leaves out the password and the tokens.
 pub struct Client {
@@ -332,7 +337,7 @@ impl Client {
                 *lock(&self.auth) = Some(token.clone());
                 Ok(token)
             }
-            401 | 403 => Err(Error::Rejected(LOGIN_REJECTED.into())),
+            401 | 403 => Err(Error::LoginRejected),
             404 | 405 => Err(self.not_greader()),
             code => Err(Error::unexpected(format!("The Google Reader API server answered with HTTP {code}"))),
         }
@@ -418,14 +423,23 @@ impl Client {
         }
         *lock(&self.auth) = None;
         *lock(&self.edit_token) = None;
-        self.login().await?;
+        let auth = self.login().await?;
+        // Not `send`, which would take a 401 for a stale login: this one is new.
         let resp = self
-            .send(reqwest::Method::GET, "user-info", &[("output", "json".into())], Body::None)
+            .http
+            .get(format!("{}/reader/api/0/user-info", self.base))
+            .header(reqwest::header::AUTHORIZATION, format!("GoogleLogin auth={auth}"))
+            .query(&[("output", "json")])
+            .send()
             .await
-            .map_err(|e| match e {
-                Error::Http { status, .. } if status == reqwest::StatusCode::NOT_FOUND => self.not_greader(),
-                e => e,
-            })?;
+            .map_err(|e| self.unreachable(e))?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Rejected(AUTHORIZATION_STRIPPED.into()));
+        }
+        let resp = ok_status(Service::GReader, resp).await.map_err(|e| match e {
+            Error::Http { status, .. } if status == reqwest::StatusCode::NOT_FOUND => self.not_greader(),
+            e => e,
+        })?;
         let info: UserInfo = resp.json().await.map_err(|_| self.not_greader())?;
         Ok(if info.user_name.is_empty() { self.username.clone() } else { info.user_name })
     }
@@ -833,6 +847,26 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(client(&server).check().await.unwrap(), "ward");
+    }
+
+    /// As seen through a proxy that drops `Authorization`: `ClientLogin` works, and `user-info` doesn't know you.
+    #[tokio::test]
+    async fn a_login_that_works_and_a_401_after_it_is_a_stripped_header_not_a_wrong_password() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("SID=x\nLSID=null\nAuth=me/abc\n"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/reader/api/0/user-info"))
+            .respond_with(
+                ResponseTemplate::new(401).insert_header("Google-Bad-Token", "true").set_body_string("Unauthorized!"),
+            )
+            .mount(&server)
+            .await;
+        let err = client(&server).check().await.unwrap_err();
+        assert_eq!(err.message(), AUTHORIZATION_STRIPPED);
+        assert!(!err.message().contains(LOGIN_REJECTED));
     }
 
     #[tokio::test]

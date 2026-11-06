@@ -10,6 +10,59 @@ use crate::error::{Error, Service, ok_status};
 use crate::feeds::{Counts, EntryPage, EntryStatus, Feed, FeedCount, Selection};
 use crate::paging::Order;
 
+/// Why a password didn't become a key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MintFailed {
+    /// 401: the password is wrong, or this account has none, or a proxy removed it. These can't be told apart.
+    Refused,
+    /// 404, which older servers answer before they look at the password: it says nothing about that.
+    NoSuchCall,
+    /// It redirected, and a password isn't something to send after it.
+    Redirected,
+    /// Anything else, as a message.
+    Other(String),
+}
+
+/// Trades a username and password for a key of Onward's own, once. `http` follows no redirects. The description must
+/// be new: Miniflux refuses a second key with the same one.
+pub async fn mint_key(
+    http: &reqwest::Client,
+    base: &str,
+    username: &str,
+    password: &str,
+    description: &str,
+) -> Result<String, MintFailed> {
+    #[derive(Deserialize)]
+    struct Minted {
+        token: String,
+    }
+    #[derive(Deserialize)]
+    struct Refusal {
+        error_message: String,
+    }
+    let response = http
+        .post(format!("{base}/v1/api-keys"))
+        .basic_auth(username, Some(password))
+        .json(&json!({ "description": description }))
+        .send()
+        .await
+        .map_err(|e| MintFailed::Other(Error::unreachable(Service::Miniflux, base, e).message()))?;
+    let status = response.status();
+    match status.as_u16() {
+        201 => match response.json::<Minted>().await {
+            Ok(minted) if !minted.token.is_empty() => Ok(minted.token),
+            _ => Err(MintFailed::Other("Miniflux's answer had no key in it.".into())),
+        },
+        401 => Err(MintFailed::Refused),
+        404 => Err(MintFailed::NoSuchCall),
+        300..=399 => Err(MintFailed::Redirected),
+        _ => Err(MintFailed::Other(match response.json::<Refusal>().await {
+            Ok(refusal) => format!("Miniflux answered: {}", refusal.error_message),
+            Err(_) => format!("Miniflux answered with HTTP {status}"),
+        })),
+    }
+}
+
 /// `Debug` leaves out the API key.
 #[derive(Clone)]
 pub struct Client {

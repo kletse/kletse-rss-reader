@@ -108,6 +108,15 @@ pub mod qobject {
         #[qproperty(QString, onboarding_step)]
         #[qproperty(i32, onboarding_cursor)]
         #[qproperty(QString, first_run)]
+        // Connect as it stands: see `app::ConnectView`. Fields and rows are JSON, apart from the rest, so that a new
+        // message doesn't make the fields again and lose what's being typed in them.
+        #[qproperty(QString, connect_stage)]
+        #[qproperty(QString, connect_text)]
+        #[qproperty(QString, connect_note)]
+        #[qproperty(QString, connect_action)]
+        #[qproperty(bool, connect_probing)]
+        #[qproperty(QString, connect_fields)]
+        #[qproperty(QString, connect_rows)]
         // The last link opened from a form, shown as text: a browser may not have opened.
         #[qproperty(QString, shown_link)]
         // Reading the sample articles, chosen on the first screen.
@@ -170,6 +179,12 @@ pub mod qobject {
         /// A row of the first-run step on screen.
         #[qinvokable]
         fn choose_onboarding(self: Pin<&mut Model>, row: i32);
+        /// The address box changed.
+        #[qinvokable]
+        fn address_edited(self: Pin<&mut Model>, text: &QString);
+        /// Settings' way to the address box.
+        #[qinvokable]
+        fn find_server(self: Pin<&mut Model>);
         #[qinvokable]
         fn cancel_settings(self: Pin<&mut Model>);
         /// The search box's Enter.
@@ -281,6 +296,13 @@ pub struct ModelRust {
     onboarding_step: QString,
     onboarding_cursor: i32,
     first_run: QString,
+    connect_stage: QString,
+    connect_text: QString,
+    connect_note: QString,
+    connect_action: QString,
+    connect_probing: bool,
+    connect_fields: QString,
+    connect_rows: QString,
     shown_link: QString,
     samples: bool,
     article_size: i32,
@@ -316,6 +338,8 @@ pub struct ModelRust {
     prefetching: Option<Rendered>,
     /// Whether the settings form on screen was filled in from the loaded values yet.
     settings_shown: bool,
+    /// The refill it was last filled in from.
+    settings_refill: u64,
 }
 
 impl std::fmt::Debug for ModelRust {
@@ -380,6 +404,13 @@ impl Default for ModelRust {
             onboarding_step: QString::from("welcome"),
             onboarding_cursor: 0,
             first_run: QString::from(&json(&providers::FIRST_RUN)),
+            connect_stage: QString::from("address"),
+            connect_text: QString::default(),
+            connect_note: QString::default(),
+            connect_action: QString::default(),
+            connect_probing: false,
+            connect_fields: QString::from("[]"),
+            connect_rows: QString::from("[]"),
             shown_link: QString::default(),
             samples: false,
             article_size: 18,
@@ -411,6 +442,7 @@ impl Default for ModelRust {
             prefetched: None,
             prefetching: None,
             settings_shown: false,
+            settings_refill: 0,
         }
     }
 }
@@ -551,6 +583,16 @@ impl qobject::Model {
         self.run(fx);
     }
 
+    pub fn address_edited(mut self: Pin<&mut Self>, text: &QString) {
+        self.as_mut().state().app.address_edited(&text.to_string());
+        self.sync();
+    }
+
+    pub fn find_server(mut self: Pin<&mut Self>) {
+        let fx = self.as_mut().state().app.find_server();
+        self.run(fx);
+    }
+
     pub fn cancel_settings(mut self: Pin<&mut Self>) {
         let fx = self.as_mut().state().app.cancel_settings();
         self.run(fx);
@@ -641,7 +683,15 @@ impl qobject::Model {
         let (step, cursor) = (app.step().name(), to_i32(app.step_cursor()));
         let shown_link = app.shown_link().unwrap_or_default().to_string();
         let samples = app.samples();
+        let connect = app.connect_view();
 
+        self.as_mut().set_connect_stage(qs(connect.stage));
+        self.as_mut().set_connect_text(qs(&connect.text));
+        self.as_mut().set_connect_note(qs(&connect.note));
+        self.as_mut().set_connect_action(qs(connect.action));
+        self.as_mut().set_connect_probing(connect.probing);
+        self.as_mut().set_connect_fields(qs(&json(&connect.fields)));
+        self.as_mut().set_connect_rows(qs(&json(&connect.rows)));
         self.as_mut().set_onboarding_step(qs(step));
         self.as_mut().set_onboarding_cursor(cursor);
         self.as_mut().set_shown_link(qs(&shown_link));
@@ -787,9 +837,11 @@ impl qobject::Model {
             return;
         };
         let (problem, error, checking) = (form.problem.clone().unwrap_or_default(), form.error.clone(), form.checking);
-        // The form starts from the loaded values once; after that the window keeps what is typed.
-        let fill = (!s.settings_shown).then(|| form.values.clone());
+        // The form starts from the loaded values once; after that the window keeps what is typed, until the core has
+        // something to take back.
+        let fill = (!s.settings_shown || s.settings_refill != form.refill).then(|| form.values.clone());
         s.settings_shown = true;
+        s.settings_refill = form.refill;
         if let Some(values) = fill {
             let fields: HashMap<_, _> = FieldKey::ALL.map(|key| (key.name(), values.field(key))).into();
             self.as_mut().set_server(qs(values.server.name()));

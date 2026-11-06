@@ -15,10 +15,25 @@ and how to build it is in the [README](README.md).
 - **All behaviour is in `src/app.rs`** and is tested without Qt: an action returns `Effect`s (server calls,
   scrolling, saving prefs), and their answers come back as `Outcome`s through `App::apply`. Add behaviour there,
   with a test in `src/app_tests.rs` (key presses against a fake Miniflux). Don't put logic in QML.
-- **`src/providers.rs` is what the windows draw the form and first run from:** the kinds of server with their fields,
-  help and links, Readeck's fields, and first run's words. A window never names a field: it gets the table, keeps a
-  value per `key`, and hands them all back (`App::submit_fields`). A new field or row is one edit there, plus a slot in
-  `SettingsValues`. A hosted service gets a row only after it passes against a real account.
+- **`src/providers.rs` is what the windows draw the form and first run from:** the kinds of server with their fields
+  (`fields`, all of them, and `asks`, what Connect needs once it knows the address), help and links, Readeck's fields,
+  and first run's words. A window never names a field: it gets the table, keeps a value per `key`, and hands them all
+  back (`App::submit_fields`). A new field or row is one edit there, plus a slot in `SettingsValues`. A hosted service
+  is one row in `HOSTED`, with its `fixed_url`, and goes there only after it passes against a real account: there is
+  none yet.
+- **Connect has stages of its own** (`Stage` in app.rs): the address box, then what that server needs, or the whole form
+  by hand. The windows draw `App::connect_view()` and nothing else decides: `submit_settings` does what the stage is for,
+  and a row goes through `choose_onboarding`. `address_edited` is told about every change to the box and sends nothing;
+  only Enter or the button looks. `latest_probe` is to probes what `latest_load` is to loads. Settings keeps the direct
+  form, with `find_server` as its way here; Esc goes back there (`from_settings`).
+- **Detection is `src/detect.rs`,** on `detection_client()`, which follows no redirect: not `api_client`, not the plain
+  one. Its tests are what real servers answered, byte for byte, so change them only against a running server. The order
+  matters: the FreshRSS checks with the dummy `Authorization`, CommaFeed, `GET <base>/` (which also recognises the other
+  readers and shows whether Miniflux has password sign-in), and `/v1/me` last and once, because that logs a failed
+  authentication even with no credentials. Don't add a request to recognise a server if it logs a failure on a real one.
+- **A Miniflux password lives as long as one request.** It goes out in `Effect::MintKey` and is never in `form.values`.
+  The window's copy goes when `SettingsForm::refill` is bumped: `bridge.rs`, `ffi.rs` and `tui/ui.rs` then fill the form
+  from `values` again. Minting uses `detection_client()` too, so a redirect can't take the password anywhere.
 - **First run is `Overlay::Onboarding` plus `Step`** (Welcome, Connect, NoServer) in app.rs; Esc steps back and Welcome
   is the end of that. "Try it with sample articles" is `Effect::UseSamples`, an effect with an answer because effects
   run concurrently: `Outcome::SamplesSwitched` is what opens the picker, so nothing reaches the backend before it
@@ -114,8 +129,12 @@ space as `Space`). It then waits 3 s for images, saves the window to the PNG and
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
 `"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j j Enter j"` (the end of a feed, with where j goes next), `"Enter *"` (a starred article), `"j Enter"` (the Starred list; the demo starts with two starred, in memory).
 First run works the same with `XDG_CONFIG_HOME` and `XDG_STATE_HOME` on an empty folder and no `ONWARD_DEMO`: `" "` (the first
-screen), `"ArrowDown Enter"` (Connect), `"ArrowUp Enter"` (no server), `"ArrowUp Enter Enter"` (a link opened; that does
-run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the marker), `"Enter Enter ,"` (leaving them).
+screen), `"ArrowDown Enter"` (Connect), `"ArrowDown Enter row:0"` (the whole form), `"ArrowUp Enter"` (no server), `"ArrowUp
+Enter Enter"` (a link opened; that does run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the
+marker), `"Enter Enter ,"` (leaving them). Keys can also be `type:text` (into the field with the focus), `accept` (Enter in
+that field), `tab`, `row:n` (a row of first run) and `find` (Settings' way to the address box). A word that's no key waits a
+tick, which a probe needs: `"ArrowDown Enter type:127.0.0.1:18399/miniflux accept x x"`. `.github/fake-server.py` answers as
+the real servers did, one path each, and that's what CI walks; to run it, start it first.
 Read the PNG to look at it. The offscreen platform renders like the real one, including the app's fonts.
 
 Note: the settings form shows the **real** config of the machine it runs on (demo mode only affects server calls),
@@ -235,6 +254,8 @@ Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. T
 Traps here:
 
 - **The form and first run are a `Page` in `draw.rs`,** which keeps what has the focus in view when the rows don't fit.
+  Connect's rows go in the foot, next to the error, not with the fields: they're the way out of what the error says, and
+  mustn't scroll away.
   `FORM_WIDTH` leaves room for the longest link on one line.
 - **Don't call `Terminal::clear`.** It asks the terminal for the cursor position, and the answer can't get past the
   thread blocked in `event::read`, which holds crossterm's lock: a 2 s stall, then an error that ends the app. Use
@@ -277,6 +298,8 @@ Traps here:
 - **The toolbar mirrors the Qt top bar:** the feeds button on the left (a clock icon in history mode), where you
   are in the middle ("History · 8 / 88"), the buttons on the right. The window title is set but kept out of the
   toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
+- **Connect's address box is told to the core on every change** (`.onChange` on the value in `OnboardingView`), as Qt's
+  `onEdited` does: that's what makes an answer about the old address out of date.
 - **A field editor doesn't mean typing.** A click on `.textSelection(.enabled)` text makes an `NSTextView` field
   editor the first responder, a read-only one. `Keyboard.typing` also asks `isEditable`, or every key stops working
   until something else takes the focus.

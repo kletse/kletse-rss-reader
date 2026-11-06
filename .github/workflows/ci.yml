@@ -39,7 +39,8 @@ jobs:
         run: |
           cargo build --locked
           for keys in "Enter" "Enter n n" "Enter ?" "Enter ," "h Enter" "Enter A" "Enter n n n n n n n n" \
-              "Enter /" "Enter v" "Enter n p A" "j j j Enter j" "Enter *" "j Enter"; do
+              "Enter /" "Enter v" "Enter n p A" "j j j Enter j" "Enter *" "j Enter" "Enter , find" \
+              "Enter , find Escape"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
@@ -59,6 +60,24 @@ jobs:
           export XDG_CONFIG_HOME="$empty/config" XDG_STATE_HOME="$empty/state"
           for keys in " " "ArrowDown ArrowDown" "ArrowDown Enter" "ArrowDown Enter Escape" "ArrowUp Enter" \
               "ArrowUp Enter ArrowDown Enter" "Enter" "Enter Enter" "Enter Enter ," "Enter Enter , Escape"; do
+            echo "== $keys"
+            rm -f /tmp/shot.png
+            ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward
+            test -s /tmp/shot.png
+          done
+          # Connect's stages, against a fake server that answers as real ones do. Nothing here signs in anywhere.
+          python3 .github/fake-server.py &
+          fake=$!
+          trap 'kill $fake' EXIT
+          sleep 1
+          look="ArrowDown Enter type:127.0.0.1:18399"
+          for keys in "ArrowDown Enter row:0" "ArrowDown Enter row:0 Escape" "ArrowDown Enter type:rss accept" \
+              "$look/miniflux accept x x" "$look/miniflux accept x x Escape" "$look/miniflux accept x x row:0" \
+              "$look/miniflux accept x x row:0 row:1" \
+              "$look/miniflux accept x x type:someone tab type:wrong accept x x" \
+              "$look/old accept x x type:someone tab type:wrong accept x x" "$look/no-passwords accept x x" \
+              "$look/freshrss accept x x" "$look/freshrss-off accept x x" "$look/freshrss-stripped accept x x" \
+              "$look/commafeed accept x x" "$look/gate accept x x" "$look/nothing accept x x"; do
             echo "== $keys"
             rm -f /tmp/shot.png
             ONWARD_SNAPSHOT=/tmp/shot.png ONWARD_SNAPSHOT_KEYS="$keys" timeout 60 target/debug/onward

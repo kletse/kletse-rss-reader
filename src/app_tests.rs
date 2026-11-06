@@ -6,6 +6,7 @@
 use super::*;
 use crate::dates;
 use crate::feeds::{Category, Feed, FeedCount};
+use crate::greader;
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
@@ -94,7 +95,12 @@ struct Harness {
     fail_fetch: Option<String>,
     full_content: String,
     problem: Option<String>,
-    save_result: Result<Saved, String>,
+    save_result: Result<Saved, SaveFailed>,
+    /// What the last save was sent.
+    saved_values: Option<SettingsValues>,
+    /// Probes and logins, left unanswered until a test says what comes back.
+    looked_at: Vec<(u64, Address)>,
+    logins: Vec<Login>,
 }
 
 fn counts(unread: i64, read: i64) -> Vec<FeedCount> {
@@ -131,6 +137,9 @@ impl Harness {
             full_content: "<p>Full text</p>".into(),
             problem: None,
             save_result: Ok(saved(Status { configured: true, readeck: false, capabilities: Capabilities::EVERYTHING })),
+            saved_values: None,
+            looked_at: Vec::new(),
+            logins: Vec::new(),
         }
     }
 
@@ -269,7 +278,19 @@ impl Harness {
             Effect::LoadSettings => {
                 Some(Outcome::SettingsLoaded { values: SettingsValues::default(), problem: self.problem.clone() })
             }
-            Effect::SaveSettings(_) => Some(Outcome::SettingsSaved(self.save_result.clone())),
+            Effect::SaveSettings(values) => {
+                self.saved_values = Some(values.0);
+                Some(Outcome::SettingsSaved(self.save_result.clone()))
+            }
+            // Answered by hand, as a test needs them in flight: see `found` and `minted`.
+            Effect::Probe { probe, address } => {
+                self.looked_at.push((probe, address));
+                None
+            }
+            Effect::MintKey(login) => {
+                self.logins.push(login);
+                None
+            }
             Effect::UseSamples(on) => {
                 let status = Status { configured: on, readeck: on, capabilities: Capabilities::EVERYTHING };
                 Some(Outcome::SamplesSwitched { on, status })
@@ -1036,7 +1057,108 @@ fn keys_typed_into_the_settings_form_are_not_shortcuts() {
     assert_eq!(h.app.overlay(), Overlay::Settings);
 }
 
+impl Harness {
+    /// From the first screen to the address box.
+    fn go_to_connect(&mut self) {
+        self.key("ArrowDown");
+        self.key("Enter");
+        assert_eq!(self.app.step(), Step::Connect);
+    }
+
+    /// From the address box to the whole form.
+    fn by_hand(&mut self) {
+        self.row(providers::BY_HAND_ROW);
+        assert_eq!(self.app.connect_view().stage, "by_hand");
+    }
+
+    /// Connect's row with this label.
+    fn row(&mut self, label: &str) {
+        let rows = self.app.connect_view().rows;
+        let row = rows.iter().position(|r| r.label == label).unwrap_or_else(|| panic!("{label} in {rows:?}"));
+        let fx = self.app.choose_onboarding(row);
+        self.run(fx);
+    }
+
+    fn submit(&mut self, values: SettingsValues) {
+        let fx = self.app.submit_settings(values);
+        self.run(fx);
+    }
+
+    /// Enter in the address box.
+    fn look_at(&mut self, address: &str) -> u64 {
+        self.app.address_edited(address);
+        self.submit(SettingsValues { address: address.into(), ..SettingsValues::default() });
+        self.looked_at.last().unwrap().0
+    }
+
+    /// The answer to a probe.
+    fn found(&mut self, probe: u64, found: Detected) {
+        let fx = self.app.apply(Outcome::Probed { probe, found });
+        self.run(fx);
+    }
+
+    fn connect_to(&mut self, found: Detected) {
+        self.go_to_connect();
+        let probe = self.look_at("rss.example.com");
+        self.found(probe, found);
+    }
+
+    fn minted(&mut self, result: Result<String, MintFailed>) {
+        let probe = self.logins.last().unwrap().probe;
+        let fx = self.app.apply(Outcome::KeyMinted { probe, result });
+        self.run(fx);
+    }
+
+    fn form_error(&self) -> &str {
+        &self.app.settings().unwrap().error
+    }
+
+    fn field_keys(&self) -> Vec<FieldKey> {
+        self.app.connect_view().fields.iter().map(|f| f.key).collect()
+    }
+
+    fn opened(&self) -> Vec<&str> {
+        let opened = self.calls.iter().filter_map(|c| match c {
+            Effect::OpenInBrowser { url, .. } => Some(url.as_str()),
+            _ => None,
+        });
+        opened.collect()
+    }
+
+    /// All the words Connect has on screen.
+    fn connect_words(&self) -> String {
+        let view = self.app.connect_view();
+        let fields = view.fields.iter().flat_map(|f| [f.label, f.help, f.placeholder]);
+        let rows = view.rows.iter().map(|r| r.label.as_str());
+        let lines = [view.text.as_str(), view.note.as_str(), view.action, self.form_error()];
+        fields.chain(rows).chain(lines).collect::<Vec<_>>().join(" ").to_lowercase()
+    }
+}
+
+const BASE: &str = "https://rss.example.com";
+
+fn miniflux_found() -> Detected {
+    Detected::Miniflux { base: BASE.into(), sign_in: true }
+}
+
+fn freshrss_found(state: Api) -> Detected {
+    Detected::FreshRss { web: format!("{BASE}/i/"), api: format!("{BASE}/api/greader.php"), state }
+}
+
+fn signing_in() -> SettingsValues {
+    SettingsValues {
+        address: "rss.example.com".into(),
+        miniflux_username: "ward".into(),
+        miniflux_password: "hunter2".into(),
+        ..SettingsValues::default()
+    }
+}
+
 /// A first run, on the first screen.
+fn refused(message: &str) -> SaveFailed {
+    SaveFailed { message: message.into(), login_rejected: false }
+}
+
 fn first_run() -> Harness {
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
@@ -1152,8 +1274,8 @@ fn the_macs_menus_do_nothing_on_first_run() {
 #[test]
 fn connect_saves_and_goes_on_to_the_picker() {
     let mut h = first_run();
-    h.key("ArrowDown");
-    h.key("Enter");
+    h.go_to_connect();
+    h.by_hand();
     h.save_result = Ok(saved(Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }));
     let fx = h.app.submit_settings(SettingsValues::default());
     assert!(h.app.settings().unwrap().checking);
@@ -1166,9 +1288,9 @@ fn connect_saves_and_goes_on_to_the_picker() {
 #[test]
 fn a_failed_connect_stays_put_and_says_why() {
     let mut h = first_run();
-    h.key("ArrowDown");
-    h.key("Enter");
-    h.save_result = Err("Miniflux rejected the API key".into());
+    h.go_to_connect();
+    h.by_hand();
+    h.save_result = Err(refused("Miniflux rejected the API key"));
     let typed = SettingsValues { miniflux_url: "https://m.example.com".into(), ..SettingsValues::default() };
     let fx = h.app.submit_settings(typed.clone());
     h.run(fx);
@@ -1182,8 +1304,8 @@ fn a_failed_connect_stays_put_and_says_why() {
 #[test]
 fn esc_waits_for_a_save_being_checked() {
     let mut h = first_run();
-    h.key("ArrowDown");
-    h.key("Enter");
+    h.go_to_connect();
+    h.by_hand();
     let _still_going = h.app.submit_settings(SettingsValues::default());
     let (used, _) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
     assert!(used);
@@ -1193,6 +1315,8 @@ fn esc_waits_for_a_save_being_checked() {
 #[test]
 fn a_form_is_handed_in_by_field_name_and_keeps_what_isnt_on_screen() {
     let mut h = first_run();
+    h.go_to_connect();
+    h.by_hand();
     let fields = [("greader_url", "https://f.example.com"), ("readeck_token", "tok"), ("nonsense", "x")];
     let fields = fields.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let fx = h.app.submit_fields("greader", &fields);
@@ -1318,7 +1442,7 @@ fn a_server_set_up_from_the_start_is_no_sample() {
 fn a_failed_save_shows_why_and_lets_you_try_again() {
     let mut h = first_second();
     h.key(",");
-    h.save_result = Err("Miniflux rejected the API key".into());
+    h.save_result = Err(refused("Miniflux rejected the API key"));
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     let form = h.app.settings().unwrap();
@@ -1400,6 +1524,8 @@ fn readeck_values_that_failed_are_reported_in_a_settings_window_and_on_first_run
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: None, readeck_problem: problem });
     h.start();
+    h.go_to_connect();
+    h.by_hand();
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert!(h.picker_loaded());
@@ -1422,6 +1548,8 @@ fn saving_says_who_you_are_signed_in_as() {
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
     h.save_result = Ok(Saved { status, username: Some("ward".into()), readeck_problem: None });
     h.start();
+    h.go_to_connect();
+    h.by_hand();
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     assert_eq!(h.toast(), Some("Signed in as ward"));
@@ -2572,4 +2700,573 @@ fn all_unread_marked_read_from_the_picker_shows_read_in_the_starred_list_behind_
     h.shift("A");
     h.key("y");
     assert!(h.app.queue().iter().all(|e| e.status == EntryStatus::Read));
+}
+
+// ---- Connect ------------------------------------------------------------------------------------------------
+
+#[test]
+fn connect_opens_on_the_address_box_alone() {
+    let mut h = first_run();
+    h.go_to_connect();
+    let view = h.app.connect_view();
+    assert_eq!((view.stage, view.action, view.probing), ("address", "Continue", false));
+    assert!(view.fields.is_empty());
+    assert!(!h.connect_words().contains("api key"));
+}
+
+#[test]
+fn typing_looks_at_nothing_and_enter_looks_once() {
+    let mut h = first_run();
+    h.go_to_connect();
+    for typed in ["r", "rs", "rss", "rss.example.com"] {
+        h.app.address_edited(typed);
+    }
+    assert!(h.looked_at.is_empty());
+    let values = SettingsValues { address: "rss.example.com".into(), ..SettingsValues::default() };
+    h.submit(values.clone());
+    assert_eq!(h.looked_at.len(), 1);
+    assert!(h.app.connect_view().probing);
+    h.submit(values);
+    assert_eq!(h.looked_at.len(), 1, "a second Enter while it looks changes nothing");
+}
+
+#[test]
+fn an_answer_about_an_address_since_changed_is_a_no_op() {
+    let mut h = first_run();
+    h.go_to_connect();
+    let stale = h.look_at("old.example.com");
+    h.app.address_edited("new.example.com");
+    assert!(!h.app.connect_view().probing);
+    h.found(stale, miniflux_found());
+    assert!(h.app.connect_view().fields.is_empty());
+    assert_eq!(h.form_error(), "");
+    let fresh = h.look_at("new.example.com");
+    assert_ne!(fresh, stale);
+    h.found(stale, Detected::Samples);
+    assert_eq!(h.form_error(), "", "still waiting for the new one");
+    h.found(fresh, miniflux_found());
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+}
+
+#[test]
+fn an_answer_after_stepping_back_is_a_no_op() {
+    let mut h = first_run();
+    h.go_to_connect();
+    let stale = h.look_at("rss.example.com");
+    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Welcome);
+    h.found(stale, miniflux_found());
+    h.key("Enter");
+    assert_eq!(h.app.step(), Step::Connect);
+    assert!(h.app.connect_view().fields.is_empty(), "the address box again, with nothing found");
+}
+
+#[test]
+fn the_box_echoing_what_it_holds_changes_nothing() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.app.address_edited("rss.example.com");
+    assert!(!h.field_keys().is_empty());
+}
+
+#[test]
+fn changing_the_address_after_a_server_was_found_starts_over() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.app.address_edited("rss.example.org");
+    assert!(h.app.connect_view().fields.is_empty());
+    assert_eq!(h.app.connect_view().action, "Continue");
+}
+
+#[test]
+fn an_address_that_isnt_one_is_said_at_once_with_no_request() {
+    let mut h = first_run();
+    h.go_to_connect();
+    h.submit(SettingsValues { address: "  ".into(), ..SettingsValues::default() });
+    assert!(h.looked_at.is_empty());
+    assert!(h.form_error().contains("Type your server's address"));
+}
+
+#[test]
+fn miniflux_asks_for_a_username_and_password_and_never_says_api_key() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+    assert_eq!(h.app.connect_view().action, "Sign in");
+    let words = h.connect_words();
+    assert!(words.contains("miniflux") && !words.contains("api key"), "{words}");
+}
+
+#[test]
+fn a_password_becomes_a_key_and_is_never_kept() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.hold_save = false;
+    h.submit(signing_in());
+    assert_eq!(h.logins.len(), 1);
+    let login = h.logins[0].clone();
+    assert_eq!((login.base.as_str(), login.username.as_str(), login.password.as_str()), (BASE, "ward", "hunter2"));
+    assert!(!format!("{login:?}").contains("hunter2"));
+    let form = h.app.settings().unwrap();
+    assert!(form.checking);
+    assert_eq!(form.values.miniflux_password, "", "gone from the core as soon as it's sent");
+    let before = form.refill;
+
+    h.minted(Ok("minted-key".into()));
+
+    let saved = h.saved_values.clone().unwrap();
+    assert_eq!(saved.server, Server::Miniflux);
+    assert_eq!(saved.miniflux_url, BASE);
+    assert_eq!(saved.miniflux_api_key, "minted-key");
+    assert_eq!(saved.miniflux_password, "");
+    assert!(h.picker_loaded(), "the save went through");
+    assert!(h.app.settings().is_none_or(|f| f.refill > before));
+}
+
+#[test]
+fn a_refused_password_says_every_reason_clears_the_field_and_keeps_the_way_out() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.submit(signing_in());
+    let before = h.app.settings().unwrap().refill;
+    h.minted(Err(MintFailed::Refused));
+    let form = h.app.settings().unwrap();
+    assert!(form.error.contains("wrong") && form.error.contains("passkey"), "{}", form.error);
+    assert!(!form.checking);
+    assert!(form.refill > before, "the window's copy goes too");
+    assert_eq!(form.values.miniflux_password, "");
+    assert_eq!(form.values.miniflux_username, "ward");
+    assert_eq!(h.logins.len(), 1, "no second try by itself");
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+    let rows = h.app.connect_view().rows;
+    assert_eq!(rows[0].url.as_deref(), Some("https://rss.example.com/keys/create"));
+}
+
+#[test]
+fn the_way_to_a_key_is_there_before_any_password_fails() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.row(providers::NO_PASSWORD_ROW);
+    assert_eq!(h.opened(), ["https://rss.example.com/keys/create"]);
+    assert_eq!(h.app.shown_link(), Some("https://rss.example.com/keys/create"));
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxApiKey]);
+    h.submit(SettingsValues { miniflux_api_key: "pasted".into(), ..signing_in() });
+    assert!(h.logins.is_empty());
+    let saved = h.saved_values.clone().unwrap();
+    assert_eq!((saved.miniflux_url.as_str(), saved.miniflux_api_key.as_str()), (BASE, "pasted"));
+    assert_eq!(saved.miniflux_password, "", "what was typed before changing route stays out of it");
+}
+
+#[test]
+fn someone_who_chose_a_key_can_go_back_to_a_password() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.row(providers::NO_PASSWORD_ROW);
+    h.row(providers::USE_PASSWORD_ROW);
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+}
+
+#[test]
+fn a_miniflux_with_no_key_call_says_nothing_about_the_password_and_asks_for_a_key() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.submit(signing_in());
+    h.minted(Err(MintFailed::NoSuchCall));
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxApiKey]);
+    let view = h.app.connect_view();
+    assert!(view.text.contains("2.2.9"), "{}", view.text);
+    assert!(!view.text.to_lowercase().contains("password"), "{}", view.text);
+    assert_eq!(h.form_error(), "");
+    assert_eq!(h.app.settings().unwrap().values.miniflux_password, "");
+    assert!(!view.rows.iter().any(|r| r.label == providers::USE_PASSWORD_ROW), "it can't work here");
+    assert_eq!(view.rows[0].url.as_deref(), Some("https://rss.example.com/keys/create"));
+}
+
+#[test]
+fn a_miniflux_without_password_sign_in_goes_straight_to_a_key() {
+    let mut h = first_run();
+    h.connect_to(Detected::Miniflux { base: BASE.into(), sign_in: false });
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxApiKey]);
+    assert!(h.connect_words().contains("api key"));
+    assert!(!h.app.connect_view().rows.iter().any(|r| r.label == providers::USE_PASSWORD_ROW));
+}
+
+#[test]
+fn a_key_already_made_isnt_made_again_when_the_save_fails() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.submit(signing_in());
+    h.save_result = Err(refused("Could not reach Miniflux"));
+    h.minted(Ok("minted-key".into()));
+    assert_eq!(h.form_error(), "Could not reach Miniflux");
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxApiKey]);
+    let form = h.app.settings().unwrap();
+    assert_eq!(form.values.miniflux_api_key, "minted-key");
+    assert_eq!(h.logins.len(), 1);
+}
+
+#[test]
+fn nothing_goes_to_the_server_with_a_field_empty() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.submit(SettingsValues { miniflux_password: String::new(), ..signing_in() });
+    assert!(h.logins.is_empty());
+    assert_eq!(h.form_error(), "Password is still empty.");
+}
+
+#[test]
+fn esc_waits_for_a_key_being_made() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    h.submit(signing_in());
+    h.key("Escape");
+    assert!(!h.field_keys().is_empty());
+    h.app.address_edited("elsewhere");
+    assert!(!h.field_keys().is_empty(), "the box is read-only until it's done");
+}
+
+#[test]
+fn esc_goes_back_to_the_box_and_takes_a_typed_password_out_of_the_window() {
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    let before = h.app.settings().unwrap().refill;
+    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Connect);
+    assert!(h.app.connect_view().fields.is_empty());
+    let form = h.app.settings().unwrap();
+    assert!(form.refill > before);
+    assert_eq!(form.values.address, "rss.example.com");
+    h.key("Escape");
+    assert_eq!(h.app.step(), Step::Welcome);
+}
+
+#[test]
+fn plain_http_is_said_when_its_used() {
+    let mut h = first_run();
+    h.connect_to(Detected::Miniflux { base: "http://rss:8080".into(), sign_in: true });
+    assert!(h.app.connect_view().note.contains("plain http://"));
+    let mut h = first_run();
+    h.connect_to(miniflux_found());
+    assert_eq!(h.app.connect_view().note, "");
+}
+
+#[test]
+fn freshrss_asks_for_what_it_needs_and_says_where_that_is() {
+    let mut h = first_run();
+    h.connect_to(freshrss_found(Api::Ready));
+    assert_eq!(h.field_keys(), [FieldKey::GreaderUsername, FieldKey::GreaderPassword]);
+    let words = h.connect_words();
+    assert!(words.contains("isn't your login password") && words.contains("couple of seconds"), "{words}");
+    let view = h.app.connect_view();
+    assert_eq!(view.rows[0].url.as_deref(), Some("https://rss.example.com/i/"));
+    h.submit(SettingsValues {
+        greader_username: "ward".into(),
+        greader_password: "api-pass".into(),
+        ..SettingsValues::default()
+    });
+    let saved = h.saved_values.clone().unwrap();
+    assert_eq!(saved.server, Server::GReader);
+    assert_eq!(saved.greader_url, "https://rss.example.com/api/greader.php");
+}
+
+#[test]
+fn a_turned_down_freshrss_login_covers_unset_and_wrong_and_says_where_to_go() {
+    let mut h = first_run();
+    h.connect_to(freshrss_found(Api::Ready));
+    h.save_result = Err(SaveFailed { message: greader::LOGIN_REJECTED.into(), login_rejected: true });
+    h.submit(SettingsValues {
+        greader_username: "ward".into(),
+        greader_password: "api-pass".into(),
+        ..SettingsValues::default()
+    });
+    let error = h.form_error();
+    for words in ["never set", "aren't sure", "https://rss.example.com/i/", "External access", "couple of seconds"] {
+        assert!(error.contains(words), "{words}: {error}");
+    }
+    assert!(!h.app.settings().unwrap().checking);
+}
+
+#[test]
+fn a_stripped_header_after_a_good_login_isnt_called_a_wrong_password() {
+    let mut h = first_run();
+    h.connect_to(freshrss_found(Api::Ready));
+    h.save_result = Err(refused(greader::AUTHORIZATION_STRIPPED));
+    h.submit(SettingsValues {
+        greader_username: "ward".into(),
+        greader_password: "api-pass".into(),
+        ..SettingsValues::default()
+    });
+    assert_eq!(h.form_error(), greader::AUTHORIZATION_STRIPPED);
+}
+
+#[test]
+fn freshrss_with_its_api_off_says_so_and_can_look_again() {
+    let mut h = first_run();
+    h.connect_to(freshrss_found(Api::Off));
+    let view = h.app.connect_view();
+    assert!(view.fields.is_empty());
+    assert_eq!(view.action, "Check again");
+    assert_eq!(view.rows[0].url.as_deref(), Some("https://rss.example.com/i/"));
+    assert!(h.form_error().contains("Allow API access"));
+    h.submit(SettingsValues { address: "rss.example.com".into(), ..SettingsValues::default() });
+    assert_eq!(h.looked_at.len(), 2);
+    let probe = h.looked_at[1].0;
+    assert_eq!(h.form_error(), "");
+    h.found(probe, freshrss_found(Api::Ready));
+    assert_eq!(h.field_keys(), [FieldKey::GreaderUsername, FieldKey::GreaderPassword]);
+}
+
+#[test]
+fn a_stripping_proxy_gets_its_own_diagnosis() {
+    let mut h = first_run();
+    h.connect_to(freshrss_found(Api::Stripped));
+    assert!(h.form_error().contains("Authorization header"));
+    assert!(h.app.connect_view().fields.is_empty());
+    assert_eq!(h.app.connect_view().rows[0].url.as_deref(), Some(providers::DOCS_MOBILE.url));
+}
+
+#[test]
+fn what_onward_cant_use_is_said_with_nothing_to_fill_in() {
+    let base = || BASE.to_string();
+    for (found, words) in [
+        (Detected::CantRead { name: "CommaFeed", base: base() }, "This is CommaFeed, and Onward can't read it yet."),
+        (Detected::CantRead { name: "yarr", base: base() }, "This is yarr, and Onward can't read it yet."),
+        (Detected::Gate { base: base(), to: "https://auth.example.com".into() }, "sign-in page"),
+        (Detected::Blocked { base: base() }, "403"),
+        (Detected::Unknown { base: base(), sign_in: true }, "can't get past it"),
+        (Detected::Unknown { base: base(), sign_in: false }, "found neither Miniflux nor FreshRSS"),
+        (Detected::Certificate { base: base() }, "isn't trusted"),
+        (Detected::NoAnswer { base: base(), why: "refused".into(), clear_refused: false }, "No answer"),
+    ] {
+        let mut h = first_run();
+        h.connect_to(found);
+        assert!(h.form_error().contains(words), "{}", h.form_error());
+        assert!(h.app.connect_view().fields.is_empty());
+    }
+}
+
+#[test]
+fn filling_in_by_hand_is_the_form_as_it_was_and_esc_comes_back_from_it() {
+    let mut h = first_run();
+    h.go_to_connect();
+    h.by_hand();
+    h.key("Escape");
+    assert_eq!((h.app.step(), h.app.connect_view().stage), (Step::Connect, "address"));
+    h.by_hand();
+    h.submit(SettingsValues { miniflux_url: "https://m.example.com".into(), ..SettingsValues::default() });
+    assert_eq!(h.saved_values.clone().unwrap().miniflux_url, "https://m.example.com");
+    assert!(h.looked_at.is_empty());
+}
+
+#[test]
+fn a_hosted_row_is_one_row_of_the_table_and_goes_to_the_same_probe() {
+    let hosted = Provider {
+        id: "hosted-miniflux",
+        label: "Hosted Miniflux",
+        short_label: "Hosted Miniflux",
+        fixed_url: Some("https://reader.example.net"),
+        ..*providers::provider(Server::Miniflux)
+    };
+    assert!(hosted_rows(&[*providers::provider(Server::Miniflux)]).is_empty(), "no fixed address, no row");
+    let mut h = first_run();
+    h.go_to_connect();
+    h.app.connect.found_rows = hosted_rows(&[hosted]);
+    h.row("Hosted Miniflux");
+    assert_eq!(h.looked_at.len(), 1);
+    assert_eq!(h.looked_at[0].1, Address::parse("https://reader.example.net").unwrap());
+    assert_eq!(h.app.settings().unwrap().values.address, "https://reader.example.net");
+    let probe = h.looked_at[0].0;
+    h.found(probe, miniflux_found());
+    assert_eq!(h.field_keys(), [FieldKey::MinifluxUsername, FieldKey::MinifluxPassword]);
+}
+
+#[test]
+fn settings_can_look_for_a_server_too_and_esc_returns_to_it() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    assert_eq!((h.app.overlay(), h.app.step()), (Overlay::Onboarding, Step::Connect));
+    assert!(h.app.settings().is_some());
+    h.key("Escape");
+    assert_eq!(h.app.overlay(), Overlay::Settings);
+    assert!(h.app.settings().is_some());
+}
+
+#[test]
+fn a_server_found_from_settings_replaces_the_old_one() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let probe = h.look_at("rss.example.com");
+    h.found(probe, miniflux_found());
+    h.submit(signing_in());
+    h.minted(Ok("minted-key".into()));
+    assert_eq!(h.saved_values.clone().unwrap().miniflux_api_key, "minted-key");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+}
+
+#[test]
+fn a_secret_saved_for_one_server_isnt_offered_to_another() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let before = h.app.settings().unwrap().refill;
+    let old = SettingsValues {
+        address: "elsewhere.example.com".into(),
+        miniflux_url: "https://old.example.com".into(),
+        miniflux_api_key: "old-key".into(),
+        greader_url: "https://old.example.com/api/greader.php".into(),
+        greader_password: "old-password".into(),
+        ..SettingsValues::default()
+    };
+    h.submit(old.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, miniflux_found());
+    h.row(providers::NO_PASSWORD_ROW);
+    let form = h.app.settings().unwrap();
+    assert_eq!(form.values.miniflux_api_key, "");
+    assert!(form.refill > before, "the window's copy goes too");
+
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    h.submit(old);
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, freshrss_found(Api::Ready));
+    assert_eq!(h.app.settings().unwrap().values.greader_password, "");
+}
+
+#[test]
+fn a_secret_stays_for_the_server_it_was_saved_for() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    h.submit(SettingsValues {
+        address: "rss.example.com".into(),
+        miniflux_url: BASE.into(),
+        miniflux_api_key: "same-key".into(),
+        ..SettingsValues::default()
+    });
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, miniflux_found());
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "same-key");
+}
+
+#[test]
+fn on_the_mac_finding_a_server_leaves_the_settings_window_for_the_main_one() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key(",");
+    assert!(h.app.settings().is_some());
+    let fx = h.app.find_server();
+    assert!(h.app.settings().is_none(), "that closes the window");
+    h.run(fx);
+    assert_eq!((h.app.overlay(), h.app.screen()), (Overlay::Onboarding, Screen::Settings));
+    h.app.cancel_settings();
+    assert_eq!(h.app.overlay(), Overlay::Onboarding, "the closing window's cancel changes nothing");
+    let (_, fx) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
+    assert!(fx.iter().any(|e| matches!(e, Effect::ShowSettings)), "it opens again");
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::None);
+    assert!(h.app.settings().is_some());
+}
+
+#[test]
+fn a_server_b_key_isnt_kept_for_server_a_after_looking_at_both() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let saved = SettingsValues {
+        address: "b.example.com".into(),
+        miniflux_url: "https://a.example.com".into(),
+        miniflux_api_key: "a-key".into(),
+        ..SettingsValues::default()
+    };
+    h.submit(saved.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, Detected::Miniflux { base: "https://b.example.com".into(), sign_in: false });
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "");
+
+    h.app.address_edited("a.example.com");
+    h.submit(SettingsValues { address: "a.example.com".into(), miniflux_api_key: "b-key".into(), ..saved });
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, Detected::Miniflux { base: "https://a.example.com".into(), sign_in: false });
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "", "the form's address still says A");
+}
+
+#[test]
+fn looking_again_at_the_same_server_keeps_what_was_typed_for_it() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let values = SettingsValues {
+        address: "b.example.com".into(),
+        miniflux_url: "https://a.example.com".into(),
+        miniflux_api_key: "b-key".into(),
+        ..SettingsValues::default()
+    };
+    let b = Detected::Miniflux { base: "https://b.example.com".into(), sign_in: false };
+    h.submit(values.clone());
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, b.clone());
+    h.key("Escape");
+    h.submit(values);
+    let probe = h.looked_at.last().unwrap().0;
+    h.found(probe, b);
+    assert_eq!(h.app.settings().unwrap().values.miniflux_api_key, "b-key");
+}
+
+#[test]
+fn on_the_mac_esc_out_of_finding_a_server_leaves_the_picker_as_it_was() {
+    let mut h = first_second();
+    h.app.use_settings_window();
+    h.key("p");
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    h.key(",");
+    let fx = h.app.find_server();
+    h.run(fx);
+    let (_, fx) = h.app.key(&KeyPress { key: "Escape".into(), ..KeyPress::default() });
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+    assert!(h.app.settings().is_some(), "and the window opened again");
+}
+
+#[test]
+fn a_save_being_checked_isnt_left_for_the_address_box() {
+    let mut h = first_second();
+    h.key(",");
+    let fx = h.app.submit_settings(SettingsValues::default());
+    assert!(h.app.settings().unwrap().checking);
+    assert!(h.app.find_server().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::Settings);
+    h.run(fx);
+    assert_eq!(h.app.overlay(), Overlay::Picker);
+}
+
+#[test]
+fn outside_settings_there_is_no_finding_a_server() {
+    let mut h = first_second();
+    assert!(h.app.find_server().is_empty());
+    assert_eq!(h.app.overlay(), Overlay::None);
+}
+
+#[test]
+fn a_look_from_before_the_samples_is_out_of_date_after_them() {
+    let mut h = first_run();
+    h.go_to_connect();
+    let stale = h.look_at("rss.example.com");
+    h.key("Escape");
+    h.key("ArrowUp");
+    h.key("Enter");
+    assert!(h.app.samples());
+    h.key(",");
+    h.found(stale, miniflux_found());
+    assert!(h.app.connect_view().fields.is_empty());
 }

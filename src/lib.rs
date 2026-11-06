@@ -12,6 +12,7 @@ pub mod config;
 pub mod content;
 pub mod dates;
 pub mod demo;
+pub mod detect;
 pub mod error;
 pub mod feeds;
 #[cfg(all(feature = "ffi", target_os = "macos"))]

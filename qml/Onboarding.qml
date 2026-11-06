@@ -1,7 +1,8 @@
 // First run: the three things the first screen offers, the server form, and what to do with no server. It has the whole
 // window, as there's nothing behind it yet. The core keeps the step and all the words (src/app.rs, src/providers.rs);
 // a key or a click goes there, and Esc steps back. What's typed stays here, so stepping back doesn't lose it, while the
-// fields themselves are made when Connect opens: a hidden field would keep the keyboard.
+// fields themselves are made when Connect opens: a hidden field would keep the keyboard. Connect starts from an address
+// and shows what the core says that server needs (`app::ConnectView`).
 import QtQuick
 import QtQuick.Controls.Basic as T
 
@@ -73,7 +74,8 @@ Rectangle {
                 width: parent.width
                 bottomPadding: 24
                 text: o.step === "welcome" ? o.words.welcome_text
-                    : o.step === "connect" ? o.words.connect_text : o.words.no_server.text
+                    : o.step !== "connect" ? o.words.no_server.text
+                    : o.model.connectStage === "by_hand" ? o.words.by_hand_text : o.words.connect_text
                 color: o.model.fgDim
                 lineHeight: 1.4
                 wrapMode: Text.Wrap
@@ -114,16 +116,14 @@ Rectangle {
         }
     }
 
+    // Connect's stages share what's under them: what was said, the rows, the buttons. The fields go with their stage.
     Component {
         id: connect
         Column {
-            ServerForm {
-                ui: o.ui
+            spacing: 0
+            Loader {
                 width: parent.width
-                values: o.values
-                server: o.server
-                onChosen: name => o.server = name
-                onAccepted: o.submit()
+                sourceComponent: o.model.connectStage === "by_hand" ? byHand : address
             }
             LinkLine {
                 ui: o.ui
@@ -134,9 +134,27 @@ Rectangle {
                 height: Math.max(implicitHeight, 20)
                 text: o.model.settingsError
                 color: o.model.red
+                lineHeight: 1.3
                 wrapMode: Text.Wrap
                 font.family: o.ui.uiFont
                 font.pixelSize: 14
+            }
+            Flow {
+                width: parent.width
+                topPadding: 8
+                spacing: 8
+                Repeater {
+                    model: JSON.parse(o.model.connectRows)
+                    delegate: Button {
+                        required property var modelData
+                        required property int index
+                        ui: o.ui
+                        enabled: !o.model.settingsChecking
+                        text: modelData.label
+                        tip: modelData.url ?? ""
+                        onClicked: o.model.chooseOnboarding(index)
+                    }
+                }
             }
             Row {
                 anchors.right: parent.right
@@ -152,10 +170,86 @@ Rectangle {
                 Button {
                     ui: o.ui
                     primary: true
-                    enabled: !o.model.settingsChecking
-                    text: o.model.settingsChecking ? "Checking…" : "Connect"
+                    enabled: !o.model.settingsChecking && !o.model.connectProbing
+                    text: o.model.settingsChecking ? "Checking…" : o.model.connectProbing ? "Looking…" : o.model.connectAction
                     onClicked: o.submit()
                 }
+            }
+        }
+    }
+
+    Component {
+        id: byHand
+        ServerForm {
+            ui: o.ui
+            values: o.values
+            server: o.server
+            onChosen: name => o.server = name
+            onAccepted: o.submit()
+        }
+    }
+
+    Component {
+        id: address
+        Column {
+            id: stage
+            readonly property var asked: JSON.parse(o.model.connectFields)
+            spacing: 12
+            bottomPadding: 12
+
+            // What's new takes the keyboard: the first thing asked, or the box when nothing is.
+            function focusFirst() {
+                if (stage.asked.length > 0)
+                    askedList.focusFirst()
+                else
+                    box.focusFirst()
+            }
+            onAskedChanged: Qt.callLater(stage.focusFirst)
+            Component.onCompleted: Qt.callLater(stage.focusFirst)
+
+            Connections {
+                target: o
+                function onValuesChanged() { Qt.callLater(stage.focusFirst) }
+            }
+
+            FieldList {
+                id: box
+                ui: o.ui
+                width: parent.width
+                fields: [o.words.address]
+                values: o.values
+                readOnly: o.model.settingsChecking
+                onAccepted: o.submit()
+                onEdited: (key, text) => o.model.addressEdited(text)
+            }
+            Text {
+                visible: text !== ""
+                width: parent.width
+                text: o.model.connectText
+                color: o.model.fg
+                lineHeight: 1.4
+                wrapMode: Text.Wrap
+                font.family: o.ui.uiFont
+                font.pixelSize: 14
+            }
+            Text {
+                visible: text !== ""
+                width: parent.width
+                text: o.model.connectNote
+                color: o.model.fgDim
+                lineHeight: 1.3
+                wrapMode: Text.Wrap
+                font.family: o.ui.uiFont
+                font.pixelSize: 12
+            }
+            FieldList {
+                id: askedList
+                ui: o.ui
+                width: parent.width
+                fields: stage.asked
+                values: o.values
+                readOnly: o.model.settingsChecking
+                onAccepted: o.submit()
             }
         }
     }

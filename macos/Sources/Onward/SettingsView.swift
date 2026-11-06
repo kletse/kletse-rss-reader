@@ -1,6 +1,6 @@
 // The server details, in two places. `SettingsWindow` is the app's Settings window, beside the reader; `OnboardingView`
-// is first run in the main window: what it offers, and the same fields at Connect. The fields, their help and all of
-// first run's words come from the table in src/providers.rs.
+// is first run in the main window: what it offers, and Connect, which starts from an address and shows what the core
+// says that server needs. The fields, their help and all of first run's words come from the table in src/providers.rs.
 // A feed server is required (Miniflux, or a Google Reader API server such as FreshRSS), Readeck optional. Saving
 // checks both servers before anything is written, which is why these have a Save button where most Mac settings
 // apply as you go.
@@ -52,6 +52,10 @@ struct SettingsWindow: View {
         TabView {
             Tab("Feed Server", systemImage: "antenna.radiowaves.left.and.right") {
                 pane(settings) {
+                    Section {
+                        Button(settings?.findServer ?? "") { model.findServer() }
+                            .disabled(settings?.checking == true)
+                    }
                     FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
                 }
             }
@@ -134,7 +138,7 @@ struct OnboardingView: View {
             if let onboarding {
                 switch onboarding.step {
                 case "connect":
-                    connect(onboarding.words, settings)
+                    connect(onboarding.words, onboarding.connect, settings)
                 case "no_server":
                     noServer(onboarding.words.noServer, cursor: onboarding.cursor, settings)
                 default:
@@ -151,12 +155,24 @@ struct OnboardingView: View {
             focusFields()
         }
         .onChange(of: onboarding?.step) { focusFields() }
+        .onChange(of: onboarding?.connect.stage) { focusFields() }
+        .onChange(of: onboarding?.connect.fields.map(\.key)) { focusFields() }
+        // Typing asks nothing of a server: it only makes what was found, or is on its way, out of date.
+        .onChange(of: values[field: "address"]) { _, address in model.addressEdited(address) }
     }
 
-    /// Connect's first field, once it's there. Anywhere else no field may keep the keyboard.
+    /// What Connect has just put on screen. Anywhere else no field may keep the keyboard.
     private func focusFields() {
-        let connecting = model.state?.onboarding?.step == "connect"
-        focus = connecting ? firstField(values, model.state?.settings?.providers ?? []) : nil
+        guard let connect = model.state?.onboarding?.connect, model.state?.onboarding?.step == "connect" else {
+            focus = nil
+            return
+        }
+        if connect.stage == "by_hand" {
+            focus = firstField(values, model.state?.settings?.providers ?? [])
+        } else {
+            let asked = connect.fields.first { values[field: $0.key].isEmpty } ?? connect.fields.last
+            focus = asked?.key ?? "address"
+        }
     }
 
     private func heading(_ title: String, _ text: String, logo: Bool = false) -> some View {
@@ -211,19 +227,52 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder
-    private func connect(_ words: FirstRunWords, _ settings: SettingsInfo?) -> some View {
+    private func connect(_ words: FirstRunWords, _ view: ConnectInfo, _ settings: SettingsInfo?) -> some View {
         let checking = settings?.checking == true
-        heading(words.connectTitle, words.connectText)
+        let byHand = view.stage == "by_hand"
+        heading(words.connectTitle, byHand ? words.byHandText : words.connectText)
         MessageSection(settings?.problem, systemImage: "exclamationmark.triangle.fill")
-        FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
+        if byHand {
+            FeedServerSections(model: model, providers: settings?.providers ?? [], values: $values, focus: $focus)
+        } else {
+            Section {
+                FieldRow(field: words.address, values: $values, focus: $focus)
+                    .disabled(checking)
+                if !view.text.isEmpty { Text(verbatim: view.text) }
+                ForEach(view.fields) {
+                    FieldRow(field: $0, values: $values, focus: $focus)
+                        .disabled(checking)
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !view.note.isEmpty { Text(verbatim: view.note) }
+                    ForEach(([words.address] + view.fields).filter { !$0.help.isEmpty }) { Text(verbatim: $0.help) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
         MessageSection(settings?.error, systemImage: "xmark.octagon.fill")
+        Section {
+            ForEach(Array(view.rows.enumerated()), id: \.offset) { index, row in
+                Button(row.label) { model.chooseOnboarding(index) }
+                    .help(row.url ?? "")
+                    .disabled(checking)
+            }
+            // By hand, the form's footer has it.
+            if !byHand {
+                ShownLink(model: model)
+            }
+        }
         HStack {
+            if view.probing {
+                ProgressView().controlSize(.small)
+            }
             Spacer()
             Button("Back") { model.key("Escape") }
                 .disabled(checking)
-            Button(checking ? "Checking…" : "Connect") { model.submitSettings(values) }
+            Button(checking ? "Checking…" : view.probing ? "Looking…" : view.action) { model.submitSettings(values) }
                 .keyboardShortcut(.defaultAction)
-                .disabled(checking)
+                .disabled(checking || view.probing)
         }
     }
 }

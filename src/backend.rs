@@ -3,9 +3,11 @@
 //! back as an `Outcome`. In demo mode (`ONWARD_DEMO=1`, or the first screen's "Try it with sample articles") it serves
 //! the built-in sample data and never touches a server.
 
-use crate::app::{Effect, Outcome, Saved, SettingsValues, Status};
+use crate::app::{Effect, Login, Outcome, SaveFailed, Saved, SettingsValues, Status};
 use crate::config;
+use crate::dates;
 use crate::demo;
+use crate::detect::{self, Detected};
 use crate::error::{Error, RedirectRefused};
 use crate::feeds::{Capabilities, EntryPage, EntryStatus, Selection};
 use crate::greader;
@@ -20,6 +22,8 @@ use std::time::Duration;
 
 /// As many as reqwest's own policy follows.
 const MAX_REDIRECTS: usize = 10;
+/// Per request. A real server answers these at once.
+const DETECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Backend {
     /// Where the config file is, or `None` with no home directory at all.
@@ -32,6 +36,8 @@ pub struct Backend {
     /// login and which stream each feed id stands for. A new config drops it.
     server: Mutex<Option<Arc<Server>>>,
     http: reqwest::Client,
+    /// See `detection_client`.
+    detection: reqwest::Client,
     /// For images, wherever they live: nothing we sign in with goes through it.
     #[cfg(feature = "tui")]
     images: reqwest::Client,
@@ -73,6 +79,16 @@ pub(crate) fn api_client() -> reqwest::Client {
         }
     });
     client().redirect(policy).build().expect("the HTTP client only needs built-in TLS roots")
+}
+
+/// For finding out what's at an address, and for trading a password for a key: it follows no redirect at all, so that
+/// neither ever reaches a sign-in gate, and gives up sooner, as someone's waiting at the address box.
+pub(crate) fn detection_client() -> reqwest::Client {
+    client()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(DETECTION_TIMEOUT)
+        .build()
+        .expect("the HTTP client only needs built-in TLS roots")
 }
 
 /// The same host and port and scheme, or the same host going from http to https, on whichever port. Back from https
@@ -121,6 +137,7 @@ impl Backend {
             problem: RwLock::new(problem),
             server: Mutex::new(None),
             http,
+            detection: detection_client(),
             #[cfg(feature = "tui")]
             images: client().build().expect("the HTTP client only needs built-in TLS roots"),
             demo: AtomicBool::new(demo),
@@ -175,6 +192,7 @@ impl Backend {
             greader_password: greader.password,
             readeck_url: readeck.url,
             readeck_token: readeck.token,
+            ..SettingsValues::default()
         }
     }
 
@@ -459,7 +477,18 @@ impl Backend {
                 values: self.settings(),
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
-            Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
+            Effect::SaveSettings(values) => {
+                Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(|e| SaveFailed {
+                    login_rejected: matches!(e, Error::LoginRejected),
+                    message: e.message(),
+                }))
+            }
+            Effect::Probe { probe, address } => {
+                let found =
+                    if self.demo() { Detected::Samples } else { detect::probe(&self.detection, &address).await };
+                Outcome::Probed { probe, found }
+            }
+            Effect::MintKey(login) => Outcome::KeyMinted { probe: login.probe, result: self.mint_key(&login).await },
             Effect::UseSamples(on) => {
                 self.set_demo(on);
                 Outcome::SamplesSwitched { on, status: self.status() }
@@ -470,6 +499,14 @@ impl Backend {
 
     async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), Error> {
         self.server()?.set_status(ids, status).await
+    }
+
+    /// A key named for when it was made: Miniflux refuses a description it has seen, and people sign in more than once.
+    async fn mint_key(&self, login: &Login) -> Result<String, miniflux::MintFailed> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        let made = dates::rfc3339_utc(i64::try_from(now.as_millis()).unwrap_or(i64::MAX));
+        let description = format!("Onward {made}");
+        miniflux::mint_key(&self.detection, &login.base, &login.username, &login.password, &description).await
     }
 }
 
@@ -608,11 +645,11 @@ mod tests {
         }
     }
 
-    async fn save(values: SettingsValues) -> Result<Saved, String> {
+    async fn save(values: SettingsValues) -> Result<Saved, SaveFailed> {
         let backend = Backend::unconfigured(true);
         match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
             Some(Outcome::SettingsSaved(result)) => result,
-            _ => Err("no answer".into()),
+            _ => Err(SaveFailed { message: "no answer".into(), login_rejected: false }),
         }
     }
 
@@ -790,19 +827,35 @@ mod tests {
     #[tokio::test]
     async fn settings_need_a_real_miniflux_url() {
         let err = save(values("miniflux.example.com", "", "")).await.err();
-        assert_eq!(err.as_deref(), Some("miniflux.example.com is not a valid URL"));
+        assert_eq!(err.map(|e| e.message).as_deref(), Some("miniflux.example.com is not a valid URL"));
     }
 
     #[tokio::test]
     async fn a_google_reader_server_needs_all_three_fields_and_a_real_url() {
         let err = save(greader_values("https://rss.example.com/api/greader.php", "")).await.err();
-        assert_eq!(err.as_deref(), Some("The Google Reader API server needs a URL, a username and a password."));
+        assert_eq!(
+            err.map(|e| e.message).as_deref(),
+            Some("The Google Reader API server needs a URL, a username and a password.")
+        );
         let err = save(greader_values("rss.example.com", "pw")).await.err();
-        assert_eq!(err.as_deref(), Some("rss.example.com is not a valid URL"));
+        assert_eq!(err.map(|e| e.message).as_deref(), Some("rss.example.com is not a valid URL"));
         // Half a Miniflux setup next to it, left over in the hidden fields, doesn't stand in the way.
         let mut values = greader_values("https://rss.example.com/api/greader.php", "pw");
         values.miniflux_url = "https://m.example.com".into();
         assert!(save(values).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_turned_down_login_says_so_beside_the_words() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/accounts/ClientLogin")).respond_with(ResponseTemplate::new(401)).mount(&server).await;
+        let backend = Backend::unconfigured(false);
+        let answer = backend.run(Effect::SaveSettings(SettingsValuesBox(greader_values(&server.uri(), "wrong")))).await;
+        let Some(Outcome::SettingsSaved(Err(failed))) = answer else { panic!("the save went through") };
+        assert!(failed.login_rejected);
+        assert_eq!(failed.message, greader::LOGIN_REJECTED);
     }
 
     #[tokio::test]

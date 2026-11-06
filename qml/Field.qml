@@ -9,6 +9,7 @@ Column {
     property string label
     property string placeholder
     property bool secret: false
+    property alias readOnly: input.readOnly
     property alias text: input.text
     property alias input: input
     signal accepted()

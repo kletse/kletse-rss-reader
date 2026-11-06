@@ -9,7 +9,7 @@
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
-use crate::app::{App, Effect, KeyPress, Outcome, Overlay, PickerList, ToastKind};
+use crate::app::{App, ConnectView, Effect, KeyPress, Outcome, Overlay, PickerList, ToastKind};
 use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
@@ -99,6 +99,8 @@ pub struct Core {
     /// Whether the settings form on screen was filled in from the loaded values yet.
     settings_shown: bool,
     settings_serial: u64,
+    /// The refill it was last filled in from.
+    settings_refill: u64,
 }
 
 impl std::fmt::Debug for Core {
@@ -162,6 +164,12 @@ enum Command {
     ChooseOnboarding {
         row: usize,
     },
+    /// The address box changed.
+    AddressEdited {
+        text: String,
+    },
+    /// Settings' way to the address box.
+    FindServer,
     /// The search box's Enter.
     Search {
         query: String,
@@ -290,6 +298,7 @@ struct Onboarding {
     /// The row the arrows are on.
     cursor: usize,
     words: FirstRun,
+    connect: ConnectView,
 }
 
 #[derive(Serialize)]
@@ -297,10 +306,13 @@ struct Settings {
     /// What the form offers.
     providers: &'static [Provider],
     readeck_fields: &'static [Field],
+    /// What the button that leads to the address box says.
+    find_server: &'static str,
     problem: String,
     error: String,
     checking: bool,
-    /// Bumped when `values` is sent: the form fills in from them once, then keeps what is typed.
+    /// Bumped when `values` is sent: the form fills in from them once, then keeps what is typed, until the core has
+    /// something to take back.
     serial: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     values: Option<Values>,
@@ -345,6 +357,7 @@ impl Core {
             article_serial: 0,
             settings_shown: false,
             settings_serial: 0,
+            settings_refill: 0,
         }
     }
 
@@ -387,6 +400,11 @@ impl Core {
             Command::SubmitSettings { server, fields } => self.app.submit_fields(&server, &fields),
             Command::CancelSettings => self.app.cancel_settings(),
             Command::ChooseOnboarding { row } => self.app.choose_onboarding(row),
+            Command::AddressEdited { text } => {
+                self.app.address_edited(&text);
+                Vec::new()
+            }
+            Command::FindServer => self.app.find_server(),
             Command::Search { query } => self.app.search(&query),
             Command::CancelSearch => {
                 self.app.cancel_search();
@@ -524,6 +542,7 @@ impl Core {
                 step: app.step().name(),
                 cursor: app.step_cursor(),
                 words: FIRST_RUN,
+                connect: app.connect_view(),
             }),
             article,
             picker: Picker {
@@ -602,14 +621,18 @@ impl Core {
             self.settings_shown = false;
             return None;
         };
-        // The form starts from the loaded values once; after that the window keeps what is typed.
-        let values = (!self.settings_shown).then(|| Values {
+        // The form starts from the loaded values once; after that the window keeps what is typed, until the core has
+        // something to take back.
+        let fill = !self.settings_shown || self.settings_refill != form.refill;
+        let refill = form.refill;
+        let values = fill.then(|| Values {
             server: form.values.server.name(),
             fields: FieldKey::ALL.map(|key| Value { key, value: form.values.field(key).to_string() }).into(),
         });
         let settings = Settings {
             providers: &PROVIDERS,
             readeck_fields: &READECK,
+            find_server: FIRST_RUN.find_server,
             problem: form.problem.clone().unwrap_or_default(),
             error: form.error.clone(),
             checking: form.checking,
@@ -617,6 +640,7 @@ impl Core {
             values,
         };
         self.settings_shown = true;
+        self.settings_refill = refill;
         self.settings_serial = settings.serial;
         Some(settings)
     }
@@ -663,6 +687,7 @@ pub unsafe extern "C" fn kr_free_string(reply: *mut c_char) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::app::ConnectRow;
     use std::sync::atomic::AtomicUsize;
 
     static WAKES: AtomicUsize = AtomicUsize::new(0);
@@ -686,7 +711,16 @@ mod tests {
     /// them into camelCase. An object's keys would be turned as well, hence the list of values.
     #[test]
     fn first_run_reaches_swift_as_it_expects() {
-        let onboarding = Onboarding { step: "welcome", cursor: 0, words: FIRST_RUN };
+        let connect = ConnectView {
+            stage: "address",
+            text: "t".into(),
+            note: "n".into(),
+            fields: PROVIDERS[0].asks.to_vec(),
+            rows: vec![ConnectRow { label: "l".into(), url: Some("u".into()) }],
+            action: "Continue",
+            probing: false,
+        };
+        let onboarding = Onboarding { step: "welcome", cursor: 0, words: FIRST_RUN, connect };
         let json = serde_json::to_value(&onboarding).unwrap();
         for path in [
             "/step",
@@ -696,7 +730,18 @@ mod tests {
             "/words/welcome/2/quiet",
             "/words/connect_title",
             "/words/connect_text",
+            "/words/by_hand_text",
+            "/words/address/key",
+            "/words/address/label",
             "/words/no_server/title",
+            "/connect/stage",
+            "/connect/text",
+            "/connect/note",
+            "/connect/fields/1/secret",
+            "/connect/rows/0/label",
+            "/connect/rows/0/url",
+            "/connect/action",
+            "/connect/probing",
             "/words/no_server/text",
             "/words/no_server/offers/0/price",
             "/words/no_server/offers/1/link/url",
@@ -723,6 +768,9 @@ mod tests {
         assert_eq!((server.as_str(), fields["greader_url"].as_str()), ("greader", "u"));
         let choose = r#"{"cmd":"choose_onboarding","row":2}"#;
         assert!(matches!(serde_json::from_str(choose), Ok(Command::ChooseOnboarding { row: 2 })));
+        let edited = r#"{"cmd":"address_edited","text":"rss"}"#;
+        assert!(matches!(serde_json::from_str(edited), Ok(Command::AddressEdited { text }) if text == "rss"));
+        assert!(matches!(serde_json::from_str(r#"{"cmd":"find_server"}"#), Ok(Command::FindServer)));
     }
 
     /// The demo, through the C interface: it starts, the answers come back through `pump`, and the article's

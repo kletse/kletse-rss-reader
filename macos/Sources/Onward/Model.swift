@@ -31,6 +31,7 @@ final class Model {
         command["cmd"] = "start"
         send(command)
         Keyboard.install(model: self)
+        TitleBar.install()
         for name in [NSColor.systemColorsDidChangeNotification, NSApplication.didChangeScreenParametersNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { Model.shared.themeChanged() }

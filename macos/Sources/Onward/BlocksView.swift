@@ -130,8 +130,9 @@ struct RichText: View {
         let text = attributedForAppKit(runs, look, secondary: secondary, alignment: alignment)
         // An AppKit view has no baseline of its own, and list items line their bullet up with it.
         let font = text.length > 0 ? text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont : nil
+        let baseline = font?.ascender ?? look.size
         TextView(text: text)
-            .alignmentGuide(.firstTextBaseline) { _ in font?.ascender ?? look.size }
+            .alignmentGuide(.firstTextBaseline) { _ in baseline }
     }
 }
 

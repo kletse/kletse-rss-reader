@@ -147,6 +147,7 @@ For the README's shots (`docs/screenshots/`), add `-qwindowgeometry 1200x860` to
 `/usr/share/omarchy/themes/tokyo-night`: that keeps the real config out and gives the theme the caption names.
 Onboarding is the same without `ONWARD_DEMO`, with `ONWARD_SNAPSHOT_KEYS=" "`. The terminal shots are foot captures
 (see below), with tmux inside it to send the keys, so no real picture shows; foot's palette goes under `[colors-dark]`.
+They're Iosevka Nerd Font Mono at size 12, `pad=14x14`, at 1200 860. `site/img/terminal.webp` is `code.png` at quality 92.
 
 `ONWARD_DEBUG=1` prints, per article, what the converter dropped (inline SVG, MathML) or didn't recognise.
 

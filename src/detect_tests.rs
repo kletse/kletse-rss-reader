@@ -293,11 +293,60 @@ async fn a_plain_site_is_nothing() {
 }
 
 #[tokio::test]
-async fn a_blanket_403_ends_the_probe_at_the_first_request() {
+async fn a_blanket_403_is_blocked() {
     let server = MockServer::start().await;
     Mock::given(method("GET")).respond_with(html(403, "<h1>403 Forbidden</h1>")).mount(&server).await;
     assert_eq!(detect(&server.uri()).await, Detected::Blocked { base: server.uri() });
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_403_on_php_alone_doesnt_hide_miniflux() {
+    let server = server(vec![(CHECK, html(403, "<h1>403 Forbidden</h1>")), ("/v1/me", json(401, UNAUTHORIZED))]).await;
+    assert_eq!(detect(&server.uri()).await, Detected::Miniflux { base: server.uri(), sign_in: true });
+}
+
+#[test]
+fn the_same_page_under_the_sites_other_name_is_a_move_and_not_a_gate() {
+    let url = |u: &str| Url::parse(u).unwrap();
+    let moved = |from: &str, to: &str, path: &str| match other_name(&url(from), &url(to), path) {
+        Some(Walked::Moved(base)) => Some(base),
+        _ => None,
+    };
+    let asked = "/miniflux/v1/me";
+    let expected = Some("https://www.example.com/miniflux".to_string());
+    assert_eq!(moved("https://example.com/miniflux", "https://www.example.com/miniflux/v1/me", asked), expected);
+    assert_eq!(moved("http://example.com/miniflux", "https://www.example.com/miniflux/v1/me", asked), expected);
+    let bare = Some("https://example.com".to_string());
+    assert_eq!(moved("https://www.example.com", "https://example.com/v1/me", "/v1/me"), bare);
+
+    assert_eq!(moved("https://example.com", "https://www.example.com/login", "/v1/me"), None, "a page of its own");
+    assert_eq!(moved("https://example.com", "https://auth.example.com/v1/me", "/v1/me"), None, "another host");
+    assert_eq!(moved("https://example.com", "http://www.example.com/v1/me", "/v1/me"), None, "down to http");
+}
+
+#[tokio::test]
+async fn an_api_that_redirects_on_its_own_host_asked_for_a_sign_in() {
+    let to_sign_in = || ResponseTemplate::new(302).insert_header("Location", "/oauth2/sign_in");
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).respond_with(to_sign_in()).mount(&server).await;
+    assert_eq!(detect(&server.uri()).await, Detected::Unknown { base: server.uri(), sign_in: true });
+}
+
+#[tokio::test]
+async fn an_answer_on_https_leaves_http_to_find_the_server() {
+    let admin = server(vec![("/", html(200, SPA))]).await;
+    let miniflux = server(vec![("/v1/me", json(401, UNAUTHORIZED))]).await;
+    let address = Address { tries: vec![admin.uri(), miniflux.uri()], clear_refused: false };
+    let found = probe(&detection_client(), &address).await;
+    assert_eq!(found, Detected::Miniflux { base: miniflux.uri(), sign_in: true });
+}
+
+#[tokio::test]
+async fn with_nothing_on_http_either_the_first_answer_is_the_one_reported() {
+    let (first, second) = (server(vec![]).await, server(vec![]).await);
+    let address = Address { tries: vec![first.uri(), second.uri()], clear_refused: false };
+    let found = probe(&detection_client(), &address).await;
+    assert_eq!(found, Detected::Unknown { base: first.uri(), sign_in: false });
 }
 
 // ---- Redirects ------------------------------------------------------------------------------------------------
@@ -335,7 +384,7 @@ async fn a_redirect_on_the_same_host_is_followed_by_nothing() {
         .respond_with(ResponseTemplate::new(302).insert_header("Location", "/somewhere"))
         .mount(&server)
         .await;
-    assert_eq!(detect(&server.uri()).await, Detected::Unknown { base: server.uri(), sign_in: false });
+    assert_eq!(detect(&server.uri()).await, Detected::Unknown { base: server.uri(), sign_in: true });
     assert!(!requests(&server.received_requests().await.unwrap()).contains(&"/somewhere".to_string()));
 }
 

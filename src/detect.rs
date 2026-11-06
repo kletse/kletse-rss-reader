@@ -3,7 +3,8 @@
 //!
 //! The rules come from running these servers rather than reading about them. Nothing is decided on a status alone: a
 //! single-page site answers 200 on every path. No redirect is followed, as one to another host means a sign-in gate,
-//! and that mustn't get anything of ours. `/v1/me` goes last and isn't repeated, because on Miniflux even an empty
+//! and that mustn't get anything of ours: only the same page under the site's other name, with or without `www.`, is
+//! tried again there. `/v1/me` goes last and isn't repeated, because on Miniflux even an empty
 //! request logs a failed authentication, which fail2ban and the like count. The Google Reader header isn't a secret.
 
 use crate::error;
@@ -197,7 +198,7 @@ pub enum Detected {
         base: String,
         to: String,
     },
-    /// A 403 before anything else.
+    /// A 403 where FreshRSS would be, and nothing found anywhere else.
     Blocked {
         base: String,
     },
@@ -219,6 +220,11 @@ pub enum Detected {
 }
 
 impl Detected {
+    /// A server was recognised, so there's no need to try the address any other way.
+    fn recognised(&self) -> bool {
+        matches!(self, Detected::Miniflux { .. } | Detected::FreshRss { .. } | Detected::CantRead { .. })
+    }
+
     /// What to tell someone when there's nothing to ask them for. `None` when there is.
     pub fn problem(&self) -> Option<String> {
         Some(match self {
@@ -274,6 +280,8 @@ struct Page {
     body: String,
     /// Where it redirects to, made absolute.
     redirect: Option<Url>,
+    /// The path that was asked for.
+    path: String,
 }
 
 impl Page {
@@ -311,6 +319,7 @@ async fn fetch(http: &reqwest::Client, url: &str, freshrss: bool) -> Result<Page
     }
     let mut response = request.send().await?;
     let status = response.status();
+    let path = response.url().path().to_string();
     let location = response.headers().get(header::LOCATION).and_then(|v| v.to_str().ok());
     let redirect = location.filter(|_| status.is_redirection()).and_then(|to| response.url().join(to).ok());
     let headers = response.headers().clone();
@@ -321,25 +330,43 @@ async fn fetch(http: &reqwest::Client, url: &str, freshrss: bool) -> Result<Page
             None => break,
         }
     }
-    Ok(Page { status, headers, body: String::from_utf8_lossy(&body).into_owned(), redirect })
+    Ok(Page { status, headers, body: String::from_utf8_lossy(&body).into_owned(), redirect, path })
 }
 
 /// Where a walk ended.
 enum Walked {
     Found(Detected),
-    /// Start again on https, at this base.
-    Secure(String),
+    /// Start again at this base: the server's real address.
+    Moved(String),
 }
 
-/// What a redirect means: to another host it's a gate; to https on the same one, the server's real address. Any other
-/// is just not what was asked for, and the walk goes on.
+/// What a redirect means: to another host it's a gate, unless it's the site's other name; to https on the same one, the
+/// server's real address. Any other is just not what was asked for, and the walk goes on.
 fn redirected(base: &str, page: &Page) -> Option<Walked> {
     let (to, from) = (page.redirect.as_ref()?, Url::parse(base).ok()?);
     if from.host_str() != to.host_str() {
+        if let Some(moved) = other_name(&from, to, &page.path) {
+            return Some(moved);
+        }
         let to = to.origin().ascii_serialization();
         return Some(Walked::Found(Detected::Gate { base: base.to_string(), to }));
     }
     (from.scheme() == "http" && to.scheme() == "https").then(|| secure(&from, to.port())).flatten()
+}
+
+/// The base under the name `to` uses, when that's the same page with `www.` added or dropped. A gate goes to a page of
+/// its own, and a move from https to http isn't taken.
+fn other_name(from: &Url, to: &Url, path: &str) -> Option<Walked> {
+    let (old, new) = (from.host_str()?, to.host_str()?);
+    let renamed = old.strip_prefix("www.") == Some(new) || new.strip_prefix("www.") == Some(old);
+    if !renamed || to.path() != path || (from.scheme() == "https" && to.scheme() != "https") {
+        return None;
+    }
+    let mut base = from.clone();
+    base.set_scheme(to.scheme()).ok()?;
+    base.set_host(Some(new)).ok()?;
+    base.set_port(to.port()).ok()?;
+    Some(Walked::Moved(bare(&base)))
 }
 
 /// The base on https, on `port`.
@@ -347,7 +374,7 @@ fn secure(from: &Url, port: Option<u16>) -> Option<Walked> {
     let mut base = from.clone();
     base.set_scheme("https").ok()?;
     base.set_port(port).ok()?;
-    Some(Walked::Secure(bare(&base)))
+    Some(Walked::Moved(bare(&base)))
 }
 
 /// FreshRSS's compatibility check at `root`, by the body: an empty reply or a catch-all page is no match.
@@ -391,7 +418,7 @@ fn has_password_field(page: &Page) -> bool {
 /// may do better with; a later path that fails is only a path with nothing on it.
 async fn walk(http: &reqwest::Client, base: &str) -> Result<Walked, reqwest::Error> {
     let found = |detected| Ok(Walked::Found(detected));
-    let mut sign_in = false;
+    let (mut sign_in, mut blocked) = (false, false);
     for (n, root) in ["", "/p"].iter().enumerate() {
         let page = match fetch(http, &format!("{base}{root}{COMPATIBILITY}"), true).await {
             Ok(page) => page,
@@ -410,9 +437,8 @@ async fn walk(http: &reqwest::Client, base: &str) -> Result<Walked, reqwest::Err
         if let Some(detected) = freshrss(base, root, &page) {
             return found(detected);
         }
-        if page.status == StatusCode::FORBIDDEN && n == 0 {
-            return found(Detected::Blocked { base: base.to_string() });
-        }
+        // It may only be `.php` that's refused, so this says nothing until the rest have had their turn.
+        blocked |= page.status == StatusCode::FORBIDDEN && n == 0;
         sign_in |= page.status == StatusCode::UNAUTHORIZED;
     }
     if let Ok(page) = fetch(http, &format!("{base}/rest/server/get"), false).await {
@@ -443,9 +469,11 @@ async fn walk(http: &reqwest::Client, base: &str) -> Result<Walked, reqwest::Err
         if miniflux(&page) {
             return found(Detected::Miniflux { base: base.to_string(), sign_in: has_password });
         }
-        sign_in |= page.status == StatusCode::UNAUTHORIZED;
+        // An API has no page to send anyone to, other than a sign-in on this host.
+        sign_in |= page.status == StatusCode::UNAUTHORIZED || page.redirect.is_some();
     }
-    found(Detected::Unknown { base: base.to_string(), sign_in })
+    let base = base.to_string();
+    found(if blocked { Detected::Blocked { base } } else { Detected::Unknown { base, sign_in } })
 }
 
 /// Why a request got no answer, as someone at the address box can use it.
@@ -455,17 +483,25 @@ fn failed_because(e: &reqwest::Error) -> String {
     if why.contains("InvalidContentType") { "it doesn't speak https on that port".to_string() } else { why }
 }
 
-/// Tries the address, https first, and says what's there. It's at most five requests, and none of them repeats.
+/// Tries the address, https first, and says what's there. It's at most five requests to a base, and none of them
+/// repeats. An answer that isn't a server leaves the other tries to do better, and is what's reported if they don't.
 pub async fn probe(http: &reqwest::Client, address: &Address) -> Detected {
-    let mut failure = None;
+    let (mut failure, mut unrecognised) = (None, None);
     for base in &address.tries {
         let mut at = base.clone();
-        // One move to https, no more: a server can't keep this going.
+        // One move, no more: a server can't keep this going.
         for moved in [false, true] {
             match walk(http, &at).await {
-                Ok(Walked::Found(found)) => return found,
-                Ok(Walked::Secure(next)) if !moved => at = next,
-                Ok(Walked::Secure(_)) => return Detected::Unknown { base: at, sign_in: false },
+                Ok(Walked::Found(found)) if found.recognised() => return found,
+                Ok(Walked::Found(found)) => {
+                    unrecognised.get_or_insert(found);
+                    break;
+                }
+                Ok(Walked::Moved(next)) if !moved && !address.tries.contains(&next) => at = next,
+                Ok(Walked::Moved(_)) => {
+                    unrecognised.get_or_insert(Detected::Unknown { base: at, sign_in: false });
+                    break;
+                }
                 Err(e) if error::is_certificate(&e) => return Detected::Certificate { base: at },
                 Err(e) => {
                     failure.get_or_insert((at.clone(), failed_because(&e)));
@@ -474,8 +510,10 @@ pub async fn probe(http: &reqwest::Client, address: &Address) -> Detected {
             }
         }
     }
-    let (base, why) = failure.unwrap_or_default();
-    Detected::NoAnswer { base, why, clear_refused: address.clear_refused }
+    unrecognised.unwrap_or_else(|| {
+        let (base, why) = failure.unwrap_or_default();
+        Detected::NoAnswer { base, why, clear_refused: address.clear_refused }
+    })
 }
 
 #[cfg(test)]

@@ -107,7 +107,7 @@ impl Form {
                 std::iter::once(Focus::Field(FieldKey::Address)).chain(fields).chain(rows(view)).collect()
             }
             Some(view) => std::iter::once(Focus::Choice).chain(self.whole()).chain(rows(view)).collect(),
-            None => [Focus::Choice, Focus::Row(0)].into_iter().chain(self.whole()).collect(),
+            None => [Focus::Row(0), Focus::Choice].into_iter().chain(self.whole()).collect(),
         }
     }
 

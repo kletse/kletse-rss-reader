@@ -329,14 +329,14 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
     assert!(s.shows("● Google Reader API (FreshRSS, …)") && s.shows("Username"), "{}", s.text());
     assert!(s.shows("FreshRSS: https://your-freshrss/api/greader.php."), "the hint: {}", s.text());
     assert!(!s.shows("Miniflux URL"), "{}", s.text());
-    s.key(KeyCode::Tab).key(KeyCode::Tab);
+    s.key(KeyCode::Tab);
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::GreaderUrl));
     s.keys("x");
     let form = s.ui.form.as_ref().unwrap();
     assert!(form.text(FieldKey::GreaderUrl).ends_with('x'));
     let shown = [
-        Focus::Choice,
         Focus::Row(0),
+        Focus::Choice,
         Focus::Field(FieldKey::GreaderUrl),
         Focus::Field(FieldKey::GreaderUsername),
         Focus::Field(FieldKey::GreaderPassword),
@@ -344,7 +344,7 @@ fn the_settings_form_switches_between_miniflux_and_google_reader_fields() {
         Focus::Field(FieldKey::ReadeckToken),
     ];
     assert_eq!(form.shown(None), shown);
-    s.key(KeyCode::BackTab).key(KeyCode::BackTab).key(KeyCode::Left);
+    s.key(KeyCode::BackTab).key(KeyCode::Left);
     s.settle();
     assert!(s.shows("● Miniflux"), "{}", s.text());
 }
@@ -362,7 +362,7 @@ fn the_settings_form_takes_typing_and_keeps_secrets_dotted() {
     assert!(s.ui.form.as_ref().unwrap().text(FieldKey::ReadeckToken).ends_with("j-pasted"));
     assert!(!s.shows("j-pasted") && s.shows("••••"), "{}", s.text());
     s.key(KeyCode::Tab);
-    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Choice, "round to the top: the server choice");
+    assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Row(0), "round to the top: the way to find a server");
     s.key(KeyCode::BackTab);
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::ReadeckToken));
     s.key(KeyCode::Esc);

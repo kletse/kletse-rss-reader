@@ -3,15 +3,16 @@
 //! back as an `Outcome`. In demo mode (`ONWARD_DEMO=1`, or the first screen's "Try it with sample articles") it serves
 //! the built-in sample data and never touches a server.
 
-use crate::app::{Effect, Login, Outcome, Saved, SettingsValues, Status};
+use crate::app::{Effect, Exported, Imported, Login, Outcome, Saved, SettingsValues, Status};
 use crate::config;
 use crate::dates;
 use crate::demo;
 use crate::detect::{self, Detected};
 use crate::error::{Error, RedirectRefused};
-use crate::feeds::{Capabilities, EntryPage, EntryStatus, Selection};
+use crate::feeds::{self, Capabilities, Counts, EntryPage, EntryStatus, Selection};
 use crate::greader;
 use crate::miniflux;
+use crate::opml::{self, ExportFailed};
 use crate::paging::PageRequest;
 use crate::readeck;
 use crate::server::Server;
@@ -174,7 +175,7 @@ impl Backend {
         Status {
             configured: demo || cfg.is_complete(),
             readeck: demo || cfg.readeck.is_some(),
-            capabilities: if demo { Capabilities::EVERYTHING } else { cfg.server().capabilities() },
+            capabilities: if demo { Capabilities::SAMPLES } else { cfg.capabilities() },
         }
     }
 
@@ -488,12 +489,64 @@ impl Backend {
                 self.set_demo(on);
                 Outcome::SamplesSwitched { on, status: self.status() }
             }
-            Effect::SavePrefs(_) | Effect::ScrollPage { .. } | Effect::Quit | Effect::ShowSettings => return None,
+            Effect::ImportFeeds { job, path } => {
+                Outcome::FeedsImported { job, result: self.import_feeds(&path).await.map_err(msg) }
+            }
+            Effect::ExportFeeds { job, path, replace } => {
+                Outcome::FeedsExported { job, result: self.export_feeds(&path, replace).await }
+            }
+            Effect::SavePrefs(_)
+            | Effect::ScrollPage { .. }
+            | Effect::Quit
+            | Effect::ShowSettings
+            | Effect::ChooseFeedFile(_) => return None,
         })
     }
 
     async fn set_status(&self, ids: &[i64], status: EntryStatus) -> Result<(), Error> {
         self.server()?.set_status(ids, status).await
+    }
+
+    /// Reads the file, gives it to the server if it's OPML, then looks at what's there. Nothing that goes wrong after
+    /// the server took the file makes this fail: it did take it.
+    async fn import_feeds(&self, path: &str) -> Result<Imported, Error> {
+        let typed = path.to_string();
+        let list = blocking(move || opml::read_file(&opml::expand(&typed))).await?;
+        if self.demo() {
+            return Err(Error::Refused(feeds::SAMPLES_HAVE_NO_FEED_LIST.into()));
+        }
+        // The client stays the same for the whole of it, whatever happens to the config meanwhile.
+        let server = self.server()?;
+        let before = server.feed_counts().await.ok();
+        let articles = server.import_opml(&list.bytes).await?;
+        let after = server.feed_counts().await.ok();
+        let (added, empty) = what_arrived(before.as_ref(), after.as_ref());
+        Ok(Imported { in_file: list.feeds.len(), added, empty, private_hosts: private_hosts(&list.feeds), articles })
+    }
+
+    /// Gets the list from the server and writes it. A file that's there is found out before asking the server, and
+    /// again on writing. A server's answer goes into a file only if it's OPML with feeds in it.
+    async fn export_feeds(&self, path: &str, replace: bool) -> Result<Exported, ExportFailed> {
+        if self.demo() {
+            return Err(ExportFailed::Other(feeds::SAMPLES_HAVE_NO_FEED_LIST.into()));
+        }
+        let target = opml::expand(path);
+        let looking = target.clone();
+        let there = blocking(move || Ok(looking.symlink_metadata().is_ok())).await?;
+        if there && !replace {
+            return Err(ExportFailed::Exists(target.display().to_string()));
+        }
+        let (bytes, left_out) = self.server()?.export_opml().await?;
+        let count = opml::feeds_in(&bytes)
+            .map_err(|_| ExportFailed::Other("The server's answer wasn't an OPML file, so nothing was saved.".into()))?
+            .len();
+        if count == 0 {
+            return Err(ExportFailed::Other("There are no feeds on the server yet, so nothing was saved.".into()));
+        }
+        let path = target.display().to_string();
+        let write = move || Ok(opml::write_file(&target, &bytes, replace));
+        blocking(write).await??;
+        Ok(Exported { path, feeds: count, left_out })
     }
 
     /// A key named for when it was made: Miniflux refuses a description it has seen, and people sign in more than once.
@@ -503,6 +556,34 @@ impl Backend {
         let description = format!("Onward {made}");
         miniflux::mint_key(&self.detection, &login.base, &login.username, &login.password, &description).await
     }
+}
+
+/// Disk work, off the runtime's few workers as much as off the window's thread: a path can be on a slow disk.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, Error> + Send + 'static) -> Result<T, Error> {
+    let stopped = |e| Error::Io { context: "Could not reach the file".into(), source: std::io::Error::other(e) };
+    tokio::task::spawn_blocking(work).await.map_err(stopped)?
+}
+
+/// How many feeds are new, and the titles of those with nothing in them: all that's known if the server wouldn't say.
+/// A count the server can't give isn't taken for empty.
+fn what_arrived(before: Option<&Counts>, after: Option<&Counts>) -> (Option<usize>, Vec<String>) {
+    let (Some(before), Some(after)) = (before, after) else { return (None, Vec::new()) };
+    let known = |id: i64| before.feeds.iter().any(|f| f.feed.id == id);
+    let new: Vec<_> = after.feeds.iter().filter(|f| !known(f.feed.id)).collect();
+    let empty = new.iter().filter(|f| f.unread == Some(0) && f.read.unwrap_or(0) == 0);
+    (Some(new.len()), empty.map(|f| f.feed.title.clone()).collect())
+}
+
+/// The hosts on a private network among these feed addresses, each once.
+fn private_hosts(feeds: &[String]) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    let parsed = feeds.iter().filter_map(|url| reqwest::Url::parse(url).ok());
+    for host in parsed.filter_map(|url| url.host_str().map(str::to_string)) {
+        if detect::is_private(&host) && !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    hosts
 }
 
 /// Only web and mail links are handed to the system; anything else (file:, javascript:, …) is refused.
@@ -671,7 +752,7 @@ mod tests {
             panic!("no answer")
         };
         assert!(on && status.configured && status.readeck);
-        assert_eq!(status.capabilities, Capabilities::EVERYTHING);
+        assert_eq!(status.capabilities, Capabilities::SAMPLES);
         let Some(Outcome::FeedCounts(Ok(_))) = backend.run(Effect::FeedCounts).await else {
             panic!("sample feeds, with nothing set up")
         };
@@ -896,10 +977,7 @@ mod tests {
     #[tokio::test]
     async fn demo_mode_serves_the_sample_data() {
         let backend = Backend::unconfigured(true);
-        assert_eq!(
-            backend.status(),
-            Status { configured: true, readeck: true, capabilities: Capabilities::EVERYTHING }
-        );
+        assert_eq!(backend.status(), Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES });
         let Some(Outcome::FeedCounts(Ok(counts))) = backend.run(Effect::FeedCounts).await else {
             panic!("no feed counts");
         };
@@ -931,5 +1009,266 @@ mod tests {
         };
         assert_eq!(page.entries.iter().map(|e| e.id).collect::<Vec<_>>(), [5, 2, 1]);
         assert_eq!(newest, 0, "the starred list asks for no newest unread id");
+    }
+
+    // ---- Feed lists ----------------------------------------------------------------------------------------------
+
+    const FEEDS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0"><head><title>Mine</title></head><body>
+<outline text="News"><outline text="Alpha" xmlUrl="http://onward-spike-feeds/alpha.xml"/>
+<outline text="Beta" xmlUrl="https://example.com/beta.xml"/></outline>
+</body></opml>"#;
+
+    fn file(dir: &tempfile::TempDir, name: &str, text: &str) -> String {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path.display().to_string()
+    }
+
+    fn with_miniflux(server: &wiremock::MockServer) -> Backend {
+        let backend = Backend::unconfigured(false);
+        backend.set_config(config::Config {
+            miniflux: config::Miniflux { url: server.uri(), api_key: "k".into() },
+            ..config::Config::default()
+        });
+        backend
+    }
+
+    fn with_freshrss(server: &wiremock::MockServer) -> Backend {
+        let backend = Backend::unconfigured(false);
+        let url = format!("{}/api/greader.php", server.uri());
+        backend.set_config(config::Config {
+            server: Some(config::Server::GReader),
+            greader: Some(config::GReader { url, username: "u".into(), password: "p".into() }),
+            ..config::Config::default()
+        });
+        backend
+    }
+
+    async fn import(backend: &Backend, path: String) -> Result<Imported, String> {
+        let Some(Outcome::FeedsImported { job: 7, result }) = backend.run(Effect::ImportFeeds { job: 7, path }).await
+        else {
+            panic!("an answer to the import, with its job")
+        };
+        result
+    }
+
+    async fn export(backend: &Backend, path: String, replace: bool) -> Result<Exported, ExportFailed> {
+        let Some(Outcome::FeedsExported { result, .. }) =
+            backend.run(Effect::ExportFeeds { job: 1, path, replace }).await
+        else {
+            panic!("an answer to the export")
+        };
+        result
+    }
+
+    /// Miniflux with no feeds until `/v1/import` has run once more than the first listing.
+    async fn miniflux_that_fills(server: &wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .up_to_n_times(1)
+            .mount(server)
+            .await;
+        let category = serde_json::json!({ "id": 1, "title": "News" });
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 1, "title": "Alpha", "category": category },
+                { "id": 2, "title": "Beta", "category": category },
+            ])))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"reads":{},"unreads":{}}"#))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"total":0,"entries":[]}"#))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_miniflux_import_reports_what_it_lists_and_that_articles_are_coming() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        miniflux_that_fills(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/v1/import"))
+            .respond_with(ResponseTemplate::new(201).set_body_string(r#"{"message":"Feeds imported successfully"}"#))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/feeds/refresh"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let imported = import(&with_miniflux(&server), file(&dir, "feeds.opml", FEEDS)).await.unwrap();
+        assert_eq!(imported.in_file, 2);
+        assert_eq!(imported.added, Some(2));
+        assert_eq!(imported.articles, feeds::Articles::OnTheirWay);
+    }
+
+    #[tokio::test]
+    async fn a_freshrss_import_says_ok_and_a_feed_it_wont_fetch_is_still_reported_empty() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let api = "/api/greader.php/reader/api/0";
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Auth=token\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{api}/subscription/import")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{api}/subscription/list")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"subscriptions":[]}"#))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let folder = serde_json::json!([{ "id": "user/-/label/News", "label": "News" }]);
+        Mock::given(method("GET"))
+            .and(path(format!("{api}/subscription/list")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "subscriptions": [
+                { "id": "feed/1", "title": "Alpha", "categories": folder },
+                { "id": "feed/2", "title": "Beta", "categories": folder },
+            ]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{api}/unread-count")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "max": 150, "unreadcounts": [
+                { "id": "feed/2", "count": 4 },
+            ]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{api}/stream/items/ids")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"itemRefs":[]}"#))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let imported = import(&with_freshrss(&server), file(&dir, "feeds.opml", FEEDS)).await.unwrap();
+        assert_eq!(imported.added, Some(2));
+        assert_eq!(imported.empty, ["Alpha"], "OK said nothing about this one");
+        assert_eq!(imported.private_hosts, ["onward-spike-feeds"]);
+        assert_eq!(imported.articles, feeds::Articles::Fetched);
+    }
+
+    #[tokio::test]
+    async fn a_file_that_isnt_opml_never_reaches_the_server() {
+        let server = wiremock::MockServer::start().await;
+        let backend = with_miniflux(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let bad = file(&dir, "feed.xml", "<rss version=\"2.0\"><channel/></rss>");
+        assert!(import(&backend, bad).await.unwrap_err().contains("single feed"));
+        let missing = dir.path().join("gone.opml").display().to_string();
+        assert_eq!(import(&backend, missing.clone()).await.unwrap_err(), format!("There's no file at {missing}."));
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_samples_import_and_export_nothing_and_say_so() {
+        let backend = Backend::unconfigured(true);
+        let dir = tempfile::tempdir().unwrap();
+        let said = import(&backend, file(&dir, "feeds.opml", FEEDS)).await.unwrap_err();
+        assert_eq!(said, feeds::SAMPLES_HAVE_NO_FEED_LIST);
+        let target = dir.path().join("out.opml");
+        let result = export(&backend, target.display().to_string(), false).await;
+        assert_eq!(result.unwrap_err(), ExportFailed::Other(feeds::SAMPLES_HAVE_NO_FEED_LIST.into()));
+        assert!(!target.exists());
+    }
+
+    async fn serves_export(server: &wiremock::MockServer, body: &str) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("GET"))
+            .and(path("/v1/export"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn an_export_lands_in_its_file_and_replaces_one_only_when_told() {
+        let server = wiremock::MockServer::start().await;
+        serves_export(&server, FEEDS).await;
+        let backend = with_miniflux(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("feeds.opml");
+        let path = target.display().to_string();
+
+        let done = export(&backend, path.clone(), false).await.unwrap();
+        assert_eq!(done, Exported { path: path.clone(), feeds: 2, left_out: 0 });
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), FEEDS);
+
+        std::fs::write(&target, "mine").unwrap();
+        let asked = server.received_requests().await.unwrap().len();
+        assert_eq!(export(&backend, path.clone(), false).await.unwrap_err(), ExportFailed::Exists(path.clone()));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "mine");
+        assert_eq!(server.received_requests().await.unwrap().len(), asked, "no need to ask the server");
+
+        export(&backend, path, true).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), FEEDS);
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_isnt_opml_or_has_no_feeds_goes_in_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("feeds.opml");
+        for (body, says) in [
+            ("[]", "wasn't an OPML file"),
+            (r#"<opml version="2.0"><body><outline text="Uncategorized"/></body></opml>"#, "no feeds on the server"),
+        ] {
+            let server = wiremock::MockServer::start().await;
+            serves_export(&server, body).await;
+            let result = export(&with_miniflux(&server), target.display().to_string(), false).await;
+            let Err(ExportFailed::Other(said)) = result else { panic!("{result:?}") };
+            assert!(said.contains(says), "{said}");
+            assert!(!target.exists());
+        }
+    }
+
+    #[test]
+    fn what_arrived_counts_only_whats_new_and_doesnt_guess() {
+        let count = |id, title: &str, unread| feeds::FeedCount {
+            feed: feeds::Feed { id, title: title.into(), category: feeds::Category { id: 0, title: String::new() } },
+            unread,
+            read: None,
+        };
+        let counts = |feeds| Counts { feeds, starred: None };
+        let before = counts(vec![count(1, "Old and empty", Some(0))]);
+        let after = counts(vec![
+            count(1, "Old and empty", Some(0)),
+            count(2, "New and empty", Some(0)),
+            count(3, "New with some", Some(3)),
+            count(4, "Can't say", None),
+        ]);
+        let (added, empty) = what_arrived(Some(&before), Some(&after));
+        assert_eq!((added, empty.as_slice()), (Some(3), &["New and empty".to_string()][..]));
+        assert_eq!(what_arrived(None, Some(&after)), (None, Vec::new()));
+        assert_eq!(what_arrived(Some(&before), None), (None, Vec::new()));
+    }
+
+    #[test]
+    fn private_hosts_are_named_once_and_public_ones_not_at_all() {
+        let feeds = ["http://feeds.lan/a", "http://feeds.lan/b", "http://192.168.1.2/c", "https://example.com/d", "x"];
+        let feeds = feeds.map(String::from);
+        assert_eq!(private_hosts(&feeds), ["feeds.lan", "192.168.1.2"]);
     }
 }

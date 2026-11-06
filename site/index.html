@@ -374,6 +374,7 @@ cargo install --path . --no-default-features --features tui --locked</pre></div>
       <section class="way">
         <h3>First run</h3>
         <p>The first screen offers three things. <strong>Try it with sample articles</strong> needs no account and no network: nothing is marked read, and the next start is a fresh one. <strong>Connect</strong> starts from your server’s address, even a short one, works out what’s there, and asks only for what it needs, checking it before saving anything: for Miniflux your username and password, once, to get a key of its own, and for FreshRSS your username and API password. And if you have no server, <a href="/no-server/">here’s what to do</a>.</p>
+        <p>Leaving another reader? An account with no feeds offers to import an OPML file, and <kbd>i</kbd> does so at any time: Onward checks the file, gives it to your server and says what arrived. <kbd>e</kbd> saves your feeds to one. Both work on Miniflux and FreshRSS.</p>
       </section>
 
       <p class="small">Not in scope, at least for now: managing feeds (use your server’s web interface), offline reading and notifications.</p>
@@ -412,6 +413,7 @@ cargo install --path . --no-default-features --features tui --locked</pre></div>
     <dt>s</dt><dd>oldest or newest first</dd>
     <dt>g / p / Tab</dt><dd>feeds picker</dd>
     <dt>r</dt><dd>refresh feeds</dd>
+    <dt>i / e</dt><dd>import or export feeds, in the picker</dd>
     <dt>h</dt><dd>history: read items, newest first</dd>
     <dt>Space</dt><dd>scroll; at the end, next</dd>
     <dt>Ctrl + / −</dt><dd>font size (⌘ on a Mac)</dd>

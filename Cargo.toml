@@ -58,6 +58,7 @@ ego-tree = "0.11" # the node type scraper hands out
 url = "2"
 base64 = "0.22"
 percent-encoding = "2"
+quick-xml = "0.42" # OPML; syntect brings it in anyway
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]

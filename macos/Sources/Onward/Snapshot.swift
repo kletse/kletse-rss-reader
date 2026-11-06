@@ -22,7 +22,11 @@ enum Snapshot {
             }
             for key in keys {
                 try? await Task.sleep(for: .milliseconds(400))
-                model.key(key == "Space" ? " " : key)
+                if key.hasPrefix("file:") {
+                    model.feedFile(String(key.dropFirst(5)))
+                } else {
+                    model.key(key == "Space" ? " " : key)
+                }
             }
             try? await Task.sleep(for: .seconds(3))
             save(to: path)

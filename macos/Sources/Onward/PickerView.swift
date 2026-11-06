@@ -14,6 +14,14 @@ struct PickerView: View {
             HStack(spacing: 8) {
                 modeSwitch(history)
                 Spacer()
+                if model.state?.capabilities.importFeeds == true {
+                    Button { model.press("import") } label: { Image(systemName: "square.and.arrow.down") }
+                        .help("Import feeds from an OPML file (i)")
+                }
+                if model.state?.capabilities.exportFeeds == true {
+                    Button { model.press("export") } label: { Image(systemName: "square.and.arrow.up") }
+                        .help("Export feeds to an OPML file (e)")
+                }
                 if model.state?.capabilities.refresh != false {
                     Button { model.press("refresh") } label: { Image(systemName: "arrow.clockwise") }
                         .help("Refresh feeds (r)")
@@ -33,6 +41,13 @@ struct PickerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14)
+                // An empty account's way forward.
+                if picker?.state == "ready", picker?.offersImport == true {
+                    Button("Import Feeds…") { model.press("import") }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding([.horizontal, .bottom], 14)
+                }
             }
             Divider()
             footer(picker, history: history)
@@ -121,10 +136,7 @@ struct PickerView: View {
     private func message(_ picker: PickerInfo?) -> String {
         switch picker?.state {
         case "error": return picker?.error ?? ""
-        case "ready":
-            if picker?.history == true { return "Nothing read yet. Press h for unread items." }
-            return model.state?.capabilities.refresh == false ? "Nothing unread. Press h for history."
-                : "Nothing unread. Press r to refresh, or h for history."
+        case "ready": return picker?.emptyText ?? ""
         default: return "Loading…"
         }
     }
@@ -188,6 +200,40 @@ struct SearchView: View {
             query = model.state?.searchQuery ?? ""
             focused = true
         }
+    }
+}
+
+/// Importing or exporting a feed list: what the core says, and a button that brings up the system's panel. Esc and a
+/// click beside it close this, and leave what's running to finish.
+struct TransferPanel: View {
+    let model: Model
+    let transfer: TransferInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(transfer.title).font(.headline)
+            Text(transfer.text)
+                .foregroundStyle(transfer.stage == "done" ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .fixedSize(horizontal: false, vertical: true)
+            if !transfer.error.isEmpty {
+                Text(transfer.error)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if transfer.stage == "working" {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                Button(transfer.stage == "asking" ? "Cancel" : "Close") { model.cancelTransfer() }
+                if transfer.stage == "asking" {
+                    Button(transfer.action) { model.transferAction() }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(20)
+        .frame(idealWidth: 440, maxWidth: 440)
     }
 }
 

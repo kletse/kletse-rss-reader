@@ -76,6 +76,8 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>s</kbd>                                                                 | Unread items oldest first or newest first (remembered)                                                           |
 | <kbd>g</kbd> / <kbd>p</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd> / <kbd>←</kbd> | Feeds & categories picker (all but <kbd>←</kbd> also close it)                                                   |
 | <kbd>r</kbd>                                                                 | Refresh all feeds (in the picker)                                                                                |
+| <kbd>i</kbd>                                                                 | Import feeds from an OPML file (in the picker)                                                                   |
+| <kbd>e</kbd>                                                                 | Export feeds to an OPML file (in the picker)                                                                     |
 | <kbd>h</kbd>                                                                 | Switch between unread and history (read items, newest first)                                                     |
 | <kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>−</kbd>                                  | Article font size; the column width scales with it (remembered)                                                  |
 | <kbd>[</kbd> / <kbd>]</kbd>                                                  | Narrower / wider column (remembered)                                                                             |
@@ -86,7 +88,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 
 On macOS the modifier is <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>.
 
-The picker lists **All unread**, then **Starred**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
+The picker lists **All unread**, then **Starred**, then each category with its feeds underneath, with unread counts. Anything with nothing unread is hidden. Move with <kbd>j</kbd>/<kbd>k</kbd> and open with <kbd>Enter</kbd>, <kbd>→</kbd> or <kbd>o</kbd>. The logo at the top left opens it too, and its buttons do what the keys do: **Unread** and **History**, import, export, refresh and search at the top; the order, the keys and the settings at the bottom. Items load a page at a time as you read, so even a long **All unread** opens straight away; the top bar still counts all of them.
 
 Press <kbd>Shift</kbd>+<kbd>A</kbd> in the picker to mark the selected feed or category read without opening it. It asks first, and, as in the reader, leaves alone what arrives after it counted.
 
@@ -208,6 +210,23 @@ Connecting checks everything against your server before saving, so nothing wrong
 
 Later, **Settings** has the same form, to edit directly, and **Find my server by its address** to go through this again.
 
+### Bring your feeds
+
+If you're leaving another reader, export an OPML file from it. An account with no feeds offers to import one, and <kbd>i</kbd> in the picker does so at any time; the buttons at the top of the picker do the same. Windows use the system's file dialog. The terminal takes a path, with `~` for your home folder, and over SSH that's a file on the machine Onward runs on.
+
+Onward checks that the file is OPML, and says what's wrong if it isn't, before anything goes to your server. Your server then subscribes to what's in the file. Afterwards Onward says what it found on the server, not just that the server said OK:
+
+| Server | Importing | Exporting |
+| ------ | --------- | --------- |
+| **Miniflux** | Onward also tells it to fetch, or there'd be no articles for up to an hour. They arrive in the list over the next moments. | Yes |
+| **FreshRSS** | It fetches every feed before it answers, so a long list can take minutes. You can close the panel and keep reading: Onward says when it's done. | Yes |
+| **Miniflux's Google Reader integration** | No: connect to it with its address instead, or add feeds on its page. | Yes, made from its list of feeds |
+| **Sample articles** | No: they have no server behind them, and Onward says so. | No |
+
+Both servers refuse to fetch a feed on a private address (`localhost`, your own network, a `.lan` name) until they're told they may, and both take the file regardless: FreshRSS says OK and the feed stays empty, and Miniflux lists it with an error only its own page shows. On FreshRSS, allow it in its System configuration or with `INTERNAL_HOST_ALLOWLIST`. On Miniflux, set `FETCHER_ALLOW_PRIVATE_NETWORKS`. Onward names what it can see: on FreshRSS the feeds that came in empty, and on Miniflux the private hosts in the file. Importing a file twice adds nothing twice, on either server.
+
+<kbd>e</kbd> saves the server's feeds to an OPML file. If there's a file by that name already, Onward asks before replacing it. The file is readable by you alone, as a feed's address can carry a private token.
+
 Readeck is optional, and lives in **Settings**, which is **Settings** in the feeds picker, or <kbd>,</kbd>. It needs a URL and an API token (in Readeck: Profile → API Tokens, with the **Bookmarks: write** permission). Leave both empty and the bookmark button is hidden. It never stops the feed server being saved: if its details fail, a message says why, and the Readeck you had stays.
 
 The settings are stored in `~/.config/onward/config.toml` on Linux and `~/Library/Application Support/onward/config.toml` on macOS (mode `600`), which you can also edit by hand:
@@ -238,6 +257,7 @@ password = "…"     # FreshRSS: the API password, not the one you log in with
 - <kbd>f</kbd> (fetch the full article) and <kbd>r</kbd> (refresh the feeds) only say they aren't available; the server refreshes feeds on its own schedule.
 - <kbd>/</kbd> doesn't work: neither FreshRSS nor Miniflux's integration offers search through this API, and the app says so.
 - History has no read counts, so the picker lists every feed there without a number.
+- Importing feeds works with FreshRSS only (see [Bring your feeds](#bring-your-feeds)). Onward knows FreshRSS by `greader.php` at the end of its address.
 - “Oldest first” is the order the server keeps: when items arrived on FreshRSS, when they were published on Miniflux.
 - Miniflux's integration can't list a category's items (open its feeds one at a time) or give unread counts, and history per feed may show unread items left out.
 
@@ -259,7 +279,7 @@ You need Rust and Qt 6 (see [Install](#install)); `qmake6` (or `qmake`) must be 
 
 **Agents and contributors:** [AGENTS.md](AGENTS.md) has the practical side: how to see the QML's errors, take screenshots without a window, and the traps found so far.
 
-CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and a smoke test that renders several screens of the demo and of first run offscreen with every QML warning made fatal.
+CI runs fmt, clippy and the tests on Arch Linux and macOS, a `cargo audit`, and a smoke test that renders several screens of the demo, of first run and of importing feeds offscreen with every QML warning made fatal.
 
 **Releasing:** bump the version in `Cargo.toml` (then `cargo build`, to update `Cargo.lock`) and `packaging/PKGBUILD`; `packaging/check-version.sh` (also run by CI and `release.sh`) checks they agree. Push it to `main`, write the notes, and run `packaging/release.sh NOTES.md`. It creates a draft release and pushes the tag; GitHub Actions (`release.yml`) builds the Arch package and the Linux binary on a native x86_64 runner and attaches them, and the script publishes the release once that build succeeds. It needs `gh`. Releases have no macOS app; Mac users build from source. To build the Linux downloads locally without releasing, run `packaging/build-linux-docker.sh` (Docker).
 
@@ -291,6 +311,7 @@ src/
   moved.rs           moves the kletse-rss folders to onward on first use
   demo.rs            sample data, for the first screen and ONWARD_DEMO=1
   detect.rs          the forgiving address box, and what's at that address
+  opml.rs            OPML files: checked before sending, read, written and made from a list
   providers.rs       the kinds of server, their fields and first run's words, which the windows draw from
 qml/                 the window: Main, TopBar, Reader, Article, Blocks, RichText, Picker, Help, Confirm, Toast, Settings, Onboarding, ServerForm
 macos/               the Mac app: SwiftUI over the same core

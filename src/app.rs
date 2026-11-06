@@ -16,10 +16,11 @@
 use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
 use crate::detect::{Address, Api, Detected};
-use crate::feeds::{self, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
+use crate::feeds::{self, Articles, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
 use crate::greader;
 use crate::keys::{self, Action};
 use crate::miniflux::MintFailed;
+use crate::opml::ExportFailed;
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
 use crate::picker::{self, PickerItem};
 use crate::prefs::{Colours, Prefs};
@@ -49,6 +50,8 @@ pub enum Overlay {
     Search,
     /// An article's images, one at a time, over the whole window.
     Image,
+    /// Importing or exporting a feed list.
+    Transfer,
 }
 
 impl Overlay {
@@ -63,6 +66,7 @@ impl Overlay {
             Overlay::Onboarding => "onboarding",
             Overlay::Search => "search",
             Overlay::Image => "image",
+            Overlay::Transfer => "transfer",
         }
     }
 }
@@ -169,6 +173,190 @@ impl Step {
             Step::Welcome => "welcome",
             Step::Connect => "connect",
             Step::NoServer => "no_server",
+        }
+    }
+}
+
+/// Which way a feed list goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedFile {
+    Import,
+    Export,
+}
+
+impl FeedFile {
+    /// As the windows name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            FeedFile::Import => "import",
+            FeedFile::Export => "export",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransferStage {
+    /// Waiting for a file, from a window's dialog or the terminal's field, with what went wrong with the last one.
+    Asking { error: String },
+    /// A task has it. It can't be stopped, so closing the panel leaves it running and its answer still counts.
+    Working,
+    Done {
+        report: String,
+        /// The server is still fetching articles: the list changes for a while yet.
+        articles_coming: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Transfer {
+    file: FeedFile,
+    stage: TransferStage,
+}
+
+/// The import and export panel as the windows draw it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TransferView {
+    /// "import" or "export".
+    pub kind: &'static str,
+    /// "asking", "working" or "done".
+    pub stage: &'static str,
+    pub title: &'static str,
+    pub text: String,
+    pub error: String,
+    /// What the main button says, while asking.
+    pub action: &'static str,
+    /// What to call the file, where one is being made.
+    pub suggested: &'static str,
+}
+
+/// What a server did with a feed list. The server's own "OK" says little: FreshRSS gives it for feeds it will never
+/// fetch, so this comes from comparing what it lists before and after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Imported {
+    pub in_file: usize,
+    /// How many feeds it lists now that it didn't, when it could be asked.
+    pub added: Option<usize>,
+    /// The titles of those with nothing in them.
+    pub empty: Vec<String>,
+    /// Hosts in the file on a private network, which neither server fetches unless it's told to.
+    pub private_hosts: Vec<String>,
+    pub articles: Articles,
+}
+
+/// An export that's in its file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exported {
+    pub path: String,
+    pub feeds: usize,
+    /// Feeds the server gave no address for.
+    pub left_out: usize,
+}
+
+/// How an import or export ended well enough to report.
+struct Finished {
+    report: String,
+    /// See `TransferStage::Done`.
+    articles_coming: bool,
+    /// Something in the report needs reading.
+    worrying: bool,
+}
+
+/// "1 feed", "12 feeds".
+fn feeds_word(count: usize) -> String {
+    format!("{count} feed{}", if count == 1 { "" } else { "s" })
+}
+
+/// Up to three of them, and how many more.
+fn some_of(titles: &[String]) -> String {
+    const NAMED: usize = 3;
+    let named = titles.iter().take(NAMED).map(String::as_str).collect::<Vec<_>>().join(", ");
+    match titles.len().saturating_sub(NAMED) {
+        0 => named,
+        more => format!("{named} and {more} more"),
+    }
+}
+
+impl Imported {
+    /// Not everything came through, or it can't be told whether it did.
+    fn worrying(&self) -> bool {
+        self.added.is_none()
+            || !self.empty.is_empty()
+            || !self.private_hosts.is_empty()
+            || matches!(self.articles, Articles::NotAsked(_))
+    }
+
+    /// In plain words, claiming only what was seen.
+    fn report(&self) -> String {
+        let n = self.in_file;
+        let arrived = match self.added {
+            None => format!(
+                "The server took the file, with {}, but Onward couldn't get the list back to see what arrived.",
+                feeds_word(n)
+            ),
+            Some(0) => format!("Nothing new: the server already has the {} in the file, or left them out.", n),
+            Some(added) if added >= n => format!("{} added.", feeds_word(added)),
+            Some(added) => {
+                format!("{added} of the {n} feeds in the file added. The server had the rest, or left them out.")
+            }
+        };
+        let articles = match &self.articles {
+            Articles::OnTheirWay if self.added == Some(0) => String::new(),
+            Articles::OnTheirWay => format!(
+                "The server was told to fetch their articles, which show in the list as they arrive.{}",
+                self.miniflux_wont_fetch()
+            ),
+            Articles::NotAsked(why) => format!(
+                "Onward couldn't ask the server to fetch them ({why}), so articles come with its next refresh.{}",
+                self.miniflux_wont_fetch()
+            ),
+            Articles::Fetched => self.what_stayed_empty(),
+        };
+        if articles.is_empty() { arrived } else { format!("{arrived} {articles}") }
+    }
+
+    /// Miniflux takes these as it takes any feed, and refuses to fetch them later, where only its own page shows it.
+    /// Whether it's been told otherwise can't be seen from here.
+    fn miniflux_wont_fetch(&self) -> String {
+        if self.private_hosts.is_empty() {
+            return String::new();
+        }
+        let hosts = some_of(&self.private_hosts);
+        format!(" Feeds on {hosts} stay empty unless Miniflux has FETCHER_ALLOW_PRIVATE_NETWORKS set.")
+    }
+
+    fn what_stayed_empty(&self) -> String {
+        let hosts = if self.private_hosts.is_empty() {
+            String::new()
+        } else {
+            format!(" such as {}", some_of(&self.private_hosts))
+        };
+        let allowlist = format!(
+            "FreshRSS only fetches a private address{hosts} if that's allowed in its System configuration or \
+             INTERNAL_HOST_ALLOWLIST"
+        );
+        match (self.empty.len(), self.added) {
+            (0, Some(_)) => String::new(),
+            (0, None) => format!("{allowlist}."),
+            (1, _) => format!(
+                "No articles from {} yet. {allowlist}; otherwise the feed may be down, and FreshRSS's own page \
+                 says why.",
+                self.empty[0]
+            ),
+            (empty, _) => format!(
+                "No articles yet from {empty} of them: {}. {allowlist}; otherwise a feed may be down, and \
+                 FreshRSS's own page says why.",
+                some_of(&self.empty)
+            ),
+        }
+    }
+}
+
+impl Exported {
+    fn report(&self) -> String {
+        let saved = format!("Saved {} to {}.", feeds_word(self.feeds), self.path);
+        match self.left_out {
+            0 => saved,
+            n => format!("{saved} {} left out, as the server gave no address for them.", feeds_word(n)),
         }
     }
 }
@@ -425,6 +613,20 @@ pub enum Effect {
     },
     /// Trades a Miniflux password for a key, once.
     MintKey(Login),
+    /// A window's file dialog: the answer comes back through `App::feed_file`.
+    ChooseFeedFile(FeedFile),
+    /// Reads a file, checks it, gives it to the server and looks at what arrived. `job` is compared when the answer
+    /// comes, as tasks can't be stopped.
+    ImportFeeds {
+        job: u64,
+        path: String,
+    },
+    /// Gets the server's list and writes it to a file, over one that's there only with `replace`.
+    ExportFeeds {
+        job: u64,
+        path: String,
+        replace: bool,
+    },
     SavePrefs(Prefs),
     ScrollPage {
         up: bool,
@@ -533,6 +735,14 @@ pub enum Outcome {
         probe: u64,
         result: Result<String, MintFailed>,
     },
+    FeedsImported {
+        job: u64,
+        result: Result<Imported, String>,
+    },
+    FeedsExported {
+        job: u64,
+        result: Result<Exported, ExportFailed>,
+    },
     /// The backend switched, and this is what it has now.
     SamplesSwitched {
         on: bool,
@@ -565,8 +775,21 @@ pub struct KeyPress {
 /// What a confirmed dialog goes on to do.
 #[derive(Debug, Clone)]
 enum Pending {
-    MarkAll { load: u64, selection: Selection, up_to: i64, later: Vec<i64> },
-    MarkRow { selection: Selection, label: String, up_to: i64 },
+    MarkAll {
+        load: u64,
+        selection: Selection,
+        up_to: i64,
+        later: Vec<i64>,
+    },
+    MarkRow {
+        selection: Selection,
+        label: String,
+        up_to: i64,
+    },
+    /// An export onto a file that's there.
+    ReplaceFile {
+        path: String,
+    },
 }
 
 /// Both versions of an article whose full text was fetched this session, so `f` can switch back.
@@ -627,6 +850,11 @@ pub struct App {
     /// The form lives in a window of its own: it takes no keys and doesn't replace the article.
     settings_in_window: bool,
     settings_window_open: bool,
+    /// An import or export, from the panel opening until it's closed on the result.
+    transfer: Option<Transfer>,
+    before_transfer: Overlay,
+    /// A change of server makes an import or export in flight a no-op: each remembers this and compares.
+    latest_transfer: u64,
     /// See `Step`; means nothing outside `Overlay::Onboarding`.
     step: Step,
     /// How far `Step::Connect` has got.
@@ -690,6 +918,9 @@ impl App {
             settings: None,
             settings_in_window: false,
             settings_window_open: false,
+            transfer: None,
+            before_transfer: Overlay::None,
+            latest_transfer: 0,
             step: Step::Welcome,
             connect: Connect::default(),
             latest_probe: 0,
@@ -802,6 +1033,57 @@ impl App {
 
     pub fn picker_list(&self) -> &PickerList {
         &self.picker_list
+    }
+
+    /// The account has no feeds at all, as far as the picker knows.
+    fn no_feeds(&self) -> bool {
+        matches!(&self.picker_list, PickerList::Ready(counts) if counts.feeds.is_empty())
+    }
+
+    /// The picker's empty account leads to importing, where the server can.
+    pub fn offers_import(&self) -> bool {
+        self.no_feeds() && self.capabilities.import_feeds
+    }
+
+    /// What the picker says when it has no rows to show.
+    pub fn picker_empty_text(&self) -> String {
+        if self.offers_import() {
+            "No feeds here yet. Leaving another reader? Export an OPML file from it, and press i to import that.".into()
+        } else if self.no_feeds() {
+            format!("No feeds here yet. {} Until then, add feeds on the server's own page.", feeds::IMPORT_REFUSED)
+        } else if self.picker_mode == Mode::History {
+            "Nothing read yet. Press h for unread items.".into()
+        } else if self.capabilities.refresh {
+            "Nothing unread. Press r to refresh, or h for history.".into()
+        } else {
+            "Nothing unread. Press h for history.".into()
+        }
+    }
+
+    /// The import or export panel, for as long as there's something to say: also behind the question about a file
+    /// that's there, which the terminal's field must survive.
+    pub fn transfer_view(&self) -> Option<TransferView> {
+        let transfer = self.transfer.as_ref()?;
+        let import = transfer.file == FeedFile::Import;
+        let (title, words, working) = if import {
+            (providers::IMPORT_TITLE, providers::IMPORT_TEXT, providers::IMPORT_WORKING)
+        } else {
+            (providers::EXPORT_TITLE, providers::EXPORT_TEXT, providers::EXPORT_WORKING)
+        };
+        let (stage, text, error) = match &transfer.stage {
+            TransferStage::Asking { error } => ("asking", words, error.clone()),
+            TransferStage::Working => ("working", working, String::new()),
+            TransferStage::Done { report, .. } => ("done", report.as_str(), String::new()),
+        };
+        Some(TransferView {
+            kind: transfer.file.name(),
+            stage,
+            title,
+            text: text.to_string(),
+            error,
+            action: if import { providers::IMPORT_ACTION } else { providers::EXPORT_ACTION },
+            suggested: providers::EXPORT_NAME,
+        })
     }
 
     pub fn picker_cursor(&self) -> usize {
@@ -1710,7 +1992,149 @@ impl App {
             Some(Pending::MarkRow { selection, label, up_to }) if yes => {
                 fx.push(Effect::MarkRowRead { selection, label, up_to });
             }
+            Some(Pending::ReplaceFile { path }) if yes => fx.extend(self.start_transfer(path, true)),
             _ => {}
+        }
+    }
+
+    // ---- Feed lists --------------------------------------------------------
+
+    /// `i` or `e`, or a button: the panel, or the one that's busy. What the server can't do, it says so and goes no
+    /// further, and in the samples there's no server for it to be done on.
+    fn open_transfer(&mut self, file: FeedFile) {
+        if self.capabilities.samples {
+            return self.toast_info(feeds::SAMPLES_HAVE_NO_FEED_LIST);
+        }
+        match file {
+            FeedFile::Import if !self.capabilities.import_feeds => return self.toast_info(feeds::IMPORT_REFUSED),
+            FeedFile::Export if !self.capabilities.export_feeds => return self.toast_info(feeds::EXPORT_REFUSED),
+            _ => {}
+        }
+        if self.overlay != Overlay::Transfer {
+            let reading = self.overlay == Overlay::None && !self.queue.is_empty();
+            self.before_transfer = if reading { Overlay::None } else { Overlay::Picker };
+            self.overlay = Overlay::Transfer;
+        }
+        if self.transfer.as_ref().is_none_or(|t| t.stage != TransferStage::Working) {
+            self.transfer = Some(Transfer { file, stage: TransferStage::Asking { error: String::new() } });
+        }
+    }
+
+    fn start_transfer(&mut self, path: String, replace: bool) -> Option<Effect> {
+        let transfer = self.transfer.as_mut()?;
+        transfer.stage = TransferStage::Working;
+        let job = self.latest_transfer;
+        Some(match transfer.file {
+            FeedFile::Import => Effect::ImportFeeds { job, path },
+            FeedFile::Export => Effect::ExportFeeds { job, path, replace },
+        })
+    }
+
+    /// The file a window's dialog or the terminal's field came up with. `replace` says a dialog asked about a file
+    /// that's there already.
+    pub fn feed_file(&mut self, path: &str, replace: bool) -> Vec<Effect> {
+        let Some(transfer) = self.transfer.as_mut() else { return Vec::new() };
+        if !matches!(transfer.stage, TransferStage::Asking { .. }) {
+            return Vec::new();
+        }
+        if path.trim().is_empty() {
+            transfer.stage = TransferStage::Asking { error: "Type the path of a file first.".into() };
+            return Vec::new();
+        }
+        self.start_transfer(path.to_string(), replace).into_iter().collect()
+    }
+
+    /// The panel's main button, or Enter: choosing a file while it's asking, and closing it once it's done.
+    pub fn transfer_action(&mut self) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        match self.transfer.as_ref() {
+            Some(Transfer { file, stage: TransferStage::Asking { .. } }) => fx.push(Effect::ChooseFeedFile(*file)),
+            Some(Transfer { stage: TransferStage::Done { .. }, .. }) => self.close_transfer(&mut fx),
+            _ => {}
+        }
+        fx
+    }
+
+    /// Esc, or a click beside it. Work under way isn't stopped by this: it couldn't be, and it's nearly always better
+    /// for it to finish. Its answer comes as a toast.
+    pub fn cancel_transfer(&mut self) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        self.close_transfer(&mut fx);
+        fx
+    }
+
+    fn close_transfer(&mut self, fx: &mut Vec<Effect>) {
+        if self.overlay != Overlay::Transfer {
+            return;
+        }
+        self.overlay = self.before_transfer;
+        let working = self.transfer.as_ref().is_some_and(|t| t.stage == TransferStage::Working);
+        let done = if working { None } else { self.transfer.take() };
+        if self.overlay == Overlay::Picker {
+            self.load_picker(fx);
+            if let Some(Transfer { stage: TransferStage::Done { articles_coming: true, .. }, .. }) = done {
+                fx.extend(REFRESH_RELOAD_MS.map(|millis| Effect::ReloadPickerAfter { millis }));
+            }
+        }
+    }
+
+    /// The server changed: what's on its way is about the old one, and nothing of the panel carries over.
+    fn forget_transfer(&mut self) {
+        self.latest_transfer += 1;
+        self.transfer = None;
+    }
+
+    /// An import or export ended. With the panel up it says so there; closed, in a toast, which stays up to be read if
+    /// there's something to act on: that part of a report is why it's there.
+    fn transfer_done(&mut self, result: Result<Finished, String>, fx: &mut Vec<Effect>) {
+        let Some(transfer) = self.transfer.as_mut() else { return };
+        let shown = self.overlay == Overlay::Transfer;
+        match result {
+            Ok(Finished { report, articles_coming, .. }) if shown => {
+                transfer.stage = TransferStage::Done { report, articles_coming };
+            }
+            Err(error) if shown => transfer.stage = TransferStage::Asking { error },
+            Ok(Finished { report, articles_coming, worrying }) => {
+                self.transfer = None;
+                let kind = if worrying { ToastKind::Error } else { ToastKind::Info };
+                self.show_toast(report, kind);
+                if self.overlay == Overlay::Picker {
+                    self.load_picker(fx);
+                    if articles_coming {
+                        fx.extend(REFRESH_RELOAD_MS.map(|millis| Effect::ReloadPickerAfter { millis }));
+                    }
+                }
+            }
+            Err(error) => {
+                self.transfer = None;
+                self.toast_error(error);
+            }
+        }
+    }
+
+    fn feeds_imported(&mut self, result: Result<Imported, String>, fx: &mut Vec<Effect>) {
+        let result = result.map(|imported| {
+            let articles_coming = imported.articles == Articles::OnTheirWay && imported.added != Some(0);
+            Finished { report: imported.report(), articles_coming, worrying: imported.worrying() }
+        });
+        self.transfer_done(result, fx);
+    }
+
+    fn feeds_exported(&mut self, result: Result<Exported, ExportFailed>, fx: &mut Vec<Effect>) {
+        match result {
+            Ok(exported) => {
+                let finished =
+                    Finished { report: exported.report(), articles_coming: false, worrying: exported.left_out > 0 };
+                self.transfer_done(Ok(finished), fx);
+            }
+            Err(ExportFailed::Other(message)) => self.transfer_done(Err(message), fx),
+            Err(ExportFailed::Exists(path)) if self.overlay == Overlay::Transfer => {
+                if let Some(transfer) = self.transfer.as_mut() {
+                    transfer.stage = TransferStage::Asking { error: String::new() };
+                }
+                self.confirm(format!("{path} is already there. Replace it?"), Pending::ReplaceFile { path });
+            }
+            Err(ExportFailed::Exists(path)) => self.transfer_done(Err(format!("{path} is already there.")), fx),
         }
     }
 
@@ -1745,6 +2169,7 @@ impl App {
             self.announce_saved(&saved, first_run);
             // The server may have changed: start from the picker with a fresh queue.
             self.settings = None;
+            self.forget_transfer();
             self.clear_queue();
             self.picker_list = PickerList::Loading;
             self.open_picker(None, fx);
@@ -2245,6 +2670,7 @@ impl App {
         fresh.settings_in_window = self.settings_in_window;
         fresh.latest_load = self.latest_load + 1;
         fresh.latest_probe = self.latest_probe + 1;
+        fresh.latest_transfer = self.latest_transfer + 1;
         fresh.toast_serial = self.toast_serial;
         *self = fresh;
         self.overlay = Overlay::Onboarding;
@@ -2315,6 +2741,14 @@ impl App {
             }
             Overlay::Image => {
                 return !(press.ctrl || press.alt || press.meta) && self.viewer_key(key, fx);
+            }
+            Overlay::Transfer => {
+                match key {
+                    "Escape" => self.close_transfer(fx),
+                    "Enter" => fx.extend(self.transfer_action()),
+                    _ => return false,
+                }
+                return true;
             }
             Overlay::Picker | Overlay::None => {}
         }
@@ -2415,6 +2849,8 @@ impl App {
             Action::Settings => self.open_settings(false, fx),
             Action::PickerMove(delta) => self.move_picker(delta),
             Action::PickerChoose => self.choose(None, fx),
+            Action::ImportFeeds => self.open_transfer(FeedFile::Import),
+            Action::ExportFeeds => self.open_transfer(FeedFile::Export),
             Action::PickerRefresh if !self.capabilities.refresh => self.toast_info(feeds::REFRESH_REFUSED),
             Action::PickerRefresh => {
                 self.toast_info("Refreshing feeds…");
@@ -2497,6 +2933,16 @@ impl App {
             Outcome::KeyMinted { probe, result } => {
                 if probe == self.latest_probe {
                     self.key_minted(result, &mut fx);
+                }
+            }
+            Outcome::FeedsImported { job, result } => {
+                if job == self.latest_transfer {
+                    self.feeds_imported(result, &mut fx);
+                }
+            }
+            Outcome::FeedsExported { job, result } => {
+                if job == self.latest_transfer {
+                    self.feeds_exported(result, &mut fx);
                 }
             }
             Outcome::SamplesSwitched { on, status } => {

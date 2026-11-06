@@ -6,6 +6,8 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 #[cfg(feature = "qt")]
 const QML: &[&str] = &[
     "qml/Main.qml",
+    "qml/Transfer.qml",
+    "qml/FeedFileDialog.qml",
     "qml/TopBar.qml",
     "qml/Reader.qml",
     "qml/Article.qml",

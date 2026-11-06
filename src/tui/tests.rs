@@ -131,6 +131,13 @@ impl Screenful {
         self
     }
 
+    /// Pastes `text`, as a terminal does.
+    fn paste(&mut self, text: &str) -> &mut Self {
+        self.ui.paste(text);
+        self.settle();
+        self
+    }
+
     fn keys(&mut self, keys: &str) -> &mut Self {
         for c in keys.chars() {
             let modifiers = if c.is_uppercase() { KeyModifiers::SHIFT } else { KeyModifiers::NONE };
@@ -1127,4 +1134,100 @@ fn nothing_breaks_in_a_tiny_terminal() {
         );
         s.keys("x");
     }
+}
+
+/// The picker, with a server behind it as far as the core knows: the demo's backend still reads the file first.
+fn can_transfer(width: u16, height: u16) -> Screenful {
+    Screenful::new(width, height)
+}
+
+#[test]
+fn a_path_takes_the_place_of_a_file_dialog_and_a_missing_file_says_so() {
+    for (width, height) in [(100, 32), (80, 24)] {
+        let mut s = can_transfer(width, height);
+        s.keys("i");
+        assert_eq!(s.ui.app.overlay(), Overlay::Transfer);
+        assert!(s.shows("Import feeds"), "{}", s.text());
+        assert!(s.shows("Path to the file"), "{}", s.text());
+        assert!(s.shows("Enter to go on"), "{}", s.text());
+
+        s.keys("/no/such");
+        s.paste("/feeds.opml\n");
+        s.key(KeyCode::Enter);
+        assert!(s.shows("There's no file at /no/such/feeds.opml."), "{}", s.text());
+        assert!(s.shows("/no/such/feeds.opml"), "the path stays, to be put right");
+
+        s.key(KeyCode::Esc);
+        assert_eq!(s.ui.app.overlay(), Overlay::Picker);
+        assert!(s.ui.transfer_path.is_none());
+    }
+}
+
+#[test]
+fn typing_a_path_presses_no_keys_of_the_app() {
+    let mut s = can_transfer(100, 32);
+    s.keys("i");
+    s.keys("jqh,?");
+    assert_eq!(s.ui.app.overlay(), Overlay::Transfer);
+    assert_eq!(s.ui.transfer_path.as_ref().unwrap().text(), "jqh,?");
+    assert!(!s.ui.quitting());
+}
+
+#[test]
+fn an_empty_field_says_what_it_wants() {
+    let mut s = can_transfer(100, 32);
+    s.keys("i").key(KeyCode::Enter);
+    assert!(s.shows("Type the path of a file first."), "{}", s.text());
+}
+
+#[test]
+fn an_export_starts_from_a_name_in_your_home() {
+    let mut s = can_transfer(100, 32);
+    s.keys("e");
+    assert_eq!(s.ui.transfer_path.as_ref().unwrap().text(), "~/onward-feeds.opml");
+    assert!(s.shows("Export feeds"), "{}", s.text());
+}
+
+#[test]
+fn a_tilde_is_your_home_all_the_way_to_the_error() {
+    let mut s = can_transfer(100, 32);
+    s.keys("i~/onward-no-such-file.opml").key(KeyCode::Enter);
+    let home = dirs::home_dir().unwrap();
+    let expected = format!("There's no file at {}", home.join("onward-no-such-file.opml").display());
+    assert!(s.text().replace('\n', " ").contains(&expected[..30]), "{}", s.text());
+}
+
+#[test]
+fn a_good_file_on_the_samples_is_read_and_goes_nowhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("feeds.opml");
+    std::fs::write(&path, r#"<opml version="2.0"><body><outline xmlUrl="https://a.example/f"/></body></opml>"#)
+        .unwrap();
+    let mut s = can_transfer(100, 32);
+    s.keys("i").paste(&path.display().to_string());
+    s.key(KeyCode::Enter);
+    assert!(s.shows("These are sample articles"), "{}", s.text());
+}
+
+#[test]
+fn the_samples_keep_their_keys_and_say_why_nothing_happens() {
+    let status = Status { configured: true, readeck: true, capabilities: Capabilities::SAMPLES };
+    let mut s = Screenful::starting(100, 32, status);
+    s.keys("i");
+    assert_eq!(s.ui.app.overlay(), Overlay::Picker);
+    assert!(s.shows("These are sample articles"), "{}", s.text());
+}
+
+#[test]
+fn a_click_beside_the_panel_closes_it() {
+    let mut s = can_transfer(100, 32);
+    s.keys("i");
+    s.ui.mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+    s.settle();
+    assert_eq!(s.ui.app.overlay(), Overlay::Picker);
 }

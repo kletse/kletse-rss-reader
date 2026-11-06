@@ -9,7 +9,7 @@
 
 #![allow(unsafe_code)] // the C interface: pointers Swift hands over
 
-use crate::app::{App, ConnectView, Effect, KeyPress, Outcome, Overlay, PickerList, ToastKind};
+use crate::app::{App, ConnectView, Effect, FeedFile, KeyPress, Outcome, Overlay, PickerList, ToastKind, TransferView};
 use crate::backend::Backend;
 use crate::content::{convert, native};
 use crate::feeds::Capabilities;
@@ -181,6 +181,16 @@ enum Command {
     },
     /// A click in the image viewer.
     CloseViewer,
+    /// The import and export panel's main button, the same as Enter.
+    TransferAction,
+    /// Its Cancel or Close, or a click beside it.
+    CancelTransfer,
+    /// What an open or save panel came up with. A save panel has asked about a file that's there, so it says `replace`.
+    FeedFile {
+        path: String,
+        #[serde(default)]
+        replace: bool,
+    },
     DismissToast {
         serial: u64,
     },
@@ -192,7 +202,7 @@ enum Command {
 struct Reply {
     /// Whether a key was used; Swift passes unused ones on (⌘Q, typing in a field).
     used: bool,
-    /// "scroll_up", "scroll_down", "quit".
+    /// "scroll_up", "scroll_down", "quit", "show_settings", "choose_import_file", "choose_export_file".
     events: Vec<&'static str>,
     state: State,
 }
@@ -231,6 +241,8 @@ struct State {
     prefetch_images: Vec<String>,
     help: Vec<(String, String)>,
     confirm_text: String,
+    /// Importing or exporting a feed list.
+    transfer: Option<TransferView>,
     toast: Option<ToastState>,
     settings: Option<Settings>,
     font_size: i32,
@@ -264,6 +276,9 @@ struct Picker {
     history: bool,
     /// Unread items come newest first.
     newest_first: bool,
+    /// What it says with no rows, and whether it then offers to import.
+    empty_text: String,
+    offers_import: bool,
 }
 
 #[derive(Serialize)]
@@ -418,6 +433,9 @@ impl Core {
                 self.app.close_viewer();
                 Vec::new()
             }
+            Command::TransferAction => self.app.transfer_action(),
+            Command::CancelTransfer => self.app.cancel_transfer(),
+            Command::FeedFile { path, replace } => self.app.feed_file(&path, replace),
             Command::DismissToast { serial } => {
                 self.app.dismiss_toast(serial);
                 Vec::new()
@@ -454,6 +472,8 @@ impl Core {
                 Effect::ScrollPage { up } => events.push(if up { "scroll_up" } else { "scroll_down" }),
                 Effect::Quit => events.push("quit"),
                 Effect::ShowSettings => events.push("show_settings"),
+                Effect::ChooseFeedFile(FeedFile::Import) => events.push("choose_import_file"),
+                Effect::ChooseFeedFile(FeedFile::Export) => events.push("choose_export_file"),
                 effect => {
                     let backend = Arc::clone(&self.backend);
                     let answers = self.answers.clone();
@@ -552,6 +572,8 @@ impl Core {
                 cursor: app.picker_cursor(),
                 history: app.picker_mode() == Mode::History,
                 newest_first: app.newest_first(),
+                empty_text: app.picker_empty_text(),
+                offers_import: app.offers_import(),
             },
             search_query: app.search_query().to_string(),
             viewer: app.viewer().map(|v| {
@@ -567,6 +589,7 @@ impl Core {
             prefetch_images: self.prefetch_images.clone(),
             help: app.help_lines(),
             confirm_text: app.confirm_text().to_string(),
+            transfer: app.transfer_view(),
             toast: app.toast().map(|t| ToastState {
                 message: t.message.clone(),
                 error: t.kind == ToastKind::Error,

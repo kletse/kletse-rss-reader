@@ -41,6 +41,22 @@ and how to build it is in the [README](README.md).
   run, and has no marker and no way to Connect, for UI work. In the samples `Action::Settings` means leave them, into
   Connect: a save there would go nowhere. `leave_samples` starts from a new `App`, so a field added later is left behind
   too; only `latest_load` and the like carry over. Prefs aren't saved in the samples, and go back when you leave.
+- **Feed lists are `Overlay::Transfer`** with `Transfer` in app.rs (`TransferStage`: Asking, Working, Done), drawn from
+  `App::transfer_view()`. `src/opml.rs` holds the file side: `read_file` checks before anything goes out, `write_file`
+  never replaces unless told (`replace`, or it's `ExportFailed::Exists`, which the core turns into a question; the Mac's
+  save panel asks by itself, so it sends `replace`). The backend does the reading and writing, off the window's thread.
+- **A route goes by the kind of server, never by what it answers** (`Server::import_opml`, `export_opml`). Miniflux's
+  integration answers FreshRSS's export route with 200 and `[]`. Config records only the protocol, so FreshRSS is known by
+  `greader.php` at the end of its URL (`GReader::is_freshrss`), which every working config has, however old, and needs no
+  request. `Config::capabilities` is the kind's, plus that; call it rather than `Server::capabilities`.
+  The server's "OK" proves little: `Imported` comes from comparing `feed_counts` before and after. Both servers take a feed
+  on a private host and never fetch it (FreshRSS without `INTERNAL_HOST_ALLOWLIST`, Miniflux 2.3.5 without
+  `FETCHER_ALLOW_PRIVATE_NETWORKS`), so running either against a local feed server needs that set. Miniflux has no articles until `PUT /v1/feeds/refresh`, which
+  `Server::import_opml` calls. FreshRSS imports inline and can pass the 30 s every other call gets, hence
+  `IMPORT_TIMEOUT`, and a timeout there is "may still be working", not a failure.
+- **An import can't be stopped, and doesn't need to be.** Esc closes the panel and `Working` stays: its answer becomes a
+  toast. A change of server bumps `latest_transfer`, as `latest_load` does for loads, so an old answer is a no-op; the
+  client the task holds is the old server's, so its refresh goes to the right place too.
 - **`src/bridge.rs` is the only QObject.** It runs effects on a tokio runtime, queues the outcomes back onto the
   Qt thread (`qt_thread().queue`), and after every change `sync()` copies state into properties. Setters only
   notify on a real change, so syncing everything each time is fine. The article is re-rendered only when its id,
@@ -128,6 +144,9 @@ space as `Space`). It then waits 3 s for images, saves the window to the PNG and
 `" "` (the picker itself), `"Enter ?"` (help), `"Enter ,"` (settings), `"Enter A"` (confirm), `"h Enter"`
 (history), `"Enter n n n n n n n n"` (all caught up; the demo has 8 unread), `"Enter /"` (the search box),
 `"Enter v"` (the image viewer; the first demo article has an image), `"Enter n p A"` (marking a picker row read), `"j j j Enter j"` (the end of a feed, with where j goes next), `"Enter *"` (a starred article), `"j Enter"` (the Starred list; the demo starts with two starred, in memory).
+Importing needs a server, as the samples have none to import into: `.github/fake-server.py` plays one, on a `config.toml`
+naming it. `"i"` (the panel), `"i file:/tmp/feeds.opml"` (`file:` is what the file dialog would hand over), `"i Enter"` (the
+dialog: Qt makes its own on the offscreen platform, over the window, so the PNG doesn't show it and a QML warning would).
 First run works the same with `XDG_CONFIG_HOME` and `XDG_STATE_HOME` on an empty folder and no `ONWARD_DEMO`: `" "` (the first
 screen), `"ArrowDown Enter"` (Connect), `"ArrowDown Enter row:0"` (the whole form), `"ArrowUp Enter"` (no server), `"ArrowUp
 Enter Enter"` (a link opened; that does run `xdg-open`, so empty the `PATH`), `"Enter Enter"` (a sample article, with the
@@ -260,6 +279,8 @@ Traps here:
 - **Don't call `Terminal::clear`.** It asks the terminal for the cursor position, and the answer can't get past the
   thread blocked in `event::read`, which holds crossterm's lock: a 2 s stall, then an error that ends the app. Use
   `repaint` in `mod.rs`. `Terminal::resize` is fine.
+- **The path field lives on `Ui`, not in the core**, like the search box. `transfer_view()` keeps it through the question
+  about a file that's there, so the path survives a no.
 - **Mouse reporting is what stops the wheel marking articles read.** Without it terminals send the wheel as ↑ and ↓ on
   the alternate screen, and ↓ is "next, mark read". A test holds this in place.
 - **`Picker::from_query_stdio` must run before the reader thread, and not under tmux.** Under tmux it runs
@@ -300,6 +321,8 @@ Traps here:
   toolbar (`.toolbar(removing: .title)`); the article's heading is right below.
 - **Connect's address box is told to the core on every change** (`.onChange` on the value in `OnboardingView`), as Qt's
   `onEdited` does: that's what makes an answer about the old address out of date.
+- **An open or save panel is one more window whose keys aren't the core's** (`Keyboard.filePanel`): Enter there would
+  otherwise reach the core and ask for another panel.
 - **A field editor doesn't mean typing.** A click on `.textSelection(.enabled)` text makes an `NSTextView` field
   editor the first responder, a read-only one. `Keyboard.typing` also asks `isEditable`, or every key stops working
   until something else takes the focus.

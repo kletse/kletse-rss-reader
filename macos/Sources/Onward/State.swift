@@ -43,6 +43,8 @@ struct AppState: Decodable {
     /// `[keys, action]` pairs.
     let help: [[String]]
     let confirmText: String
+    /// Importing or exporting a feed list.
+    let transfer: TransferInfo?
     let toast: ToastInfo?
     let settings: SettingsInfo?
     let fontSize: Int
@@ -72,6 +74,23 @@ struct Capabilities: Decodable {
     let fetchFull: Bool
     /// Refreshes the feeds (r).
     let refresh: Bool
+    /// Takes an OPML file (i).
+    let importFeeds: Bool
+    /// Gives one (e).
+    let exportFeeds: Bool
+}
+
+/// The import and export panel (`app::TransferView`).
+struct TransferInfo: Decodable {
+    /// "asking", "working" or "done".
+    let stage: String
+    let title: String
+    let text: String
+    let error: String
+    /// What the main button says, while asking.
+    let action: String
+    /// What to call the file, where one is being made.
+    let suggested: String
 }
 
 struct PickerInfo: Decodable {
@@ -83,6 +102,9 @@ struct PickerInfo: Decodable {
     let history: Bool
     /// Unread items come newest first.
     let newestFirst: Bool
+    /// What it says with no rows, and whether it then offers to import.
+    let emptyText: String
+    let offersImport: Bool
 }
 
 /// The image viewer: the image on screen, the link it's in, and where it is among the article's images.

@@ -43,6 +43,10 @@ struct OnwardApp: App {
                 Button("Feeds (p)") { Model.shared.press("picker") }
                 Button("History (h)") { Model.shared.key("h") }
                 Button("Mark Whole List Read (Shift+A)") { Model.shared.key("A") }
+                Button("Import Feeds… (i)") { Model.shared.press("import") }
+                    .disabled(Model.shared.state?.capabilities.importFeeds != true)
+                Button("Export Feeds… (e)") { Model.shared.press("export") }
+                    .disabled(Model.shared.state?.capabilities.exportFeeds != true)
                 Divider()
                 Button("Search… (/)") { Model.shared.press("search") }
                 Button("View Images (v)") { Model.shared.key("v") }

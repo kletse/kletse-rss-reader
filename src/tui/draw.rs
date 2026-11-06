@@ -34,6 +34,7 @@ pub fn draw(ui: &mut Ui, frame: &mut Frame) {
         Overlay::Search => search(ui, frame, area),
         Overlay::Help => help(ui, frame, area),
         Overlay::Confirm => confirm(ui, frame, area),
+        Overlay::Transfer => transfer(ui, frame, area),
         _ => {}
     }
     toast(ui, frame, area);
@@ -487,19 +488,17 @@ fn picker(ui: &mut Ui, frame: &mut Frame, area: Rect) {
         PickerList::Loading => Some(("Loading…".to_string(), DIM)),
         PickerList::Error(message) => Some((message.clone(), ERROR)),
         PickerList::Ready(_) if !items.is_empty() => None,
-        PickerList::Ready(_) if history => Some(("Nothing read yet. Press h for unread items.".to_string(), DIM)),
-        PickerList::Ready(_) if ui.app.capabilities().refresh => {
-            Some(("Nothing unread. Press r to refresh, or h for history.".to_string(), DIM))
-        }
-        PickerList::Ready(_) => Some(("Nothing unread. Press h for history.".to_string(), DIM)),
+        PickerList::Ready(_) => Some((ui.app.picker_empty_text(), DIM)),
     };
     let order = if ui.app.newest_first() { "Newest first" } else { "Oldest first" };
     let swap = if history { "h unread" } else { "h history" };
     let refresh = if ui.app.capabilities().refresh { " · r refresh" } else { "" };
     let settings = if ui.app.samples() { "connect" } else { "settings" };
+    // With nothing to search, the way to fill the list has its place. `?` lists both keys all the time.
+    let search = if ui.app.offers_import() { "i import" } else { "/ search" };
     let mut block = Block::bordered()
         .title(Line::styled(if history { " History " } else { " Unread " }, BOLD))
-        .title_bottom(Line::styled(format!(" {swap} · / search{refresh} · , {settings} · ? keys "), DIM));
+        .title_bottom(Line::styled(format!(" {swap} · {search}{refresh} · , {settings} · ? keys "), DIM));
     if !history {
         block = block.title(Line::styled(format!(" {order} "), DIM).alignment(Alignment::Right));
     }
@@ -562,6 +561,45 @@ fn search(ui: &Ui, frame: &mut Frame, area: Rect) {
     solid(frame, outer);
     if inner.height > 1 {
         frame.set_cursor_position(Position::new(inner.x + u16::try_from(at).unwrap_or(0), inner.y + 1));
+    }
+}
+
+/// Importing or exporting: the path, then what's happening, then what came of it. A long report needs the room, so
+/// the panel grows to fit it.
+fn transfer(ui: &mut Ui, frame: &mut Frame, area: Rect) {
+    let Some(view) = ui.app.transfer_view() else { return };
+    let outer_width = area.width.saturating_sub(4).min(72);
+    let width = usize::from(outer_width.saturating_sub(4));
+    let asking = view.stage == "asking";
+    let mut rows = article::plain(&view.text, if view.stage == "done" { Style::new() } else { DIM }, width);
+    let mut cursor = None;
+    if let (true, Some(editor)) = (asking, &ui.transfer_path) {
+        rows.push(Row::default());
+        rows.extend(article::plain(providers::PATH_LABEL, BOLD, width));
+        let (text, at) = editor.view(width, false);
+        cursor = Some((u16::try_from(rows.len()).unwrap_or(0), u16::try_from(at).unwrap_or(0)));
+        rows.push(Row { line: Line::raw(text), ..Row::default() });
+        rows.extend(article::plain(providers::PATH_HELP, DIM, width));
+    }
+    if !view.error.is_empty() {
+        rows.push(Row::default());
+        rows.extend(article::plain(&view.error, ERROR, width));
+    }
+    let hint = match view.stage {
+        "asking" => " Enter to go on · Esc to cancel ",
+        "working" => " Esc to close: the server carries on ",
+        _ => " Enter to close ",
+    };
+    let block =
+        Block::bordered().title(Line::styled(format!(" {} ", view.title), BOLD)).title_bottom(Line::styled(hint, DIM));
+    let height = u16::try_from(rows.len() + 2).unwrap_or(u16::MAX);
+    let (outer, inner) = panel(frame, area, (outer_width, height), block);
+    let inner = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), inner.height);
+    ui.transfer_panel = outer;
+    draw_rows(frame, &rows, inner);
+    solid(frame, outer);
+    if let Some((row, column)) = cursor.filter(|&(row, _)| row < inner.height) {
+        frame.set_cursor_position(Position::new(inner.x + column, inner.y + row));
     }
 }
 

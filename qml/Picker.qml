@@ -78,6 +78,20 @@ Panel {
     actions: [
         Button {
             ui: picker.ui
+            visible: picker.model.imports
+            iconPath: "M12 3v12 M7 10l5 5 5-5 M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+            tip: "Import feeds from an OPML file (i)"
+            onClicked: picker.model.press("import")
+        },
+        Button {
+            ui: picker.ui
+            visible: picker.model.exports
+            iconPath: "M12 15V3 M7 8l5-5 5 5 M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+            tip: "Export feeds to an OPML file (e)"
+            onClicked: picker.model.press("export")
+        },
+        Button {
+            ui: picker.ui
             visible: picker.model.refreshes
             iconPath: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5"
             tip: "Refresh feeds (r)"
@@ -129,22 +143,35 @@ Panel {
         }
     ]
 
-    Text {
+    Column {
         visible: picker.model.pickerState !== "ready" || picker.rows.length === 0
         width: parent.width
-        leftPadding: 14
-        rightPadding: 14
-        topPadding: 11
-        bottomPadding: 11
-        wrapMode: Text.Wrap
-        text: picker.model.pickerState === "loading" ? "Loading…"
-            : picker.model.pickerState === "error" ? picker.model.pickerError
-            : picker.model.pickerHistory ? "Nothing read yet. Press h for unread items."
-            : picker.model.refreshes ? "Nothing unread. Press r to refresh, or h for history."
-            : "Nothing unread. Press h for history."
-        color: picker.model.pickerState === "error" ? picker.model.red : picker.model.fgDim
-        font.family: picker.ui.uiFont
-        font.pixelSize: 14
+        bottomPadding: importOffer.visible ? 14 : 0
+
+        Text {
+            width: parent.width
+            leftPadding: 14
+            rightPadding: 14
+            topPadding: 11
+            bottomPadding: 11
+            wrapMode: Text.Wrap
+            text: picker.model.pickerState === "loading" ? "Loading…"
+                : picker.model.pickerState === "error" ? picker.model.pickerError
+                : picker.model.pickerEmpty
+            color: picker.model.pickerState === "error" ? picker.model.red : picker.model.fgDim
+            font.family: picker.ui.uiFont
+            font.pixelSize: 14
+        }
+        // An empty account's way forward.
+        Button {
+            id: importOffer
+            ui: picker.ui
+            visible: picker.model.pickerState === "ready" && picker.model.pickerOffersImport
+            x: 14
+            primary: true
+            text: "Import feeds…"
+            onClicked: picker.model.press("import")
+        }
     }
 
     ListView {

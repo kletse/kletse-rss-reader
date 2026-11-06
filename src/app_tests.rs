@@ -6,6 +6,7 @@
 use super::*;
 use crate::dates;
 use crate::feeds::{Category, Feed, FeedCount};
+use crate::greader;
 use crate::paging::tests::{entry, entry_at};
 use crate::paging::{Order, PAGE};
 use std::collections::VecDeque;
@@ -94,7 +95,7 @@ struct Harness {
     fail_fetch: Option<String>,
     full_content: String,
     problem: Option<String>,
-    save_result: Result<Saved, String>,
+    save_result: Result<Saved, SaveFailed>,
     /// What the last save was sent.
     saved_values: Option<SettingsValues>,
     /// Probes and logins, left unanswered until a test says what comes back.
@@ -1154,6 +1155,10 @@ fn signing_in() -> SettingsValues {
 }
 
 /// A first run, on the first screen.
+fn refused(message: &str) -> SaveFailed {
+    SaveFailed { message: message.into(), login_rejected: false }
+}
+
 fn first_run() -> Harness {
     let mut h = Harness::new(items(2));
     h.status = Status { configured: false, readeck: false, capabilities: Capabilities::EVERYTHING };
@@ -1285,7 +1290,7 @@ fn a_failed_connect_stays_put_and_says_why() {
     let mut h = first_run();
     h.go_to_connect();
     h.by_hand();
-    h.save_result = Err("Miniflux rejected the API key".into());
+    h.save_result = Err(refused("Miniflux rejected the API key"));
     let typed = SettingsValues { miniflux_url: "https://m.example.com".into(), ..SettingsValues::default() };
     let fx = h.app.submit_settings(typed.clone());
     h.run(fx);
@@ -1437,7 +1442,7 @@ fn a_server_set_up_from_the_start_is_no_sample() {
 fn a_failed_save_shows_why_and_lets_you_try_again() {
     let mut h = first_second();
     h.key(",");
-    h.save_result = Err("Miniflux rejected the API key".into());
+    h.save_result = Err(refused("Miniflux rejected the API key"));
     let fx = h.app.submit_settings(SettingsValues::default());
     h.run(fx);
     let form = h.app.settings().unwrap();
@@ -2891,7 +2896,7 @@ fn a_key_already_made_isnt_made_again_when_the_save_fails() {
     let mut h = first_run();
     h.connect_to(miniflux_found());
     h.submit(signing_in());
-    h.save_result = Err("Could not reach Miniflux".into());
+    h.save_result = Err(refused("Could not reach Miniflux"));
     h.minted(Ok("minted-key".into()));
     assert_eq!(h.form_error(), "Could not reach Miniflux");
     assert_eq!(h.field_keys(), [FieldKey::MinifluxApiKey]);
@@ -2968,7 +2973,7 @@ fn freshrss_asks_for_what_it_needs_and_says_where_that_is() {
 fn a_turned_down_freshrss_login_covers_unset_and_wrong_and_says_where_to_go() {
     let mut h = first_run();
     h.connect_to(freshrss_found(Api::Ready));
-    h.save_result = Err(greader::LOGIN_REJECTED.into());
+    h.save_result = Err(SaveFailed { message: greader::LOGIN_REJECTED.into(), login_rejected: true });
     h.submit(SettingsValues {
         greader_username: "ward".into(),
         greader_password: "api-pass".into(),
@@ -2985,7 +2990,7 @@ fn a_turned_down_freshrss_login_covers_unset_and_wrong_and_says_where_to_go() {
 fn a_stripped_header_after_a_good_login_isnt_called_a_wrong_password() {
     let mut h = first_run();
     h.connect_to(freshrss_found(Api::Ready));
-    h.save_result = Err(greader::AUTHORIZATION_STRIPPED.into());
+    h.save_result = Err(refused(greader::AUTHORIZATION_STRIPPED));
     h.submit(SettingsValues {
         greader_username: "ward".into(),
         greader_password: "api-pass".into(),

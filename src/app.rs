@@ -17,7 +17,6 @@ use crate::config::Server;
 use crate::content::convert::{self, ImageRef};
 use crate::detect::{Address, Api, Detected};
 use crate::feeds::{self, Capabilities, Counts, Entry, EntryPage, EntryStatus, Selection};
-use crate::greader;
 use crate::keys::{self, Action};
 use crate::miniflux::MintFailed;
 use crate::paging::{self, Mode, Order, PAGE, PageRequest};
@@ -136,6 +135,14 @@ pub struct ConnectView {
     pub action: &'static str,
     /// Looking at an address. Fields stay open: typing makes the answer a no-op.
     pub probing: bool,
+}
+
+/// Why a save didn't go through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveFailed {
+    pub message: String,
+    /// The server turned down the login, which on FreshRSS Connect can say more about.
+    pub login_rejected: bool,
 }
 
 #[derive(Debug, Default)]
@@ -524,7 +531,7 @@ pub enum Outcome {
         values: SettingsValues,
         problem: Option<String>,
     },
-    SettingsSaved(Result<Saved, String>),
+    SettingsSaved(Result<Saved, SaveFailed>),
     Probed {
         probe: u64,
         found: Detected,
@@ -2111,7 +2118,7 @@ impl App {
 
     /// A save that failed, on the step that made it. What Connect knows makes it a better message, and a key already
     /// made isn't made again: it's in the field now, for another try.
-    fn save_failed(&mut self, message: String) {
+    fn save_failed(&mut self, failed: SaveFailed) {
         let web = match &self.connect.stage {
             Stage::FreshRss { web, .. } if self.overlay == Overlay::Onboarding => Some(web.clone()),
             _ => None,
@@ -2122,8 +2129,8 @@ impl App {
         if let Some(form) = self.settings.as_mut() {
             form.checking = false;
             form.error = match web {
-                Some(web) if message == greader::LOGIN_REJECTED => providers::freshrss_refused(&web),
-                _ => message,
+                Some(web) if failed.login_rejected => providers::freshrss_refused(&web),
+                _ => failed.message,
             };
         }
     }

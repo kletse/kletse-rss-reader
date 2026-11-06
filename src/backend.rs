@@ -3,7 +3,7 @@
 //! back as an `Outcome`. In demo mode (`ONWARD_DEMO=1`, or the first screen's "Try it with sample articles") it serves
 //! the built-in sample data and never touches a server.
 
-use crate::app::{Effect, Login, Outcome, Saved, SettingsValues, Status};
+use crate::app::{Effect, Login, Outcome, SaveFailed, Saved, SettingsValues, Status};
 use crate::config;
 use crate::dates;
 use crate::demo;
@@ -477,7 +477,12 @@ impl Backend {
                 values: self.settings(),
                 problem: self.problem.read().unwrap_or_else(|e| e.into_inner()).clone(),
             },
-            Effect::SaveSettings(values) => Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(msg)),
+            Effect::SaveSettings(values) => {
+                Outcome::SettingsSaved(self.save_settings(values.0).await.map_err(|e| SaveFailed {
+                    login_rejected: matches!(e, Error::LoginRejected),
+                    message: e.message(),
+                }))
+            }
             Effect::Probe { probe, address } => {
                 let found =
                     if self.demo() { Detected::Samples } else { detect::probe(&self.detection, &address).await };
@@ -640,11 +645,11 @@ mod tests {
         }
     }
 
-    async fn save(values: SettingsValues) -> Result<Saved, String> {
+    async fn save(values: SettingsValues) -> Result<Saved, SaveFailed> {
         let backend = Backend::unconfigured(true);
         match backend.run(Effect::SaveSettings(SettingsValuesBox(values))).await {
             Some(Outcome::SettingsSaved(result)) => result,
-            _ => Err("no answer".into()),
+            _ => Err(SaveFailed { message: "no answer".into(), login_rejected: false }),
         }
     }
 
@@ -822,19 +827,35 @@ mod tests {
     #[tokio::test]
     async fn settings_need_a_real_miniflux_url() {
         let err = save(values("miniflux.example.com", "", "")).await.err();
-        assert_eq!(err.as_deref(), Some("miniflux.example.com is not a valid URL"));
+        assert_eq!(err.map(|e| e.message).as_deref(), Some("miniflux.example.com is not a valid URL"));
     }
 
     #[tokio::test]
     async fn a_google_reader_server_needs_all_three_fields_and_a_real_url() {
         let err = save(greader_values("https://rss.example.com/api/greader.php", "")).await.err();
-        assert_eq!(err.as_deref(), Some("The Google Reader API server needs a URL, a username and a password."));
+        assert_eq!(
+            err.map(|e| e.message).as_deref(),
+            Some("The Google Reader API server needs a URL, a username and a password.")
+        );
         let err = save(greader_values("rss.example.com", "pw")).await.err();
-        assert_eq!(err.as_deref(), Some("rss.example.com is not a valid URL"));
+        assert_eq!(err.map(|e| e.message).as_deref(), Some("rss.example.com is not a valid URL"));
         // Half a Miniflux setup next to it, left over in the hidden fields, doesn't stand in the way.
         let mut values = greader_values("https://rss.example.com/api/greader.php", "pw");
         values.miniflux_url = "https://m.example.com".into();
         assert!(save(values).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_turned_down_login_says_so_beside_the_words() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/accounts/ClientLogin")).respond_with(ResponseTemplate::new(401)).mount(&server).await;
+        let backend = Backend::unconfigured(false);
+        let answer = backend.run(Effect::SaveSettings(SettingsValuesBox(greader_values(&server.uri(), "wrong")))).await;
+        let Some(Outcome::SettingsSaved(Err(failed))) = answer else { panic!("the save went through") };
+        assert!(failed.login_rejected);
+        assert_eq!(failed.message, greader::LOGIN_REJECTED);
     }
 
     #[tokio::test]

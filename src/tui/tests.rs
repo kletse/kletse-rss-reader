@@ -6,7 +6,7 @@
 use super::draw;
 use super::images::{self, Job};
 use super::ui::{Focus, Inline, Ui};
-use crate::app::{Effect, Outcome, Overlay, Screen, Status, Step};
+use crate::app::{Effect, Outcome, Overlay, SaveFailed, Screen, Status, Step};
 use crate::backend::Backend;
 use crate::config::Server;
 use crate::feeds::Capabilities;
@@ -382,7 +382,8 @@ fn the_password_hint_stays_after_typing_and_an_error_fits_a_small_terminal() {
     assert_eq!(s.ui.form.as_ref().unwrap().focus, Focus::Field(FieldKey::GreaderPassword));
     s.keys("secret");
     assert!(s.shows("the API password from your profile"), "{}", s.text());
-    s.ui.app.apply(Outcome::SettingsSaved(Err(crate::greader::LOGIN_REJECTED.into())));
+    let failed = SaveFailed { message: crate::greader::LOGIN_REJECTED.into(), login_rejected: true };
+    s.ui.app.apply(Outcome::SettingsSaved(Err(failed)));
     s.key(KeyCode::Tab);
     s.key(KeyCode::BackTab);
     assert!(s.shows("turned down the username or API"), "{}", s.text());

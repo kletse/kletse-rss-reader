@@ -47,6 +47,9 @@ pub enum Error {
     /// The server answered, but turned down the API key or token.
     #[error("{0}")]
     Rejected(String),
+    /// A Google Reader API server turned down the username or password at login.
+    #[error("{}", crate::greader::LOGIN_REJECTED)]
+    LoginRejected,
     /// The server redirected to somewhere the app won't send what it signs in with.
     #[error(
         "{url} redirected to {to}, so Onward stopped rather than send your {} there. A sign-in page in front of the \
@@ -114,7 +117,7 @@ impl Error {
         match self {
             Error::Setup(_) | Error::Redirected { .. } => ErrorKind::Setup,
             Error::Unreachable { .. } | Error::Certificate { .. } => ErrorKind::Unreachable,
-            Error::Rejected(_) => ErrorKind::Rejected,
+            Error::Rejected(_) | Error::LoginRejected => ErrorKind::Rejected,
             Error::Http { .. } | Error::Unexpected { .. } => ErrorKind::Server,
             Error::Io { .. } | Error::Refused(_) => ErrorKind::Local,
         }

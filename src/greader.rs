@@ -337,7 +337,7 @@ impl Client {
                 *lock(&self.auth) = Some(token.clone());
                 Ok(token)
             }
-            401 | 403 => Err(Error::Rejected(LOGIN_REJECTED.into())),
+            401 | 403 => Err(Error::LoginRejected),
             404 | 405 => Err(self.not_greader()),
             code => Err(Error::unexpected(format!("The Google Reader API server answered with HTTP {code}"))),
         }

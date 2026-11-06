@@ -140,6 +140,8 @@ enum Command {
         at_bottom: bool,
         #[serde(default)]
         at_top: bool,
+        #[serde(default)]
+        held: bool,
     },
     /// A button: see `keys::button_action`.
     Press {
@@ -382,8 +384,8 @@ impl Core {
                 self.set_theme(dark, accent.as_deref());
                 Vec::new()
             }
-            Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom, at_top } => {
-                let press = KeyPress { key, shift, ctrl, alt, meta, typing, at_bottom, at_top };
+            Command::Key { key, shift, ctrl, alt, meta, typing, at_bottom, at_top, held } => {
+                let press = KeyPress { key, shift, ctrl, alt, meta, typing, at_bottom, at_top, held };
                 let (was_used, fx) = self.app.key(&press);
                 used = was_used;
                 fx

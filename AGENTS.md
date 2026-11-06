@@ -271,6 +271,9 @@ Traps here:
   wraps that in a synchronized update to hide the clear. Kitty's are cells and half-blocks are text, so these don't.
 - **Blanks over a sixel must be written.** After a repaint ratatui leaves out blank cells, so a picture shows through
   a panel's spaces. `solid` in `draw.rs` marks them; call it at the end of anything drawn over the article.
+- **A held ↓ or ↑ reaches the app as plain presses,** so `Ui::held` goes by the time since the last one (`HELD`), where a
+  window has `isAutoRepeat` or `isARepeat`. The first repeat comes after the keyboard's longer delay, so it counts as a
+  new press.
 - **A picture in an article ends on a whole row** (`images::fit_rows`): text can only start on a row, so the rest of its
   last row would be a gap below it. On top of that a sixel must end on a band of six pixels (`ending_on_a_band`), as
   `SlicedSixel` rounds its last band away.

@@ -857,6 +857,31 @@ fn up_scrolls_and_past_the_top_goes_back() {
 }
 
 #[test]
+fn a_held_arrow_stops_at_the_edge_until_it_is_pressed_again() {
+    let mut h = first_second();
+    let held =
+        |key: &str| KeyPress { key: key.into(), at_top: true, at_bottom: true, held: true, ..KeyPress::default() };
+    let (used, fx) = h.app.key(&held("ArrowDown"));
+    assert!(used, "it's still the reader's key");
+    assert!(fx.is_empty());
+    assert_eq!(h.title(), Some("First"));
+    assert!(h.status_calls().is_empty(), "nothing is marked read");
+
+    // Held but with further to go, it scrolls.
+    let (_, fx) = h.app.key(&KeyPress { key: "ArrowDown".into(), held: true, ..KeyPress::default() });
+    assert_eq!(fx, [Effect::ScrollStep { up: false }]);
+
+    h.press(KeyPress { key: "ArrowDown".into(), at_bottom: true, ..KeyPress::default() });
+    assert_eq!(h.title(), Some("Second"));
+
+    let (_, fx) = h.app.key(&held("ArrowUp"));
+    assert!(fx.is_empty());
+    assert_eq!(h.title(), Some("Second"));
+    h.press(KeyPress { key: "ArrowUp".into(), at_top: true, ..KeyPress::default() });
+    assert_eq!(h.title(), Some("First"));
+}
+
+#[test]
 fn o_opens_the_original_and_marks_it_read() {
     let mut h = first_second();
     h.key("o");

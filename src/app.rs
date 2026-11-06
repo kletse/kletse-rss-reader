@@ -576,6 +576,8 @@ pub struct KeyPress {
     pub at_bottom: bool,
     /// The article is scrolled to its top (↑ then goes back).
     pub at_top: bool,
+    /// The key is held down and this is it repeating: ↓ and ↑ stop at the end of the article until it's let go.
+    pub held: bool,
 }
 
 /// What a confirmed dialog goes on to do.
@@ -2377,16 +2379,20 @@ impl App {
         true
     }
 
-    /// ↓ and ↑ scroll, and where there's no further to go, the next article, or the top of the previous one.
+    /// ↓ and ↑ scroll, and where there's no further to go, a new press goes on to the next article, or the top of the
+    /// previous one. A held key stops there: it would otherwise run through the list, marking it read.
     fn arrow(&mut self, up: bool, press: &KeyPress, fx: &mut Vec<Effect>) -> bool {
         // Only an article scrolls: on the other screens what the window says about it means nothing.
         let article = self.current().is_some();
-        if up && (press.at_top || !article) {
-            self.prev();
-        } else if !up && (press.at_bottom || !article) {
-            self.advance(true, fx);
-        } else {
+        let at_the_edge = !article || if up { press.at_top } else { press.at_bottom };
+        if !at_the_edge {
             fx.push(Effect::ScrollStep { up });
+        } else if press.held {
+            // There.
+        } else if up {
+            self.prev();
+        } else {
+            self.advance(true, fx);
         }
         true
     }

@@ -64,7 +64,7 @@ You pick a feed or category, and the app opens on the **oldest unread item**. Pr
 | <kbd>j</kbd> / <kbd>→</kbd>                                                  | Next article (**marks read**)                                                                                    |
 | <kbd>n</kbd>                                                                 | Skip: next article, **keep unread**                                                                              |
 | <kbd>k</kbd> / <kbd>←</kbd>                                                  | Previous article                                                                                                 |
-| <kbd>↓</kbd> / <kbd>↑</kbd>                                                  | Scroll down / up; past the end of an article the next one (**marks read**), past the top the previous one |
+| <kbd>↓</kbd> / <kbd>↑</kbd>                                                  | Scroll down / up; past the end of an article the next one (**marks read**), past the top the previous one. Held down, it stops at the end or the top until you press it again |
 | <kbd>m</kbd>                                                                 | Toggle read / unread                                                                                             |
 | <kbd>*</kbd>                                                                 | Star / unstar the article                                                                                        |
 | <kbd>Space</kbd> / <kbd>Shift</kbd>+<kbd>Space</kbd>                         | Scroll down / up; <kbd>Space</kbd> at the end of an article goes to the next one                                 |

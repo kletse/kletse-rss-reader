@@ -35,6 +35,8 @@ pub const BAR: u16 = 2;
 const WHEEL: isize = 3;
 /// Rows J and K move.
 const LINE: isize = 2;
+/// ↓ or ↑ this soon after the last one is the key held down: most terminals send that as plain presses.
+const HELD: Duration = Duration::from_millis(150);
 /// A column's worth of cells per unit of `Prefs::width_factor`, which counts font sizes: the same `[` and `]`.
 const CELLS_PER_FONT_SIZE: u16 = 2;
 
@@ -181,6 +183,8 @@ pub struct Ui {
     max_scroll: usize,
     /// Rows Space moves.
     page: usize,
+    /// The last ↓ or ↑, and when.
+    pub last_arrow: Option<(KeyCode, Instant)>,
     /// Where the article is drawn.
     pub column: Rect,
     pub help_scroll: usize,
@@ -242,6 +246,7 @@ impl Ui {
             scroll: 0,
             max_scroll: 0,
             page: 1,
+            last_arrow: None,
             column: Rect::default(),
             help_scroll: 0,
             picker_top: 0,
@@ -363,6 +368,16 @@ impl Ui {
         true
     }
 
+    /// Whether an arrow is being held down, going by how soon it came after the last one.
+    fn held(&mut self, event: &KeyEvent) -> bool {
+        if !matches!(event.code, KeyCode::Down | KeyCode::Up) {
+            return false;
+        }
+        let now = Instant::now();
+        let last = self.last_arrow.replace((event.code, now));
+        last.is_some_and(|(code, at)| code == event.code && now.duration_since(at) < HELD)
+    }
+
     /// Hands a key to the app, named as keys.rs names them. Ctrl stays here: Ctrl + and − set the window's font
     /// size, and a terminal has its own.
     fn forward(&mut self, event: KeyEvent) {
@@ -380,12 +395,14 @@ impl Ui {
         if event.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
+        let held = self.held(&event);
         let press = KeyPress {
             key,
             shift: event.modifiers.contains(KeyModifiers::SHIFT),
             alt: event.modifiers.contains(KeyModifiers::ALT),
             at_bottom: self.scroll >= self.max_scroll,
             at_top: self.scroll == 0,
+            held,
             ..KeyPress::default()
         };
         let (_, fx) = self.app.key(&press);

@@ -162,6 +162,7 @@ pub mod qobject {
             typing: bool,
             at_bottom: bool,
             at_top: bool,
+            held: bool,
         ) -> bool;
         /// A button: "next", "prev", "picker", "readeck", "unread", "history", "refresh", "settings", "help",
         /// "search", "order".
@@ -542,8 +543,9 @@ impl qobject::Model {
         typing: bool,
         at_bottom: bool,
         at_top: bool,
+        held: bool,
     ) -> bool {
-        let press = KeyPress { key: key.to_string(), shift, ctrl, alt, meta, typing, at_bottom, at_top };
+        let press = KeyPress { key: key.to_string(), shift, ctrl, alt, meta, typing, at_bottom, at_top, held };
         let (used, fx) = self.as_mut().state().app.key(&press);
         self.run(fx);
         used

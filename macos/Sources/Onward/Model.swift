@@ -63,10 +63,10 @@ final class Model {
     /// A key press, named as the web names keys. Returns whether the core used it.
     @discardableResult
     func key(_ name: String, shift: Bool = false, command: Bool = false, option: Bool = false, control: Bool = false,
-             typing: Bool = false) -> Bool {
+             typing: Bool = false, held: Bool = false) -> Bool {
         send([
             "cmd": "key", "key": name, "shift": shift, "ctrl": command, "alt": option, "meta": control,
-            "typing": typing, "at_bottom": atBottom, "at_top": atTop,
+            "typing": typing, "at_bottom": atBottom, "at_top": atTop, "held": held,
         ])?.used ?? false
     }
 

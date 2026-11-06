@@ -125,7 +125,7 @@ ApplicationWindow {
                                        (event.modifiers & Qt.ControlModifier) !== 0,
                                        (event.modifiers & Qt.AltModifier) !== 0,
                                        (event.modifiers & Qt.MetaModifier) !== 0,
-                                       typing, reader.atBottom, reader.atTop)
+                                       typing, reader.atBottom, reader.atTop, event.isAutoRepeat)
         }
 
         TopBar {
@@ -244,7 +244,7 @@ ApplicationWindow {
             else if (name === "find")
                 model.findServer()
             else if (name !== undefined)
-                model.key(name === "Space" ? " " : name, false, false, false, false, false, reader.atBottom, reader.atTop)
+                model.key(name === "Space" ? " " : name, false, false, false, false, false, reader.atBottom, reader.atTop, false)
             if (pending.length === 0) {
                 done = true
                 snapshotShot.start()

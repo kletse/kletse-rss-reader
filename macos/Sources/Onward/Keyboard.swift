@@ -26,7 +26,8 @@ enum Keyboard {
             command: flags.contains(.command),
             option: flags.contains(.option),
             control: flags.contains(.control),
-            typing: typing(in: event.window)
+            typing: typing(in: event.window),
+            held: event.isARepeat
         )
     }
 

@@ -131,6 +131,12 @@ impl Screenful {
         self
     }
 
+    /// The arrow key let go, long enough ago that the next press is a new one.
+    fn let_go(&mut self) -> &mut Self {
+        self.ui.last_arrow = None;
+        self
+    }
+
     fn keys(&mut self, keys: &str) -> &mut Self {
         for c in keys.chars() {
             let modifiers = if c.is_uppercase() { KeyModifiers::SHIFT } else { KeyModifiers::NONE };
@@ -242,22 +248,24 @@ fn the_arrows_scroll_and_at_either_end_move_on() {
     let first = title(&s);
     s.key(KeyCode::Up);
     assert_eq!(title(&s), first, "there's nothing before the first");
-    s.key(KeyCode::Down);
+    s.let_go().key(KeyCode::Down);
     assert_eq!((title(&s), s.ui.scroll), (first.clone(), 2));
-    s.key(KeyCode::Up);
+    s.let_go().key(KeyCode::Up);
     assert_eq!((title(&s), s.ui.scroll), (first.clone(), 0));
 
     while s.ui.scroll < s.ui.max_scroll() {
         s.key(KeyCode::Down);
     }
     assert_eq!(title(&s), first);
-    s.key(KeyCode::Down);
+    s.key(KeyCode::Down).key(KeyCode::Down);
+    assert_eq!(title(&s), first, "held, it stops at the end");
+    s.let_go().key(KeyCode::Down);
     let second = title(&s);
     assert_ne!(second, first);
     assert_eq!(s.ui.scroll, 0, "the next one starts at the top");
 
-    s.key(KeyCode::Up);
-    assert_eq!(title(&s), first);
+    s.let_go().key(KeyCode::Up).key(KeyCode::Up);
+    assert_eq!(title(&s), first, "held, it stops at the top");
     assert_eq!(s.ui.scroll, 0, "the previous one starts at the top too");
     s.key(KeyCode::Right);
     assert_eq!(title(&s), second);

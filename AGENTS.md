@@ -261,7 +261,8 @@ Traps here:
   in bridge.rs), and `article.serial` changes only for a new article or new text.
 - **Articles reach Swift as styled runs, not HTML:** `src/content/native.rs` turns the inline HTML convert.rs
   leaves in each block into runs (bold, link, code, colour…), and tables into rows of cells. Swift builds
-  `AttributedString`s from them (`BlocksView.swift`). Code colours still come from the palette, which Swift
+  attributed strings from them (`BlocksView.swift`). Text with links is an `NSTextView` (`RichText`), not a `Text`:
+  selectable `Text` shows the I-beam over links. Code colours still come from the palette, which Swift
   feeds with the real appearance and accent colour (`theme` command), so a theme change re-renders.
 - **SwiftUI only draws and forwards**, like the QML: `Model.swift` holds the last reply. Every key goes through
   an `NSEvent` local monitor (`Keyboard.swift`) to the core first, named as `keyName()` in Main.qml names them,

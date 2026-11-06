@@ -258,7 +258,10 @@ struct OnboardingView: View {
                     .help(row.url ?? "")
                     .disabled(checking)
             }
-            ShownLink(model: model)
+            // By hand, the form's footer has it.
+            if !byHand {
+                ShownLink(model: model)
+            }
         }
         HStack {
             if view.probing {
